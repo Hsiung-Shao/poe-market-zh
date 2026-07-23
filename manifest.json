@@ -14,7 +14,7 @@
     "48": "icons/48.png",
     "128": "icons/128.png"
   },
-  "permissions": ["storage", "unlimitedStorage", "alarms"],
+  "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": [
     "https://www.pathofexile.com/*",
     "https://pathofexile.com/*",

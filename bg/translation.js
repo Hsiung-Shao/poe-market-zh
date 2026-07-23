@@ -16,8 +16,6 @@ const COMMUNITY = {
 const KINDS = ['items', 'stats', 'static', 'filters'];
 // 不含正負號:官方模板寫作「+#%」,若把 +12 整段換成 # 會與模板 key 對不上
 const NUM_RE = /\d+(?:\.\d+)?/g;
-const ALARM_NAME = 'ptm-rebuild-translation';
-const REBUILD_MINUTES = 24 * 60;
 
 async function fetchKind(base, kind) {
   const res = await fetch(base + kind, { credentials: 'omit' });
@@ -410,17 +408,6 @@ export async function buildTranslation() {
     }
   })();
   return building;
-}
-
-export async function ensureAlarm() {
-  const existing = await chrome.alarms.get(ALARM_NAME);
-  if (!existing) {
-    chrome.alarms.create(ALARM_NAME, { periodInMinutes: REBUILD_MINUTES });
-  }
-}
-
-export function isRebuildAlarm(alarm) {
-  return alarm?.name === ALARM_NAME;
 }
 
 export async function handleTranslationMessage(msg) {
