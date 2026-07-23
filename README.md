@@ -9,7 +9,7 @@ Path of Exile 1 國際服交易站(`pathofexile.com/trade`)**中文化專用**�
   - 動態下拉(傳奇獎勵/需求物品/完成地圖獎勵等,官網以 API 查詢值 entry.name 渲染):
     **維持純英文** —— 其過濾只吃英文,顯示中文會誤導;此為刻意設計,勿加顯示層翻譯
   - 搜尋結果列詞綴:直接替換為中文,英文原文放 hover title 供查對
-- **popup**:PoE 暗金風單頁 —— 目前語系 + 繁體中文化 / 還原回英文 / 清除快取(翻譯資料於安裝/更新擴充或套用中文化時建置,無排程自動更新、無手動更新鈕,由維護端隨版本統一更新)
+- **popup**:PoE 暗金風單頁 —— 目前語系 + 繁體中文化 / 還原回英文 / 清除快取(翻譯資料由安裝時與每日 alarm 自動更新,無手動更新鈕)
 
 技術:Manifest V3 + Vanilla JS,**零建置** —— `chrome://extensions` 開「開發人員模式」→「載入未封裝項目」選本資料夾即可。
 
@@ -21,7 +21,7 @@ Path of Exile 1 國際服交易站(`pathofexile.com/trade`)**中文化專用**�
 
 ```
 manifest.json
-background.js            SW 入口:translation 訊息路由(無狀態、無排程)
+background.js            SW 入口:translation 訊息路由、每日重建 alarm(無狀態)
 bg/translation.js        抓官方雙服 API → 依 id 對接 → 產出中文化資料 + statMap/itemMap
 content/  (isolated world)
   bootstrap.js           document_start:翻譯資料覆寫官網 lscache-*、同步 UI 模式
@@ -38,7 +38,7 @@ icons/                   16/32/48/128
 
 ## 資料來源與智財
 
-翻譯建置分兩階段(安裝/更新擴充或套用中文化時觸發,無排程自動更新):
+翻譯建置分兩階段(安裝/套用中文化時觸發,之後每 24 小時自動重建),與完整版一致:
 
 - **第一階段:內建字典(不需網路、必定成功)** —— `data/` 內 translate.json(物品名)、translate.zh_TW.json(UI 字串)、clusterJewel.json / passivesNotable.json(天賦卡),源自 POE Trade zh;另有 ggpk.json 離線層(解析本機 `Content.ggpk` 的官方繁中,由 `tools/gen-ggpk-data.mjs` 產生,檔案不存在時自動略過)。
 - **第二階段:官方 API + 社群遞補(best-effort,失敗只降級)** —— 美服 + 台服 `api/trade/data/*` 依官方 id 對接;[cswzhang/Poe-trade-zh](https://github.com/cswzhang/Poe-trade-zh)(Apache-2.0)經 OpenCC 字表(`data/s2t.json`)簡轉繁填缺口。
