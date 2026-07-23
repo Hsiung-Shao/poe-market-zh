@@ -45,6 +45,10 @@ icons/                   16/32/48/128
 
 **致謝**:POE Trade zh(原作者 Baconrad,翻譯資料與中文化機制設計來源)、cswzhang/Poe-trade-zh(Apache-2.0)、[OpenCC](https://github.com/BYVoid/OpenCC)(Apache-2.0)。
 
+## 授權
+
+本專案程式碼以 [MIT License](LICENSE) 授權。`data/` 目錄內的翻譯資料檔為第三方內容,**不在 MIT 授權範圍**,各依其來源授權:POE Trade zh 內建字典(原作者 Baconrad)、Path of Exile 遊戲文本(Grinding Gear Games 智財)、cswzhang/Poe-trade-zh 與 OpenCC 衍生資料(Apache-2.0)。Path of Exile 為 Grinding Gear Games 的商標;本專案為玩家社群工具,與 GGG 無關。
+
 ## 開發驗證
 
 ```
