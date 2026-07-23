@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Poe Market Zh",
+  "version": "0.1.0",
+  "description": "PoE1 國際服交易站中文化(純翻譯版):介面、詞綴、下拉選單中文化 + 搜尋結果即時翻譯",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Poe Market Zh"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "permissions": ["storage", "unlimitedStorage", "alarms"],
+  "host_permissions": [
+    "https://www.pathofexile.com/*",
+    "https://pathofexile.com/*",
+    "https://pathofexile.tw/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "js": ["page/ui-strings.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "js": ["content/bootstrap.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "js": ["content/results.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

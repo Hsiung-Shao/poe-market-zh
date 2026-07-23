@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Poe Market Zh:PoE 暗金風(與 PobTools 系列一致的深棕+金色系) */
+  body {
+    width: 300px;
+    margin: 0;
+    background: #1a1612;
+    color: #cfc3a8;
+    font: 13px/1.5 "Segoe UI", "Microsoft JhengHei", sans-serif;
+    user-select: none;
+  }
+  header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid #4a3f2f;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  header .name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #debe84;
+    letter-spacing: 0.5px;
+  }
+  header .ver { font-size: 11px; color: #7a6f5a; }
+  main { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
+  .lang-card {
+    background: #211b14;
+    border: 1px solid #4a3f2f;
+    border-radius: 4px;
+    padding: 8px 12px;
+    text-align: center;
+  }
+  .lang-card .label { font-size: 11px; color: #a99a7c; letter-spacing: 1px; }
+  .lang-card .lang {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffe8b8;
+    letter-spacing: 1px;
+  }
+  button {
+    width: 100%;
+    padding: 9px 0;
+    background: #2a241c;
+    color: #cfc3a8;
+    border: 1px solid #4a3f2f;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #applyZh.armed {
+    background: #6b5324;
+    border-color: #c9a66b;
+    color: #ffe8b8;
+  }
+  #clearCache { color: #b98a80; }
+  #clearCache:hover:not(:disabled) { border-color: #c96b6b; color: #e0a8a0; }
+  #status {
+    min-height: 18px;
+    font-size: 12px;
+    color: #8fae7a;
+    white-space: pre-wrap;
+    text-align: center;
+  }
+  #status.error { color: #c96b6b; }
+  ol {
+    margin: 4px 0 0;
+    padding: 8px 14px 12px 30px;
+    border-top: 1px solid #33291d;
+    font-size: 11px;
+    line-height: 1.7;
+    color: #7a6f5a;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="name">Poe Market Zh</span>
+    <span class="ver" id="version"></span>
+  </header>
+  <main>
+    <div class="lang-card">
+      <div class="label">目前語系</div>
+      <div class="lang" id="langNow">…</div>
+    </div>
+    <button id="applyZh">繁體中文化(ZH_TW)</button>
+    <button id="restoreEn">還原回英文(US)</button>
+    <button id="clearCache">清除快取</button>
+    <div id="status"></div>
+  </main>
+  <ol>
+    <li>套用後記得重新整理交易頁讓修改生效</li>
+    <li>POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具</li>
+    <li>翻譯資料每日自動更新;台服跟上改版後會自動補上新詞綴</li>
+  </ol>
+  <script src="popup.js"></script>
+</body>
+</html>
