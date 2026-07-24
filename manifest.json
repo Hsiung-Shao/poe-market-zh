@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Poe Market Zh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PoE1 國際服交易站中文化(純翻譯版):介面、詞綴、下拉選單中文化 + 搜尋結果即時翻譯",
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
