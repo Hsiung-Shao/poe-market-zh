@@ -62,6 +62,16 @@
   }
   #clearCache { color: #b98a80; }
   #clearCache:hover:not(:disabled) { border-color: #c96b6b; color: #e0a8a0; }
+  .toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 9px 12px;
+    text-align: left;
+  }
+  .toggle-row .state { color: #7a6f5a; }
+  .toggle-row.on { border-color: #c9a66b; }
+  .toggle-row.on .state { color: #ffe8b8; }
   #status {
     min-height: 18px;
     font-size: 12px;
@@ -92,6 +102,7 @@
     </div>
     <button id="applyZh">繁體中文化(ZH_TW)</button>
     <button id="restoreEn">還原回英文(US)</button>
+    <button id="bilingualToggle" class="toggle-row"><span>詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
     <button id="clearCache">清除快取</button>
     <div id="status"></div>
   </main>

@@ -35,10 +35,16 @@ async function refreshBuildStatus() {
   }
 }
 
+function renderBilingual(on) {
+  $('#bilingualToggle').classList.toggle('on', on);
+  $('#bilingualState').textContent = on ? '開' : '關';
+}
+
 async function init() {
   $('#version').textContent = chrome.runtime.getManifest().version;
-  const { language } = await chrome.storage.local.get('language');
+  const { language, bilingualMods } = await chrome.storage.local.get(['language', 'bilingualMods']);
   renderLang(language ?? 'zh_tw');
+  renderBilingual(bilingualMods === true);
   refreshBuildStatus();
 }
 
@@ -59,6 +65,14 @@ $('#restoreEn').addEventListener('click', async () => {
   await chrome.storage.local.set({ language: 'us' });
   renderLang('us');
   showStatus('已還原英文,重新整理交易頁生效');
+});
+
+$('#bilingualToggle').addEventListener('click', async () => {
+  const { bilingualMods } = await chrome.storage.local.get('bilingualMods');
+  const next = bilingualMods !== true;
+  await chrome.storage.local.set({ bilingualMods: next });
+  renderBilingual(next);
+  showStatus(`已${next ? '開啟' : '關閉'}詞綴雙語顯示,重新整理交易頁生效`);
 });
 
 $('#clearCache').addEventListener('click', async () => {

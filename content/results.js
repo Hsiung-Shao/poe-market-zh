@@ -1,7 +1,9 @@
 // document_end(isolated):搜尋結果頁即時翻譯。
 // 翻譯法:把詞綴文字的數值正規化成 #,查 statMap(英文模板 → 中文模板),
 // 再把原數值依序回填中文模板。查不到就保留原文(寧缺勿錯)。
-// 翻譯採直接替換(不常駐顯示原文),英文原文放 title 屬性 hover 可查。
+// 翻譯採直接替換,英文原文放 title 屬性 hover 可查;popup 可開啟
+// 「詞綴雙語顯示」(bilingualMods),改為在中文下方常駐英文原文小字
+// (僅裝備詞綴;物品名/天賦卡不受此設定影響)。
 
 (() => {
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
@@ -23,6 +25,7 @@
     statMap: null,
     itemMap: null,
     passives: null, // { clusterJewel, passivesNotable }
+    bilingualMods: false, // 詞綴雙語顯示(中文下附英文原文小字)
   };
 
   function fillTemplate(zhTpl, nums) {
@@ -45,7 +48,16 @@
       const nums = text.match(NUM_RE) ?? [];
       const zh = fillTemplate(zhTpl, nums);
       el.textContent = zh; // 純文字寫入,不經 HTML 解析
-      el.title = text; // 英文原文 hover 可查
+      if (state.bilingualMods) {
+        // 雙語模式:中文下方常駐英文原文小字(lite 版不掛 css,樣式 inline)
+        const orig = document.createElement('div');
+        orig.className = 'ptm-orig';
+        orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;';
+        orig.textContent = text;
+        el.appendChild(orig);
+      } else {
+        el.title = text; // 英文原文 hover 可查
+      }
     }
     mod.dataset.ptmDone = '1';
   }
@@ -149,16 +161,18 @@
   }
 
   async function init() {
-    const { language, statMap, itemMap, passives } = await chrome.storage.local.get([
+    const { language, statMap, itemMap, passives, bilingualMods } = await chrome.storage.local.get([
       'language',
       'statMap',
       'itemMap',
       'passives',
+      'bilingualMods',
     ]);
     if (language !== 'zh_tw') return;
     state.statMap = statMap ?? null; // 官方 API 產物,可能尚未建置
     state.itemMap = itemMap ?? null; // 內建字典即可提供
     state.passives = passives ?? null;
+    state.bilingualMods = bilingualMods === true;
     if (!state.statMap && !state.itemMap && !state.passives) return; // 無資料就不掛 observer
     waitForResults();
   }
