@@ -23,6 +23,8 @@ function writeLscache(translation) {
     try {
       localStorage.setItem(key, JSON.stringify(data));
       localStorage.removeItem(`${key}-cacheexpiration`);
+      const entries = data.reduce((n, g) => n + (g.entries?.length ?? g.filters?.length ?? 0), 0);
+      console.info(`[PTM] lscache 寫入 ${kind}:${data.length} 組 / ${entries} 條`);
     } catch (err) {
       console.warn('[PTM] lscache 寫入失敗:', key, err);
     }
@@ -74,6 +76,10 @@ async function main() {
   }
 
   const localUpdated = Number(localStorage.getItem(LOCAL_UPDATED) ?? 0);
+  console.info(
+    `[PTM] 翻譯快照:建置於 ${updated ? new Date(updated).toLocaleString() : '無'}、` +
+      `本頁快取 ${localUpdated ? new Date(localUpdated).toLocaleString() : '無'}`
+  );
   if ((updated ?? 0) > localUpdated) {
     writeLscache(translation);
     localStorage.setItem(LOCAL_UPDATED, String(updated));

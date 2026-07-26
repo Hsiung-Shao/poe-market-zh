@@ -351,38 +351,53 @@ export async function buildTranslation() {
       await chrome.storage.local.set(stageOne);
 
       // ── 第二階段:官方 API + 社群遞補(失敗不影響內建字典)──
+      // 分項容錯:美服(英文基準)必須成功,否則整段降級;台服/社群個別失敗
+      // 只影響中文覆蓋率 —— 新賽季物品仍以最新美服資料入庫(英文可搜),
+      // 不因台服尚未更新而整批沿用舊快照(否則新物品從官網下拉消失)。
       try {
         const s2t = makeS2t(await loadS2tMap());
-        const [us, tw, communityItems, communityUI] = await Promise.all([
+        console.info('[PTM] build:抓取官方雙服 API 與社群字典…');
+        const [usRes, twRes, commItemsRes, commUiRes] = await Promise.allSettled([
           fetchAll(API_BASE.us),
           fetchAll(API_BASE.tw),
           fetchCommunityDict(COMMUNITY.items, s2t),
           fetchCommunityDict(COMMUNITY.ui, s2t),
         ]);
+        if (usRes.status === 'rejected') throw usRes.reason; // 英文基準拿不到才算失敗
+        const us = usRes.value;
+        const tw = twRes.status === 'fulfilled' ? twRes.value : null;
+        const communityItems = commItemsRes.status === 'fulfilled' ? commItemsRes.value : {};
+        const communityUI = commUiRes.status === 'fulfilled' ? commUiRes.value : {};
+        const degraded = [];
+        if (!tw) degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
+        if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
+        if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
+        if (degraded.length) console.warn('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
+
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
         const translation = {
-          items: translateItems(us.items, tw.items, fallbackItems),
-          stats: translateStats(us.stats, tw.stats),
-          static: translateStatic(us.static, tw.static),
-          filters: translateFilters(us.filters, tw.filters),
+          items: translateItems(us.items, tw?.items, fallbackItems),
+          stats: translateStats(us.stats, tw?.stats),
+          static: translateStatic(us.static, tw?.static),
+          filters: translateFilters(us.filters, tw?.filters),
         };
         // ggpk 種子墊底,官方 trade API 值(台服現行用語)同 key 覆蓋
-        const statMap = { ...ggpk.statMap, ...buildStatMap(us.stats, tw.stats) };
-        const itemMap = buildItemMap(us.items, tw.items, fallbackItems);
+        const statMap = { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) };
+        const itemMap = buildItemMap(us.items, tw?.items, fallbackItems);
         const updated = Date.now();
+        const doneMsg =
+          `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條` +
+          (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '');
         await chrome.storage.local.set({
           translation,
           statMap,
           itemMap,
           uiExtra: { ...communityUI, ...bundledUI }, // 內建繁中字典優先
           updated,
-          buildStatus: {
-            state: 'done',
-            msg: `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條`,
-            at: updated,
-          },
+          buildStatus: { state: 'done', msg: doneMsg, at: updated },
         });
-        return { ok: true, updated };
+        console.info('[PTM] build:', doneMsg);
+        return { ok: true, updated, degraded: degraded.length ? degraded : undefined };
       } catch (apiErr) {
         // 如實揭露降級範圍:曾成功建置過 → 沿用舊官方資料;從未成功 → 詞綴暫不可用
         const { translation: prevTranslation } = await chrome.storage.local.get('translation');
@@ -391,12 +406,10 @@ export async function buildTranslation() {
           : Object.keys(ggpk.statMap).length
             ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)'
             : '詞綴與篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)';
+        const failMsg = `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}`;
+        console.warn('[PTM] build:', failMsg);
         await chrome.storage.local.set({
-          buildStatus: {
-            state: 'done',
-            msg: `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}`,
-            at: Date.now(),
-          },
+          buildStatus: { state: 'done', msg: failMsg, at: Date.now() },
         });
         return { ok: true, partial: true };
       }
