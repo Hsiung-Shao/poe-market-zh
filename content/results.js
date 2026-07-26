@@ -19,6 +19,9 @@
 
   // 與 bg/translation.js 的正規化規則一致(不含正負號)
   const NUM_RE = /\d+(?:\.\d+)?/g;
+  // 負數 roll 用(如 Players have -12% to all maximum Resistances):
+  // 模板以 #% 表示、值域為負,查詢與回填需把負號一起吸進 #
+  const SIGNED_NUM_RE = /-?\d+(?:\.\d+)?/g;
   const DEBOUNCE_MS = 100;
 
   const state = {
@@ -33,21 +36,48 @@
     return zhTpl.replace(/#/g, () => nums[i++] ?? '#');
   }
 
+  // 回傳 { tpl, numRe }:命中的中文模板與應使用的數值抓取規則
   function lookupStat(text) {
     const key = text.replace(NUM_RE, '#');
-    return state.statMap[key] ?? state.statMap[`${key} (Local)`] ?? null;
+    let tpl = state.statMap[key] ?? state.statMap[`${key} (Local)`];
+    if (tpl) return { tpl, numRe: NUM_RE };
+    const signedKey = text.replace(SIGNED_NUM_RE, '#');
+    tpl = state.statMap[signedKey] ?? state.statMap[`${signedKey} (Local)`];
+    if (tpl) return { tpl, numRe: SIGNED_NUM_RE };
+    return null;
+  }
+
+  // 以 <br> 邊界重建多行文字:textContent 會把 <br> 兩側直接黏在一起,
+  // 而多行詞綴(如征服者壁壘)在字典中是以 \n 分隔的合併模板
+  function modText(el) {
+    const parts = [''];
+    for (const node of el.childNodes) {
+      if (node.nodeName === 'BR') parts.push('');
+      else parts[parts.length - 1] += node.textContent;
+    }
+    return parts.map((s) => s.trim()).join('\n').trim();
+  }
+
+  // 翻譯結果寫回:多行以 textNode + <br> 重建(不經 HTML 解析)
+  function setModText(el, zh) {
+    el.textContent = '';
+    const lines = zh.split('\n');
+    lines.forEach((line, i) => {
+      if (i > 0) el.appendChild(document.createElement('br'));
+      el.appendChild(document.createTextNode(line));
+    });
   }
 
   function translateModElement(mod) {
     if (mod.dataset.ptmDone) return;
     const el = mod.querySelector(SELECTORS.modText) ?? mod;
-    const text = el.textContent.trim();
+    const text = modText(el);
     if (!text) return;
-    const zhTpl = lookupStat(text);
-    if (zhTpl) {
-      const nums = text.match(NUM_RE) ?? [];
-      const zh = fillTemplate(zhTpl, nums);
-      el.textContent = zh; // 純文字寫入,不經 HTML 解析
+    const hit = lookupStat(text);
+    if (hit) {
+      const nums = text.match(hit.numRe) ?? [];
+      const zh = fillTemplate(hit.tpl, nums);
+      setModText(el, zh);
       if (state.bilingualMods) {
         // 雙語模式:中文下方常駐英文原文小字(lite 版不掛 css,樣式 inline)
         const orig = document.createElement('div');
