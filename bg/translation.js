@@ -65,7 +65,18 @@ function translateStats(usStats, twStats, statFallback = {}) {
     for (const entry of group.entries ?? []) {
       const tw = twIndex.get(entry.id);
       if (!tw) {
-        const zh = statFallback[entry.text] ?? statFallback[`${entry.text} (Local)`];
+        let zh = statFallback[entry.text] ?? statFallback[`${entry.text} (Local)`];
+        if (!zh) {
+          // 帶實數的變體條目(如 You have Igniting Conflux for 3 seconds…):
+          // 數值正規化成 # 查模板,命中後把原數值依序回填中文模板
+          const key = entry.text.replace(NUM_RE, '#');
+          const tpl = statFallback[key] ?? statFallback[`${key} (Local)`];
+          if (tpl) {
+            const nums = entry.text.match(NUM_RE) ?? [];
+            let i = 0;
+            zh = tpl.replace(/#/g, () => nums[i++] ?? '#');
+          }
+        }
         if (zh) entry.text = bilingual(zh, entry.text);
         continue;
       }
@@ -89,6 +100,21 @@ function translateStats(usStats, twStats, statFallback = {}) {
 // 繁中 + 內建 + 社群,key 為英文全名/傳奇名),不做任何位置對位;
 // 查無翻譯保留英文原文(寧缺勿錯)。分類標題依 cat.id 對接台服(id 為
 // 語言無關鍵,安全)。
+// 組合條目拆解:「Outer (Inner)」兩段各自可譯才組合(如 Scrying Orb (Strand)
+// → 占卜寶珠(致命岩灘)、Vaal Arc (Arc of Oscillating) → 瓦爾.電弧(電弧.震盪)、
+// Blighted Map (Strand) → 凋落地圖(致命岩灘));內圈為區域名時退查「Inner Map」。
+// 任一段查無就不組(寧缺勿錯)。
+const COMBO_RE = /^(.+?) \((.+)\)$/;
+const stripEnSuffix = (v) => v.replace(/ \((?=[A-Za-z+#])[^()]*\)$/, ''); // 去字典值尾端的英文對照段
+function comboLookup(fallbackItems, text) {
+  const m = text.match(COMBO_RE);
+  if (!m) return null;
+  const outer = fallbackItems[m[1]];
+  const inner = fallbackItems[m[2]] ?? fallbackItems[`${m[2]} Map`];
+  if (!outer || !inner) return null;
+  return `${stripEnSuffix(outer)}(${stripEnSuffix(inner)}) (${text})`;
+}
+
 function translateItems(usItems, twItems, fallbackItems = {}) {
   const out = structuredClone(usItems);
   const twCats = new Map((twItems?.result ?? []).map((c) => [c.id, c]));
@@ -102,7 +128,7 @@ function translateItems(usItems, twItems, fallbackItems = {}) {
       // 官網下拉比對 text,被吃掉的部分連英文都搜不到。
       const en = entry.text ?? entry.type;
       if (!en) continue;
-      const zh = fallbackItems[en] ?? fallbackItems[entry.name];
+      const zh = fallbackItems[en] ?? fallbackItems[entry.name] ?? comboLookup(fallbackItems, en);
       if (zh) entry.text = zh;
     }
   }
