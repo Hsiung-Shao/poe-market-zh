@@ -48,8 +48,12 @@ function bilingual(zh, en) {
   return `${zh} (${en})`;
 }
 
-// stats:依 entry.id 對接;option 型詞綴依 option.id 對接
-function translateStats(usStats, twStats) {
+// stats:依 entry.id 對接;option 型詞綴依 option.id 對接。
+// 台服查無該 id 時,以現有詞綴模板字典(ggpk 官方繁中,key 為 # 正規化
+// 英文模板,與 stats API 的 text 同格式)補上 —— 台服 API 落後或缺席的
+// 詞綴(如 Map is occupied by The Purifier)結果列翻得出來,下拉也應一致;
+// 字典也查無才保留英文。
+function translateStats(usStats, twStats, statFallback = {}) {
   const out = structuredClone(usStats);
   const twIndex = indexStatEntries(twStats);
   const twGroupLabel = new Map(
@@ -60,7 +64,11 @@ function translateStats(usStats, twStats) {
     if (zhLabel) group.label = zhLabel;
     for (const entry of group.entries ?? []) {
       const tw = twIndex.get(entry.id);
-      if (!tw) continue;
+      if (!tw) {
+        const zh = statFallback[entry.text] ?? statFallback[`${entry.text} (Local)`];
+        if (zh) entry.text = bilingual(zh, entry.text);
+        continue;
+      }
       entry.text = bilingual(tw.text, entry.text);
       if (entry.option?.options && tw.option?.options) {
         const twOpts = new Map(tw.option.options.map((o) => [o.id, o.text]));
@@ -340,7 +348,7 @@ export async function buildTranslation() {
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
         const translation = {
           items: translateItems(us.items, tw?.items, fallbackItems),
-          stats: translateStats(us.stats, tw?.stats),
+          stats: translateStats(us.stats, tw?.stats, ggpk.statMap),
           static: translateStatic(us.static, tw?.static),
           filters: translateFilters(us.filters, tw?.filters),
         };

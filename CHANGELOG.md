@@ -2,6 +2,11 @@
 
 本專案版本紀錄。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/),版號採 [SemVer](https://semver.org/lang/zh-TW/)。
 
+## [0.2.3] - 2026-07-26
+
+### 修復
+- 詞綴篩選下拉:台服 API 缺席的詞綴(如 Map is occupied by The Purifier)改以現有詞綴模板字典(ggpk 官方繁中)補上雙語顯示,與結果列翻譯一致;字典也查無才保留英文
+
 ## [0.2.2] - 2026-07-26
 
 ### 修復
@@ -33,6 +38,7 @@
 - 官方美服+台服 trade data API 依 id 對接,安裝時建置、每 24 小時自動更新
 - MIT License(程式碼);`data/` 第三方翻譯資料依各來源授權
 
+[0.2.3]: https://github.com/Hsiung-Shao/poe-market-zh/releases/tag/v0.2.3
 [0.2.2]: https://github.com/Hsiung-Shao/poe-market-zh/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Hsiung-Shao/poe-market-zh/releases/tag/v0.2.1
 [0.1.0]: https://github.com/Hsiung-Shao/poe-market-zh/commit/4856d52
