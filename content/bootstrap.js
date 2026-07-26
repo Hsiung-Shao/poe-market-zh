@@ -2,6 +2,9 @@
 // lscache 快取(官網以 lscache 快取 trade data API 回應,直接以其內容渲染
 // 下拉選單與篩選器),並同步 UI 模式給 MAIN world 的 ui-strings.js。
 
+// 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
+const dbg = (...a) => console.info(...a);
+
 const LSCACHE_KEYS = {
   items: 'lscache-tradeitems',
   stats: 'lscache-tradestats',
@@ -24,7 +27,7 @@ function writeLscache(translation) {
       localStorage.setItem(key, JSON.stringify(data));
       localStorage.removeItem(`${key}-cacheexpiration`);
       const entries = data.reduce((n, g) => n + (g.entries?.length ?? g.filters?.length ?? 0), 0);
-      console.info(`[PTM] lscache 寫入 ${kind}:${data.length} 組 / ${entries} 條`);
+      dbg(`[PTM] lscache 寫入 ${kind}:${data.length} 組 / ${entries} 條`);
     } catch (err) {
       console.warn('[PTM] lscache 寫入失敗:', key, err);
     }
@@ -71,25 +74,25 @@ async function main() {
   if (!translation) {
     // 首次安裝尚未建置:觸發背景建置,完成後下次載入生效
     chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
-    console.info('[PTM] 翻譯資料建置中,完成後重新整理頁面即生效');
+    dbg('[PTM] 翻譯資料建置中,完成後重新整理頁面即生效');
     return;
   }
 
   const localUpdated = Number(localStorage.getItem(LOCAL_UPDATED) ?? 0);
-  console.info(
+  dbg(
     `[PTM] 翻譯快照:建置於 ${updated ? new Date(updated).toLocaleString() : '無'}、` +
       `本頁快取 ${localUpdated ? new Date(localUpdated).toLocaleString() : '無'}`
   );
   if ((updated ?? 0) > localUpdated) {
     writeLscache(translation);
     localStorage.setItem(LOCAL_UPDATED, String(updated));
-    console.info('[PTM] 已更新中文化資料');
+    dbg('[PTM] 已更新中文化資料');
   }
 
   // 快照逾時 → 觸發背景重建(SW 端有 building 防抖,多分頁同開不會重複抓)
   if (updated && Date.now() - updated > STALE_MS) {
     chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
-    console.info('[PTM] 翻譯資料已逾時,背景更新中,完成後重新整理生效');
+    dbg('[PTM] 翻譯資料已逾時,背景更新中,完成後重新整理生效');
   }
 }
 

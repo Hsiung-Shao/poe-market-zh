@@ -18,6 +18,8 @@ const KINDS = ['items', 'stats', 'static', 'filters'];
 const NUM_RE = /\d+(?:\.\d+)?/g;
 const ALARM_NAME = 'ptm-rebuild-translation';
 const REBUILD_MINUTES = 24 * 60;
+// 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
+const dbg = (...a) => console.info(...a);
 
 async function fetchKind(base, kind) {
   const res = await fetch(base + kind, { credentials: 'omit' });
@@ -361,7 +363,7 @@ export async function buildTranslation() {
       // 不因台服尚未更新而整批沿用舊快照(否則新物品從官網下拉消失)。
       try {
         const s2t = makeS2t(await loadS2tMap());
-        console.info('[PTM] build:抓取官方雙服 API 與社群字典…');
+        dbg('[PTM] build:抓取官方雙服 API 與社群字典…');
         const [usRes, twRes, commItemsRes, commUiRes] = await Promise.allSettled([
           fetchAll(API_BASE.us),
           fetchAll(API_BASE.tw),
@@ -377,7 +379,7 @@ export async function buildTranslation() {
         if (!tw) degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
         if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
         if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
-        if (degraded.length) console.warn('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
+        if (degraded.length) dbg('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
 
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
         const translation = {
@@ -401,7 +403,7 @@ export async function buildTranslation() {
           updated,
           buildStatus: { state: 'done', msg: doneMsg, at: updated },
         });
-        console.info('[PTM] build:', doneMsg);
+        dbg('[PTM] build:', doneMsg);
         return { ok: true, updated, degraded: degraded.length ? degraded : undefined };
       } catch (apiErr) {
         // 如實揭露降級範圍:曾成功建置過 → 沿用舊官方資料;從未成功 → 詞綴暫不可用
@@ -412,7 +414,7 @@ export async function buildTranslation() {
             ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)'
             : '詞綴與篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)';
         const failMsg = `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}`;
-        console.warn('[PTM] build:', failMsg);
+        dbg('[PTM] build:', failMsg);
         await chrome.storage.local.set({
           buildStatus: { state: 'done', msg: failMsg, at: Date.now() },
         });
