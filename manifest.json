@@ -24,7 +24,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
-      "js": ["page/ui-strings.js"],
+      "js": ["page/ui-strings.js", "page/stat-search.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },

@@ -3,6 +3,10 @@
 Path of Exile 1 國際服交易站(`pathofexile.com/trade`)**中文化專用**擴充 —— poe-trade-mate(內部完整版)的精簡分支,僅保留翻譯功能,移除書籤、物價、快捷篩選與側邊欄。兩版擴充 id 不同,可同時載入 Chrome(建議只啟用其中一個,避免互搶官網 lscache 快取)。
 
 - **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯
+- **廣義搜尋**(`page/stat-search.js`):下拉搜尋輸入**含空白的多關鍵字**時改為 token AND
+  配對(每個關鍵字各自命中即可,不限順序連續;中英可混搜,如「phy gem」「物理 gems」);
+  單一關鍵字維持官網原生行為。實作為 MAIN world 對 multiselect Vue 實例的
+  filteredOptions watcher patch,官網結構不符時靜默停用、例外時退回原生過濾
 - **顯示規則**(與完整版不同處):
   - 介面字串(標題、欄位名、按鈕、placeholder):**純中文直接替換**,不做雙語對照
   - 下拉選單選項(物品分類、詞綴清單等):「中文 (English)」對照,中英皆可搜尋
