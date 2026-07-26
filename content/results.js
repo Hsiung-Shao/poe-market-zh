@@ -58,14 +58,30 @@
     return parts.map((s) => s.trim()).join('\n').trim();
   }
 
-  // 翻譯結果寫回:多行以 textNode + <br> 重建(不經 HTML 解析)
+  // 翻譯結果寫回:**非破壞性**逐行替換 —— 結果列由官網 Vue 渲染,
+  // 清空重建/增刪節點會讓 Vue 的 virtual DOM 與實際 DOM 不符,重繪時
+  // diff 中斷,整個結果區卡死(卡 Searching)。只改既有文字節點的內容、
+  // 保留 <br> 與節點結構:每行第一個文字節點寫入整行譯文,同行其餘
+  // 文字節點清空(節點保留)。
   function setModText(el, zh) {
-    el.textContent = '';
     const lines = zh.split('\n');
-    lines.forEach((line, i) => {
-      if (i > 0) el.appendChild(document.createElement('br'));
-      el.appendChild(document.createTextNode(line));
-    });
+    let line = 0;
+    let lineFilled = false;
+    for (const node of el.childNodes) {
+      if (node.nodeName === 'BR') {
+        line++;
+        lineFilled = false;
+        continue;
+      }
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (!lineFilled) {
+          node.textContent = lines[line] ?? '';
+          lineFilled = true;
+        } else {
+          node.textContent = '';
+        }
+      }
+    }
   }
 
   function translateModElement(mod) {
