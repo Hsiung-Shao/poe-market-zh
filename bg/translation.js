@@ -116,12 +116,18 @@ function translateItems(usItems, twItems, fallbackItems = {}) {
   }
   // 官方對不齊的分類 → 用遞補層補 text
   // (fallbackItems 的值已是最終顯示字串「中文 (英文)」,直接使用)
+  // ⚠ unique(有 name)不得退用基底 type 的翻譯覆蓋 —— 會把傳奇名從 text
+  // 吃掉(如新賽季珠寶 text 變成「殺戮之眼珠寶 (Murderous Eye Jewel)」),
+  // 官網下拉比對 text,傳奇名連英文都搜不到;查無翻譯一律保留英文全名。
   for (const cat of out.result ?? []) {
     if (aligned.has(cat.id)) continue;
     for (const entry of cat.entries ?? []) {
       const en = entry.text ?? entry.type;
       if (!en) continue;
-      const zh = fallbackItems[en] ?? fallbackItems[entry.name] ?? fallbackItems[entry.type];
+      const zh =
+        fallbackItems[en] ??
+        fallbackItems[entry.name] ??
+        (entry.name ? undefined : fallbackItems[entry.type]);
       if (zh) entry.text = zh;
     }
   }
