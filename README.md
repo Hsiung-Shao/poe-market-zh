@@ -39,7 +39,7 @@ icons/                   16/32/48/128
 
 ## 資料來源與智財
 
-翻譯建置分兩階段(安裝/套用中文化時觸發,之後每 24 小時自動重建),與完整版一致:
+翻譯建置分兩階段(安裝/套用中文化時觸發,之後每 24 小時自動重建;開交易頁時若快照逾 6 小時亦背景重建 — 賽季開版官方新增物品時,舊快照會讓新物品從官網下拉消失,連英文都搜不到),與完整版一致:
 
 - **第一階段:內建字典(不需網路、必定成功)** —— `data/` 內 translate.json(物品名)、translate.zh_TW.json(UI 字串)、clusterJewel.json / passivesNotable.json(天賦卡),源自 POE Trade zh;另有 ggpk.json 離線層(解析本機 `Content.ggpk` 的官方繁中,由 `tools/gen-ggpk-data.mjs` 產生,檔案不存在時自動略過)。
 - **第二階段:官方 API + 社群遞補(best-effort,失敗只降級)** —— 美服 + 台服 `api/trade/data/*` 依官方 id 對接;[cswzhang/Poe-trade-zh](https://github.com/cswzhang/Poe-trade-zh)(Apache-2.0)經 OpenCC 字表(`data/s2t.json`)簡轉繁填缺口。

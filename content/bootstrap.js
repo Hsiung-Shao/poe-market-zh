@@ -11,6 +11,10 @@ const LSCACHE_KEYS = {
 const LOCAL_UPDATED = 'ptm-local-updated';
 const UI_MODE_KEY = 'ptm-ui-mode';
 const UI_EXTRA_KEY = 'ptm-ui-extra';
+// 翻譯快照逾時門檻:開交易頁時資料舊於此即觸發背景重建(本頁先用現有資料,
+// 下次重新整理生效)。賽季開版官方 items 會加新物品,舊快照會讓新物品從
+// 官網下拉消失(連英文都搜不到),不能只靠每日 alarm。
+const STALE_MS = 6 * 60 * 60 * 1000;
 
 function writeLscache(translation) {
   for (const [kind, key] of Object.entries(LSCACHE_KEYS)) {
@@ -74,6 +78,12 @@ async function main() {
     writeLscache(translation);
     localStorage.setItem(LOCAL_UPDATED, String(updated));
     console.info('[PTM] 已更新中文化資料');
+  }
+
+  // 快照逾時 → 觸發背景重建(SW 端有 building 防抖,多分頁同開不會重複抓)
+  if (updated && Date.now() - updated > STALE_MS) {
+    chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
+    console.info('[PTM] 翻譯資料已逾時,背景更新中,完成後重新整理生效');
   }
 }
 
