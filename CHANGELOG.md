@@ -2,6 +2,12 @@
 
 本專案版本紀錄。格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/),版號採 [SemVer](https://semver.org/lang/zh-TW/)。
 
+## [0.2.2] - 2026-07-26
+
+### 修復
+- **變體寶石翻譯錯位**(如 Summon Chaos Golem of Hordes 被配到「召喚食腐魔像」):items 翻譯比對從「兩服清單位置對位」全面改為**以英文名為準查字典**(ggpk 官方繁中+內建+社群),兩服更新進度不同步時不再發生任何錯位;字典查無的條目保留英文原文可搜。分類標題仍依語言無關的分類 id 對接台服。
+- 搜尋結果列物品名改純中文顯示(原文 hover 可查),與詞綴的直接替換原則一致
+
 ## [0.2.1] - 2026-07-26
 
 ### 新增
@@ -27,5 +33,6 @@
 - 官方美服+台服 trade data API 依 id 對接,安裝時建置、每 24 小時自動更新
 - MIT License(程式碼);`data/` 第三方翻譯資料依各來源授權
 
+[0.2.2]: https://github.com/Hsiung-Shao/poe-market-zh/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Hsiung-Shao/poe-market-zh/releases/tag/v0.2.1
 [0.1.0]: https://github.com/Hsiung-Shao/poe-market-zh/commit/4856d52

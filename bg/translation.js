@@ -74,58 +74,24 @@ function translateStats(usStats, twStats) {
   return out;
 }
 
-// items:兩服為同一資料集的在地化版本,但更新進度可能不同步
-// (實測 accessory 382 vs 381、monster 358 vs 544),索引對位必須先驗證:
-// 筆數相等且每筆 entry 的「形狀」(是否有 name / 是否 unique)序列完全一致,
-// 才視為同序;否則整分類保留英文(寧缺勿錯)。
-function shapeSignature(cat) {
-  return (cat.entries ?? [])
-    .map((e) => `${e.name ? 'n' : '-'}${e.flags?.unique ? 'u' : '-'}`)
-    .join('');
-}
-
-function alignedItemCategories(usItems, twItems) {
-  const twCats = new Map((twItems?.result ?? []).map((c) => [c.id, c]));
-  const pairs = [];
-  for (const cat of usItems?.result ?? []) {
-    const twCat = twCats.get(cat.id);
-    if (!twCat) continue;
-    if ((twCat.entries?.length ?? 0) !== (cat.entries?.length ?? 0)) continue;
-    if (shapeSignature(cat) !== shapeSignature(twCat)) continue;
-    pairs.push([cat, twCat]);
-  }
-  return pairs;
-}
-
+// items:GGG 的 items API 沒有跨語系共用 id,兩服清單只能靠位置對位 ——
+// 但位置對位在兩服更新進度不同步時會整段錯位(實測 3.29 台服 gem 缺
+// Raging Spirit of Enormity 但總數巧合相同,Chaos Golem 被配到食腐魔像
+// 的翻譯)。因此條目層一律**以英文為準查字典**(fallbackItems:ggpk 官方
+// 繁中 + 內建 + 社群,key 為英文全名/傳奇名),不做任何位置對位;
+// 查無翻譯保留英文原文(寧缺勿錯)。分類標題依 cat.id 對接台服(id 為
+// 語言無關鍵,安全)。
 function translateItems(usItems, twItems, fallbackItems = {}) {
   const out = structuredClone(usItems);
-  const aligned = new Set();
-  for (const [cat, twCat] of alignedItemCategories(out, twItems)) {
-    aligned.add(cat.id);
-    if (twCat.label) cat.label = twCat.label;
-    cat.entries.forEach((entry, i) => {
-      const tw = twCat.entries[i];
-      if (JSON.stringify(entry.flags ?? null) !== JSON.stringify(tw.flags ?? null)) return;
-      // 注意:name/type 是送給官方 API 的查詢值,必須保持英文,只改顯示用的 text
-      if (tw.text && entry.text) {
-        entry.text = bilingual(tw.text, entry.text);
-      } else if (!entry.text && !entry.name && entry.type && tw.type) {
-        // 基底物品原本沒有 text(官網顯示 type);補上雙語 text 讓中文可搜尋,
-        // 官網若不讀此欄位則無作用(實頁驗證點)
-        entry.text = bilingual(tw.type, entry.type);
-      }
-    });
-  }
-  // 官方對不齊的分類 → 用遞補層補 text
-  // (fallbackItems 的值已是最終顯示字串「中文 (英文)」,直接使用)
-  // ⚠ 不得退用基底 type 的翻譯覆蓋 —— text 含有比 type 更多資訊的條目
-  // (傳奇名、寶石品質變體前綴、地圖階級標註等)會被基底翻譯吃掉資訊,
-  // 官網下拉比對 text,被吃掉的部分連英文都搜不到。只在「完整 text」或
-  // 「傳奇名 name」精準命中時才翻;查無翻譯一律保留英文原文。
-  // (無 text 的條目 en 即為 type,fallbackItems[en] 已涵蓋基底查表)
+  const twCats = new Map((twItems?.result ?? []).map((c) => [c.id, c]));
   for (const cat of out.result ?? []) {
-    if (aligned.has(cat.id)) continue;
+    const twLabel = twCats.get(cat.id)?.label;
+    if (twLabel) cat.label = twLabel;
     for (const entry of cat.entries ?? []) {
+      // 注意:name/type 是送給官方 API 的查詢值,必須保持英文,只改顯示用的 text
+      // ⚠ 不得退用基底 type 的翻譯 —— text 含有比 type 更多資訊的條目
+      // (傳奇名、寶石變體、地圖階級標註等)會被基底翻譯吃掉資訊,
+      // 官網下拉比對 text,被吃掉的部分連英文都搜不到。
       const en = entry.text ?? entry.type;
       if (!en) continue;
       const zh = fallbackItems[en] ?? fallbackItems[entry.name];
@@ -282,20 +248,10 @@ async function fetchCommunityDict(url, s2t) {
 }
 
 // 結果頁物品名/基底翻譯查表:英文 → 中文
-function buildItemMap(usItems, twItems, fallbackItems = {}) {
-  const map = {};
-  for (const [en, zh] of Object.entries(fallbackItems)) map[en] = zh;
-  // 官方對齊資料後寫,覆蓋遞補層(台服官方用語優先)
-  for (const [cat, twCat] of alignedItemCategories(usItems, twItems)) {
-    cat.entries.forEach((entry, i) => {
-      const tw = twCat.entries[i];
-      if (JSON.stringify(entry.flags ?? null) !== JSON.stringify(tw.flags ?? null)) return;
-      // 官方資料直接覆寫(含遞補層先前寫入的值)
-      if (entry.name && tw.name && entry.name !== tw.name) map[entry.name] = tw.name;
-      if (entry.type && tw.type && entry.type !== tw.type) map[entry.type] = tw.type;
-    });
-  }
-  return map;
+// 結果列物品名查表:與 translateItems 同原則,以英文為準查字典,
+// 不做任何位置對位(參數保留 usItems/twItems 以維持既有呼叫介面)。
+function buildItemMap(_usItems, _twItems, fallbackItems = {}) {
+  return { ...fallbackItems };
 }
 
 // 供離線測試腳本驗證對照邏輯用,執行期不使用

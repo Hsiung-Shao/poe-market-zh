@@ -67,7 +67,10 @@
     const text = el.textContent.trim();
     const zh = state.itemMap[text];
     if (zh) {
-      el.textContent = zh;
+      // 字典值多為「中文 (English)」;結果列採直接替換,strip 為純中文,
+      // 英文原文放 hover title
+      const suffix = ` (${text})`;
+      el.textContent = zh.endsWith(suffix) ? zh.slice(0, -suffix.length) : zh;
       el.title = text;
     }
     el.dataset.ptmDone = '1';
