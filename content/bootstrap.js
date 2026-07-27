@@ -11,18 +11,38 @@ const LSCACHE_KEYS = {
   static: 'lscache-tradedata',
   filters: 'lscache-tradefilters',
 };
-const LOCAL_UPDATED = 'ptm-local-updated';
+const LOCAL_UPDATED = 'ptm-local-updated'; // 舊版鍵,只保留清除用
+// lscache 覆寫的內容簽章。只比 updated 時間戳不夠:使用者在 popup 切換設定
+// 時 updated 不變,lscache 就不會重寫,造成「已寫入的資料」與「現行設定」
+// 不同步。簽章納入擴充 id,順便讓完整版與純翻譯版並存時不互相搶鍵。
+const LSCACHE_SIG = 'ptm-lscache-sig';
 const UI_MODE_KEY = 'ptm-ui-mode';
 const UI_EXTRA_KEY = 'ptm-ui-extra';
+// 兩層下拉:映射表交給 MAIN world 的 stat-group.js 用來把偽 id 還原成官方查詢。
+// READY 是能力探測結果 —— stat-group.js 若發現自己掛不上官網元件會寫 '0',
+// 下次載入就不寫偽父條目,使用者看到的是原生平鋪清單而不是會壞的選項。
+const STAT_GROUPS_KEY = 'ptm-stat-groups';
+const GROUPING_READY_KEY = 'ptm-grouping-ready';
+const PSEUDO_ID_MARK = 'ptm_g_';
 // 翻譯快照逾時門檻:開交易頁時資料舊於此即觸發背景重建(本頁先用現有資料,
 // 下次重新整理生效)。賽季開版官方 items 會加新物品,舊快照會讓新物品從
 // 官網下拉消失(連英文都搜不到),不能只靠每日 alarm。
 const STALE_MS = 6 * 60 * 60 * 1000;
 
-function writeLscache(translation) {
+// 兩層下拉停用時剝除偽父條目。只移除我們加的那幾筆,原始條目完全不動 ——
+// 官網要靠真實 id 反查才能渲染既有搜尋,原始條目一旦缺席篩選面板會掛掉。
+function stripPseudoEntries(statsResult) {
+  return statsResult.map((group) => ({
+    ...group,
+    entries: (group.entries ?? []).filter((e) => !String(e.id ?? '').includes(PSEUDO_ID_MARK)),
+  }));
+}
+
+function writeLscache(translation, { grouping }) {
   for (const [kind, key] of Object.entries(LSCACHE_KEYS)) {
-    const data = translation?.[kind]?.result;
+    let data = translation?.[kind]?.result;
     if (!data) continue;
+    if (kind === 'stats' && !grouping) data = stripPseudoEntries(data);
     try {
       localStorage.setItem(key, JSON.stringify(data));
       localStorage.removeItem(`${key}-cacheexpiration`);
@@ -41,13 +61,21 @@ function clearLscache() {
   }
 }
 
+// 簽章:任一項變動都必須重寫 lscache。parts 收設定類的值(會影響寫入內容)
+function lscacheSignature(updated, parts) {
+  return [updated ?? 0, chrome.runtime.id, ...parts].join('|');
+}
+
 async function main() {
-  const { language, translation, updated, uiExtra } = await chrome.storage.local.get([
-    'language',
-    'translation',
-    'updated',
-    'uiExtra',
-  ]);
+  const { language, translation, updated, uiExtra, statGroups, statGrouping } =
+    await chrome.storage.local.get([
+      'language',
+      'translation',
+      'updated',
+      'uiExtra',
+      'statGroups',
+      'statGrouping',
+    ]);
 
   // 同步 UI 模式與遞補字典給 MAIN world(ui-strings.js 讀 localStorage,重新整理生效)
   // UI 字串直接替換為純中文,無雙語模式
@@ -64,9 +92,11 @@ async function main() {
 
   if (language !== 'zh_tw') {
     // 切回英文:清掉覆寫,讓官網重抓原文資料
-    if (localStorage.getItem(LOCAL_UPDATED)) {
+    if (localStorage.getItem(LSCACHE_SIG) || localStorage.getItem(LOCAL_UPDATED)) {
       clearLscache();
+      localStorage.removeItem(LSCACHE_SIG);
       localStorage.removeItem(LOCAL_UPDATED);
+      localStorage.removeItem(STAT_GROUPS_KEY);
     }
     return;
   }
@@ -78,14 +108,36 @@ async function main() {
     return;
   }
 
-  const localUpdated = Number(localStorage.getItem(LOCAL_UPDATED) ?? 0);
+  // 兩層下拉:設定開啟且有映射表就備妥資料。
+  // 「還原機制掛不掛得上」不在這裡判斷 —— 那是 stat-group.js 在頁面上即時決定的,
+  // 掛不上時顯示層當下就不會放出合併選單。早期版本在這裡讀上次的失敗旗標,
+  // 結果修好之後還要多重新整理一次才恢復,反而更難診斷。
+  const grouping = statGrouping !== false && !!statGroups?.mapping;
+  try {
+    if (grouping) {
+      localStorage.setItem(STAT_GROUPS_KEY, JSON.stringify(statGroups.mapping));
+      const opts = Object.values(statGroups.mapping).reduce((n, t) => n + Object.keys(t).length, 0);
+      dbg(`[PTM] 合併選單:${Object.keys(statGroups.mapping).length} 組 / ${opts} 個子選項,映射表已同步`);
+    } else {
+      localStorage.removeItem(STAT_GROUPS_KEY);
+      dbg('[PTM] 合併選單:停用(' +
+        (statGrouping === false ? '設定已關閉' : '尚無分組資料,需在 popup 重建翻譯') + ')');
+    }
+  } catch (err) {
+    console.warn('[PTM] 合併選單映射表同步失敗:', err);
+  }
+
+  const sig = lscacheSignature(updated, [grouping ? 'g1' : 'g0']);
+  const localSig = localStorage.getItem(LSCACHE_SIG);
   dbg(
     `[PTM] 翻譯快照:建置於 ${updated ? new Date(updated).toLocaleString() : '無'}、` +
-      `本頁快取 ${localUpdated ? new Date(localUpdated).toLocaleString() : '無'}`
+      `本頁簽章 ${localSig ?? '無'}、合併選單 ${grouping ? '啟用' : '停用'}`
   );
-  if ((updated ?? 0) > localUpdated) {
-    writeLscache(translation);
-    localStorage.setItem(LOCAL_UPDATED, String(updated));
+  if (sig !== localSig) {
+    writeLscache(translation, { grouping });
+    localStorage.setItem(LSCACHE_SIG, sig);
+    localStorage.removeItem(LOCAL_UPDATED); // 舊版鍵不再使用
+    localStorage.removeItem(GROUPING_READY_KEY); // 舊版鍵,診斷用,不再影響行為
     dbg('[PTM] 已更新中文化資料');
   }
 

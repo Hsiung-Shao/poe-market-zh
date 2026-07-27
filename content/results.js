@@ -6,6 +6,9 @@
 // (僅裝備詞綴;物品名/天賦卡不受此設定影響)。
 
 (() => {
+  // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
+  const dbg = (...a) => console.info(...a);
+
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
   const SELECTORS = {
     resultsContainer: '.results',
@@ -31,6 +34,10 @@
     bilingualMods: false, // 詞綴雙語顯示(中文下附英文原文小字)
   };
 
+  // 診斷統計(打包後 dbg 為 no-op,只剩極少量計數;可在 console 打
+  // __ptmResults() 看目前這批結果的翻譯命中狀況)
+  const stat = { seen: 0, miss: 0, dirty: 0, missSamples: [], dirtySamples: [] };
+
   function fillTemplate(zhTpl, nums) {
     let i = 0;
     return zhTpl.replace(/#/g, () => nums[i++] ?? '#');
@@ -47,15 +54,28 @@
     return null;
   }
 
-  // 以 <br> 邊界重建多行文字:textContent 會把 <br> 兩側直接黏在一起,
-  // 而多行詞綴(如征服者壁壘)在字典中是以 \n 分隔的合併模板
-  function modText(el) {
-    const parts = [''];
-    for (const node of el.childNodes) {
-      if (node.nodeName === 'BR') parts.push('');
-      else parts[parts.length - 1] += node.textContent;
+  // 依 <br> 把元素內容切成「行 → 該行的文字節點」。官網會把詞綴文字拆進
+  // 巢狀元素(強調色的數值等),所以必須走訪所有後代文字節點,只看直接子節點
+  // 會漏掉包在子元素裡的片段 —— 那正是譯文與殘留英文黏成一行的原因。
+  function textLines(el) {
+    const lines = [[]];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeName === 'BR') lines.push([]);
+      else if (node.nodeType === Node.TEXT_NODE) lines[lines.length - 1].push(node);
+      node = walker.nextNode();
     }
-    return parts.map((s) => s.trim()).join('\n').trim();
+    return lines;
+  }
+
+  // 多行詞綴(如征服者壁壘)在字典中是以 \n 分隔的合併模板;
+  // textContent 會把 <br> 兩側直接黏在一起,故依行重建
+  function modText(el) {
+    return textLines(el)
+      .map((nodes) => nodes.map((n) => n.textContent).join('').trim())
+      .join('\n')
+      .trim();
   }
 
   // 翻譯結果寫回:**非破壞性**逐行替換 —— 結果列由官網 Vue 渲染,
@@ -64,24 +84,13 @@
   // 保留 <br> 與節點結構:每行第一個文字節點寫入整行譯文,同行其餘
   // 文字節點清空(節點保留)。
   function setModText(el, zh) {
-    const lines = zh.split('\n');
-    let line = 0;
-    let lineFilled = false;
-    for (const node of el.childNodes) {
-      if (node.nodeName === 'BR') {
-        line++;
-        lineFilled = false;
-        continue;
-      }
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (!lineFilled) {
-          node.textContent = lines[line] ?? '';
-          lineFilled = true;
-        } else {
-          node.textContent = '';
-        }
-      }
-    }
+    const zhLines = zh.split('\n');
+    textLines(el).forEach((nodes, i) => {
+      if (!nodes.length) return;
+      nodes[0].textContent = zhLines[i] ?? '';
+      // 同行其餘節點清空(節點保留,不增刪)—— 未清乾淨就會殘留英文接在譯文後面
+      for (let k = 1; k < nodes.length; k++) nodes[k].textContent = '';
+    });
   }
 
   function translateModElement(mod) {
@@ -90,10 +99,22 @@
     const text = modText(el);
     if (!text) return;
     const hit = lookupStat(text);
+    stat.seen++;
+    if (!hit) {
+      stat.miss++;
+      if (stat.missSamples.length < 5) stat.missSamples.push(text.slice(0, 70));
+    }
     if (hit) {
       const nums = text.match(hit.numRe) ?? [];
       const zh = fillTemplate(hit.tpl, nums);
       setModText(el, zh);
+      // 譯文寫回後若元素裡還殘留英文原文,代表官網把文字拆進了我們沒清到的
+      // 結構(中英會黏成一行)。這是使用者回報過的症狀,留樣本供比對。
+      const after = modText(el);
+      if (after !== zh && stat.dirtySamples.length < 3) {
+        stat.dirty++;
+        stat.dirtySamples.push({ 期望: zh.slice(0, 50), 實際: after.slice(0, 80), html: el.innerHTML.slice(0, 200) });
+      }
       if (state.bilingualMods) {
         // 雙語模式:中文下方常駐英文原文小字(lite 版不掛 css,樣式 inline)
         const orig = document.createElement('div');
@@ -153,6 +174,18 @@
     });
   }
 
+  let statTimer = null;
+  function reportStats() {
+    if (statTimer) return;
+    statTimer = setTimeout(() => {
+      statTimer = null;
+      if (!stat.seen) return;
+      dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條,查無翻譯 ${stat.miss} 條,譯文殘留原文 ${stat.dirty} 條`);
+      if (stat.miss) dbg('[PTM] 查無翻譯樣本:', stat.missSamples);
+      if (stat.dirty) console.warn('[PTM] 譯文殘留英文原文(中英會黏成一行),樣本:', stat.dirtySamples);
+    }, 500);
+  }
+
   function processContainer(root) {
     // 詞綴需要 statMap(官方 API);物品名/天賦卡只需內建字典,各自獨立降級
     if (state.statMap) {
@@ -165,6 +198,7 @@
       root.querySelectorAll(SELECTORS.notable).forEach(translateNotable);
       if (root.matches?.(SELECTORS.notable)) translateNotable(root);
     }
+    reportStats();
   }
 
   // ── 兩階段監聽:等結果容器出現 → 監聽新增列 ──
@@ -223,6 +257,11 @@
     state.passives = passives ?? null;
     state.bilingualMods = bilingualMods === true;
     if (!state.statMap && !state.itemMap && !state.passives) return; // 無資料就不掛 observer
+    dbg(`[PTM] 結果列:詞綴表 ${Object.keys(state.statMap ?? {}).length} 條、` +
+      `物品表 ${Object.keys(state.itemMap ?? {}).length} 條、雙語顯示 ${state.bilingualMods ? '開' : '關'}`);
+    // 手動診斷:在 console 打 __ptmResults() 看目前這批結果的命中狀況
+    // 打包版 dbg 為 no-op,但在 console 直接呼叫仍看得到回傳值
+    window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };
     waitForResults();
   }
 

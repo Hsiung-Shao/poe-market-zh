@@ -21,6 +21,8 @@ const REBUILD_MINUTES = 24 * 60;
 // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
 const dbg = (...a) => console.info(...a);
 
+import { buildStatGroups } from './grouping.js';
+
 async function fetchKind(base, kind) {
   const res = await fetch(base + kind, { credentials: 'omit' });
   if (!res.ok) throw new Error(`fetch ${base}${kind} => HTTP ${res.status}`);
@@ -46,6 +48,30 @@ function indexStatEntries(statsData) {
 function bilingual(zh, en) {
   if (!zh || zh === en) return en;
   return `${zh} (${en})`;
+}
+
+// 美服(英文基準)資料的語言健檢。GGG 曾發生 www 英文站的 stats endpoint
+// 整份回傳日文的事故(credentials:'omit'、無痕、繞快取皆同,items/static/
+// filters 卻正常)。英文模板既是 statMap 的 key 也是下拉的英文半邊,一旦混入
+// 他國語言,下拉會變成「中文 (日文)」、statMap 的 key 全部對不上結果列。
+// 抽樣條目文字,非 ASCII 占比過高即判定不可用。
+// ⚠ 抽樣必須**跨所有群組**:實測事故中 pseudo 群組仍是英文而其餘 13 組是日文,
+// 只取開頭 N 筆會全部落在 pseudo 而誤判整份可用。
+function looksEnglish(data, sample = 400, threshold = 0.2) {
+  const groups = data?.result ?? [];
+  if (!groups.length) return false;
+  const perGroup = Math.max(5, Math.ceil(sample / groups.length));
+  const texts = [];
+  for (const group of groups) {
+    let taken = 0;
+    for (const entry of group.entries ?? []) {
+      if (!entry.text) continue;
+      texts.push(entry.text);
+      if (++taken >= perGroup) break;
+    }
+  }
+  if (!texts.length) return false;
+  return texts.filter((t) => /[^\x00-\x7F]/.test(t)).length / texts.length <= threshold;
 }
 
 // stats:依 entry.id 對接;option 型詞綴依 option.id 對接。
@@ -115,9 +141,52 @@ function comboLookup(fallbackItems, text) {
   return `${stripEnSuffix(outer)}(${stripEnSuffix(inner)}) (${text})`;
 }
 
-function translateItems(usItems, twItems, fallbackItems = {}) {
+// 變體條目(占卜寶珠、海圖等)在兩服 items API 的 `type` 是**語言無關的內部
+// id**(兩服皆 `AbyssalPlain`),`disc` 亦同 —— 實測 839 筆帶 disc 的條目中
+// 410 筆可用 `cat.id+type+disc` 唯一對接、零多重零錯配。這條路拿到的是台服
+// 官方用語,優先於社群簡轉繁字典。(基底條目的 type 是本地化名稱,對接不到,
+// 由 ggpk 字典負責。)
+function indexTwVariants(twItems) {
+  const map = new Map();
+  for (const cat of twItems?.result ?? []) {
+    for (const entry of cat.entries ?? []) {
+      if (!entry.disc || !entry.text) continue;
+      const key = `${cat.id}|${entry.type ?? ''}|${entry.disc}`;
+      if (!map.has(key)) map.set(key, entry.text);
+    }
+  }
+  return map;
+}
+
+// 台服 trade API 的變體條目,基底段有時與遊戲檔用字不一致(實例:trade 寫
+// 「砂質海床海圖」,而遊戲檔與 trade 自己的基底條目都寫「沙質海床海圖」)。
+// 以遊戲檔為準改寫基底段,同一批條目才不會兩種字混用。
+const VARIANT_RE = /^(.*?)\s*[(（](.+)[)）]\s*$/;
+function normalizeBaseName(zhText, enText, officialItems) {
+  const zhM = zhText.match(VARIANT_RE);
+  const enM = enText.match(VARIANT_RE);
+  if (!zhM || !enM) return zhText;
+  const officialBase = stripEnSuffix(officialItems[enM[1]] ?? '');
+  if (!officialBase || officialBase === zhM[1]) return zhText;
+  return `${officialBase} (${zhM[2]})`;
+}
+
+// 傳奇條目的判別:text 為「傳奇名 + 空格 + 基底名」,後面可能再帶交易站的變體
+// 標記(遺產版)。回傳該標記的中文,無法判別則回 null。
+const UNIQUE_SUFFIX = [[' (Legacy)', '(遺產)']];
+function uniqueSuffix(entry, en) {
+  if (!entry.name || !entry.type) return null;
+  const base = `${entry.name} ${entry.type}`;
+  if (en === base) return '';
+  for (const [enSfx, zhSfx] of UNIQUE_SUFFIX) if (en === base + enSfx) return zhSfx;
+  return null;
+}
+const uniqueName = (entry, en) => uniqueSuffix(entry, en) !== null;
+
+function translateItems(usItems, twItems, fallbackItems = {}, officialItems = fallbackItems, ggpkItems = {}) {
   const out = structuredClone(usItems);
   const twCats = new Map((twItems?.result ?? []).map((c) => [c.id, c]));
+  const twVariants = indexTwVariants(twItems);
   for (const cat of out.result ?? []) {
     const twLabel = twCats.get(cat.id)?.label;
     if (twLabel) cat.label = twLabel;
@@ -128,23 +197,65 @@ function translateItems(usItems, twItems, fallbackItems = {}) {
       // 官網下拉比對 text,被吃掉的部分連英文都搜不到。
       const en = entry.text ?? entry.type;
       if (!en) continue;
-      const zh = fallbackItems[en] ?? fallbackItems[entry.name] ?? comboLookup(fallbackItems, en);
+      // 優先序:遊戲檔傳奇組合 → 官方精確 → 官方組合 → 內建與社群字典 → 台服(最後遞補)
+      //
+      // 傳奇條目的 text 是「傳奇名 基底名」,而字典兩者分開收錄。只查傳奇名會把
+      // 基底名吃掉(「漁夫之辮」少了「潛能之戒」),下拉就無法區分同名不同基底的
+      // 傳奇。而且這裡刻意只用**遊戲檔**的兩段來組:內建字典雖有完整詞條,卻是
+      // 舊賽季快照,會蓋掉改過的譯名(實例:Heroic Tragedy 已由「英勇悲劇」改為
+      // 「英勇的悲劇」)。
+      // ⚠ 傳奇條目**不得只用傳奇名的譯法**:那會把基底名與遺產標記一起吃掉,連英文
+      // 原文都殘缺(「Auxium Chain Belt (Legacy)」被壓成「奧術之符 (Auxium)」,
+      // 搜 Legacy 或 Chain Belt 都找不到)。兩段都查得到才組,否則保留英文。
+      const uSfx = uniqueSuffix(entry, en);
+      const isUnique = uSfx !== null;
+      const uCombo = (dict) => {
+        const outer = dict[entry.name], inner = dict[entry.type];
+        return outer && inner ? bilingual(`${stripEnSuffix(outer)} ${stripEnSuffix(inner)}${uSfx}`, en) : null;
+      };
+      let zh = isUnique ? uCombo(ggpkItems) : null; // 遊戲檔優先(內建字典是舊賽季快照)
+      zh = zh ?? officialItems[en];
+      if (!zh && isUnique) zh = uCombo(officialItems);
+      zh = zh
+        ?? (isUnique ? null : officialItems[entry.name])
+        ?? comboLookup(officialItems, en)
+        ?? fallbackItems[en];
+      if (!zh && isUnique) zh = uCombo(fallbackItems);
+      zh = zh
+        ?? (isUnique ? null : fallbackItems[entry.name])
+        ?? comboLookup(fallbackItems, en);
+      // 台服 trade API 擺最後:它的用字與遊戲檔常有出入(實例:區域「硫磺蝕岸」
+      // 台服寫成別的字),只在官方三源都組不出來時才用,並把基底名正規化回官方
+      if (!zh && entry.disc) {
+        const twText = twVariants.get(`${cat.id}|${entry.type ?? ''}|${entry.disc}`);
+        if (twText) zh = bilingual(normalizeBaseName(twText, en, officialItems), en);
+      }
       if (zh) entry.text = zh;
     }
   }
   return out;
 }
 
-// 遞補字典合併,優先序低到高:社群 s2t 轉繁 < ggpk(本機遊戲檔官方繁中)
-// < 內建 translate.json(繁中,值已含英文)
+// 遞補字典合併,優先序低到高:
+//   社群 s2t 轉繁 < 內建 translate.json < ggpk(本機遊戲檔官方繁中)
+// ggpk 擺最高的理由:它是從**當前版本遊戲檔**抽出來的,也就是玩家在遊戲裡真正
+// 看到的字;內建字典則是某個舊賽季的快照,GGG 改譯名後就過期了(實測 3159 筆
+// 交集中有 16 筆過期,例如 Split Arrow 在 3.29 已從「分裂箭矢」改為「裂化箭矢」,
+// 另有兩張凋落地圖內建根本沒翻)。內建字典仍負責 ggpk 沒涵蓋的條目。
 function mergeFallbackItems(communityItems, bundledItems, ggpkItems = {}) {
   const merged = {};
   for (const [en, zh] of Object.entries(communityItems)) merged[en] = bilingual(zh, en);
-  for (const [en, zh] of Object.entries(ggpkItems)) merged[en] = bilingual(zh, en);
   for (const [en, v] of Object.entries(bundledItems)) {
     if (typeof v?.zh_tw === 'string' && v.zh_tw) merged[en] = v.zh_tw;
   }
+  for (const [en, zh] of Object.entries(ggpkItems)) merged[en] = bilingual(zh, en);
   return merged;
+}
+
+// 官方層(遊戲檔 + 內建,不含社群簡轉繁):供 translateItems 判斷「這個譯名
+// 是否有官方依據」,以及基底名正規化的比對基準
+function mergeOfficialItems(bundledItems, ggpkItems = {}) {
+  return mergeFallbackItems({}, bundledItems, ggpkItems);
 }
 
 // static(通貨等大宗交易項目):依 entry.id 對接
@@ -290,6 +401,7 @@ function buildItemMap(_usItems, _twItems, fallbackItems = {}) {
 
 // 供離線測試腳本驗證對照邏輯用,執行期不使用
 export const _test = {
+  looksEnglish,
   translateStats,
   translateItems,
   translateStatic,
@@ -299,6 +411,9 @@ export const _test = {
   makeS2t,
   fetchCommunityDict,
   mergeFallbackItems,
+  mergeOfficialItems,
+  normalizeBaseName,
+  indexTwVariants,
   COMMUNITY,
 };
 
@@ -371,25 +486,48 @@ export async function buildTranslation() {
         if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
         if (degraded.length) dbg('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
 
+        // 英文基準語言健檢:stats 異常時只降級 stats 一項,items/static/filters
+        // 照常更新(與上方分項容錯同精神)
+        const statsUsable = looksEnglish(us.stats);
+        if (!statsUsable) degraded.push('官方英文詞綴資料異常(非英文)');
+        const prev = statsUsable ? {} : await chrome.storage.local.get(['translation', 'statMap']);
+
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
+        const officialItems = mergeOfficialItems(bundledItems, ggpk.items);
         const translation = {
-          items: translateItems(us.items, tw?.items, fallbackItems),
-          stats: translateStats(us.stats, tw?.stats, ggpk.statMap),
+          items: translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items),
           static: translateStatic(us.static, tw?.static),
           filters: translateFilters(us.filters, tw?.filters),
         };
+        // stats 不可用時沿用上次成功的快照;從未成功過就整個不寫,
+        // bootstrap 便不覆寫 lscache-tradestats,官網用自己的資料
+        const prevStats = prev.translation?.stats;
+        let statGroups = null;
+        if (statsUsable) {
+          // 分組只在英文基準健全時進行 —— 前綴切分以英文為基準,基準若混入他國
+          // 語言,拆出的父/子文字會錯位
+          const grouped = buildStatGroups(translateStats(us.stats, tw?.stats, ggpk.statMap), us.stats);
+          translation.stats = grouped.stats;
+          statGroups = { mapping: grouped.mapping, groups: grouped.groups };
+        } else if (prevStats) translation.stats = prevStats;
         // ggpk 種子墊底,官方 trade API 值(台服現行用語)同 key 覆蓋
-        const statMap = { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) };
+        const statMap = statsUsable
+          ? { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) }
+          : { ...ggpk.statMap, ...(prev.statMap ?? {}) };
         const itemMap = buildItemMap(us.items, tw?.items, fallbackItems);
         const updated = Date.now();
         const doneMsg =
           `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條` +
-          (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '');
+          (statGroups?.groups.length ? `、合併選單 ${statGroups.groups.length} 組` : '') +
+          (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
+          (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
         await chrome.storage.local.set({
           translation,
           statMap,
           itemMap,
           uiExtra: { ...communityUI, ...bundledUI }, // 內建繁中字典優先
+          // stats 降級時保留上一份分組表,才不會與沿用的 stats 快照脫節
+          ...(statGroups ? { statGroups } : {}),
           updated,
           buildStatus: { state: 'done', msg: doneMsg, at: updated },
         });
@@ -443,7 +581,7 @@ export async function handleTranslationMessage(msg) {
     }
     case 'translation:clear':
       await chrome.storage.local.remove([
-        'translation', 'statMap', 'itemMap', 'uiExtra', 'passives', 'updated', 'buildStatus',
+        'translation', 'statMap', 'itemMap', 'uiExtra', 'passives', 'statGroups', 'updated', 'buildStatus',
       ]);
       return { ok: true };
     default:
