@@ -40,22 +40,11 @@ function renderBilingual(on) {
   $('#bilingualState').textContent = on ? '開' : '關';
 }
 
-// 合併選單預設開啟(與 bilingualMods 相反,故以 !== false 判定)
-function renderGrouping(on) {
-  $('#groupingToggle').classList.toggle('on', on);
-  $('#groupingState').textContent = on ? '開' : '關';
-}
-
 async function init() {
   $('#version').textContent = chrome.runtime.getManifest().version;
-  const { language, bilingualMods, statGrouping } = await chrome.storage.local.get([
-    'language',
-    'bilingualMods',
-    'statGrouping',
-  ]);
+  const { language, bilingualMods } = await chrome.storage.local.get(['language', 'bilingualMods']);
   renderLang(language ?? 'zh_tw');
   renderBilingual(bilingualMods === true);
-  renderGrouping(statGrouping === true);
   refreshBuildStatus();
 }
 
@@ -84,14 +73,6 @@ $('#bilingualToggle').addEventListener('click', async () => {
   await chrome.storage.local.set({ bilingualMods: next });
   renderBilingual(next);
   showStatus(`已${next ? '開啟' : '關閉'}詞綴雙語顯示,重新整理交易頁生效`);
-});
-
-$('#groupingToggle').addEventListener('click', async () => {
-  const { statGrouping } = await chrome.storage.local.get('statGrouping');
-  const next = statGrouping !== true; // 預設關閉,見 content/bootstrap.js 的說明
-  await chrome.storage.local.set({ statGrouping: next });
-  renderGrouping(next);
-  showStatus(`已${next ? '開啟' : '關閉'}同類詞綴合併選單,重新整理交易頁生效`);
 });
 
 $('#clearCache').addEventListener('click', async () => {

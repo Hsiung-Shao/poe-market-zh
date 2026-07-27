@@ -15,61 +15,8 @@
   const dbg = (...a) => console.info(...a);
 
   const PATCHED = Symbol('ptmTokenAnd');
-  const MAPPING_KEY = 'ptm-stat-groups';
-
-  // ── 兩層下拉的顯示層 ──
-  // 資料層在清單裡多放了偽父條目、並保留全部原始成員(官網要靠真實 id 反查才
-  // 能渲染既有搜尋,成員不能刪)。這裡決定「當下該讓使用者看到哪一種」:
-  //   ・沒在搜尋 → 顯示偽父、收起成員(解決一長串同前綴條目洗版)
-  //   ・正在搜尋 → 成員照常出現,打「阿茲瓦特」仍是一步命中,不破壞多關鍵字搜尋
-  //   ・還原機制沒掛上 → 偽父一律不顯示,退回官網原生清單(選了才不會壞)
-  let memberCache = { raw: null, ids: new Set() };
-  function memberIds() {
-    const raw = localStorage.getItem(MAPPING_KEY) ?? '';
-    if (raw === memberCache.raw) return memberCache.ids;
-    const ids = new Set();
-    try {
-      for (const table of Object.values(JSON.parse(raw || '{}'))) {
-        for (const hit of Object.values(table)) ids.add(hit.id);
-      }
-    } catch (_) { /* 映射表壞掉就當作沒有成員可收,顯示原生清單 */ }
-    memberCache = { raw, ids };
-    return ids;
-  }
-
-  // 過濾後可能留下沒有任何條目的群組標題,一併清掉
-  function dropEmptyLabels(list) {
-    return list.filter((o, i) => !o?.$isLabel || (list[i + 1] && !list[i + 1].$isLabel));
-  }
-
-  // 摺疊決策每次按鍵都會求值,只在結果「變了」時才記一次,避免洗版
-  let lastLog = '';
-  // 還原機制若整個沒載入,也要能自己認出偽父並藏起來(否則使用者選得到一個
-  // 送不出去的條件)。故不依賴 __ptmStatGroup 存在。
-  const PSEUDO_MARK = 'ptm_g_';
-  function applyGrouping(list, searching) {
-    if (!Array.isArray(list)) return list;
-    const api = window.__ptmStatGroup ?? { isPseudo: (id) => id.includes(PSEUDO_MARK), available: () => false };
-    const available = api.available();
-    if (available && searching) {
-      const pseudo = list.filter((o) => typeof o?.id === 'string' && api.isPseudo(o.id)).length;
-      const line = `搜尋中:${list.length} 項(含合併選單 ${pseudo} 個,成員照常顯示)`;
-      if (line !== lastLog) { lastLog = line; dbg('[PTM] 下拉:' + line); }
-      return list; // 搜尋中:成員照常出現
-    }
-    const members = available ? memberIds() : null;
-    const out = list.filter((o) => {
-      const id = o?.id;
-      if (typeof id !== 'string') return true; // 群組標題、option 子選項(數字 id)
-      if (api.isPseudo(id)) return available;
-      return !members || !members.has(id);
-    });
-    const line = available
-      ? `收合:${list.length} → ${out.length} 項(收起成員 ${list.length - out.length} 筆)`
-      : `合併選單未啟用(還原機制未就緒),顯示原生清單 ${out.length} 項`;
-    if (line !== lastLog) { lastLog = line; dbg('[PTM] 下拉:' + line); }
-    return out.length === list.length ? list : dropEmptyLabels(out);
-  }
+  // 0.3.x 的「同類詞綴合併選單」曾在這裡加一層摺疊顯示,已隨該功能一併移除
+  // (見 CHANGELOG 0.4.0)。本檔現在只做多關鍵字搜尋增強。
 
   function labelOf(ms, opt) {
     if (opt == null) return '';
@@ -112,13 +59,12 @@
       try {
         const raw = String(self.search ?? '').trim().toLowerCase();
         const tokens = raw.split(/\s+/).filter(Boolean);
-        const base = tokens.length >= 2 ? andFilter(self, tokens) : orig.call(self, self);
-        return applyGrouping(base, tokens.length > 0);
+        if (tokens.length >= 2) return andFilter(self, tokens);
       } catch (_) { /* 任何意外退回原生過濾 */ }
       return orig.call(self, self);
     };
     ms[PATCHED] = true;
-    dbg('[PTM] 下拉:已掛上 filteredOptions(多關鍵字搜尋 + 合併選單顯示)');
+    dbg('[PTM] 下拉:已掛上 filteredOptions(多關鍵字搜尋)');
   }
 
   document.addEventListener(

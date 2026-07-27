@@ -21,8 +21,6 @@ const REBUILD_MINUTES = 24 * 60;
 // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
 const dbg = (...a) => console.info(...a);
 
-import { buildStatGroups } from './grouping.js';
-
 async function fetchKind(base, kind) {
   const res = await fetch(base + kind, { credentials: 'omit' });
   if (!res.ok) throw new Error(`fetch ${base}${kind} => HTTP ${res.status}`);
@@ -502,14 +500,8 @@ export async function buildTranslation() {
         // stats 不可用時沿用上次成功的快照;從未成功過就整個不寫,
         // bootstrap 便不覆寫 lscache-tradestats,官網用自己的資料
         const prevStats = prev.translation?.stats;
-        let statGroups = null;
-        if (statsUsable) {
-          // 分組只在英文基準健全時進行 —— 前綴切分以英文為基準,基準若混入他國
-          // 語言,拆出的父/子文字會錯位
-          const grouped = buildStatGroups(translateStats(us.stats, tw?.stats, ggpk.statMap), us.stats);
-          translation.stats = grouped.stats;
-          statGroups = { mapping: grouped.mapping, groups: grouped.groups };
-        } else if (prevStats) translation.stats = prevStats;
+        if (statsUsable) translation.stats = translateStats(us.stats, tw?.stats, ggpk.statMap);
+        else if (prevStats) translation.stats = prevStats;
         // ggpk 種子墊底,官方 trade API 值(台服現行用語)同 key 覆蓋
         const statMap = statsUsable
           ? { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) }
@@ -518,7 +510,6 @@ export async function buildTranslation() {
         const updated = Date.now();
         const doneMsg =
           `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條` +
-          (statGroups?.groups.length ? `、合併選單 ${statGroups.groups.length} 組` : '') +
           (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
           (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
         await chrome.storage.local.set({
@@ -526,8 +517,6 @@ export async function buildTranslation() {
           statMap,
           itemMap,
           uiExtra: { ...communityUI, ...bundledUI }, // 內建繁中字典優先
-          // stats 降級時保留上一份分組表,才不會與沿用的 stats 快照脫節
-          ...(statGroups ? { statGroups } : {}),
           updated,
           buildStatus: { state: 'done', msg: doneMsg, at: updated },
         });
@@ -581,6 +570,7 @@ export async function handleTranslationMessage(msg) {
     }
     case 'translation:clear':
       await chrome.storage.local.remove([
+        // statGroups 是 0.3.x 合併選單的產物,功能移除後一併清掉舊資料
         'translation', 'statMap', 'itemMap', 'uiExtra', 'passives', 'statGroups', 'updated', 'buildStatus',
       ]);
       return { ok: true };

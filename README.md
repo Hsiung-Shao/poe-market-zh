@@ -14,12 +14,7 @@ Path of Exile 1 國際服交易站(`pathofexile.com/trade`)**中文化專用**�
     **維持純英文** —— 其過濾只吃英文,顯示中文會誤導;此為刻意設計,勿加顯示層翻譯
   - 搜尋結果列詞綴:直接替換為中文,英文原文放 hover title 供查對;popup 可開啟
     「詞綴雙語顯示」改為中文下方常駐英文原文小字(僅裝備詞綴,物品名/天賦卡不受影響)
-- **同類詞綴合併選單**(`bg/grouping.js` + `page/stat-group.js`):「有房間:X」86 筆、
-  「有日誌區域:X」15 筆這類只有尾段不同的條目,在下拉中合併成一個父條目 + 子選單。
-  只收「純列舉」的群(條目含數值的維持原樣,否則會失去最小/最大值欄位);搜尋時成員照常
-  出現,一步命中不受影響;送出的查詢一律是真實詞綴 id,分享連結給沒裝擴充的人完全正常;
-  還原機制掛不上時自動退回原生平鋪清單。popup 可關閉
-- **popup**:PoE 暗金風單頁 —— 目前語系 + 繁體中文化 / 還原回英文 / 清除快取 / 詞綴雙語顯示 / 同類詞綴合併選單(翻譯資料由安裝時與每日 alarm 自動更新,無手動更新鈕)
+- **popup**:PoE 暗金風單頁 —— 目前語系 + 繁體中文化 / 還原回英文 / 清除快取 / 詞綴雙語顯示(翻譯資料由安裝時與每日 alarm 自動更新,無手動更新鈕)
 
 技術:Manifest V3 + Vanilla JS,**零建置** —— `chrome://extensions` 開「開發人員模式」→「載入未封裝項目」選本資料夾即可。
 
@@ -76,8 +71,6 @@ icons/                   16/32/48/128
 ```
 node tools/verify-offline.mjs      # 離線:內建字典與重建不降級回歸(不需網路)
 node tools/verify-dataquality.mjs  # 資料品質:語言健檢、變體對接、基底名正規化
-node tools/verify-grouping.mjs     # 合併選單資料層(雙射、value 形狀、超集合不變式)
-node tools/verify-pagelayer.mjs    # 頁面層:state 改寫與摺疊(需 CDP 瀏覽器)
 node tools/verify-audit.mjs        # 譯名稽核結論的回歸測試
 node tools/verify-build.mjs        # 官方 API 對接與翻譯產出(需網路)
 node tools/verify-fallback.mjs     # 社群遞補層與 s2t 轉換(需網路)
