@@ -55,7 +55,7 @@ async function init() {
   ]);
   renderLang(language ?? 'zh_tw');
   renderBilingual(bilingualMods === true);
-  renderGrouping(statGrouping !== false);
+  renderGrouping(statGrouping === true);
   refreshBuildStatus();
 }
 
@@ -88,7 +88,7 @@ $('#bilingualToggle').addEventListener('click', async () => {
 
 $('#groupingToggle').addEventListener('click', async () => {
   const { statGrouping } = await chrome.storage.local.get('statGrouping');
-  const next = statGrouping === false;
+  const next = statGrouping !== true; // 預設關閉,見 content/bootstrap.js 的說明
   await chrome.storage.local.set({ statGrouping: next });
   renderGrouping(next);
   showStatus(`已${next ? '開啟' : '關閉'}同類詞綴合併選單,重新整理交易頁生效`);

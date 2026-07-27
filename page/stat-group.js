@@ -169,6 +169,86 @@
     tick();
   });
 
+  // ── 送出前的最後一道防線 ──
+  // 狀態層的還原不能保證涵蓋所有路徑:0.3.1 實測發現從 option 子選單選值時,
+  // 官網並未呼叫 updateFilter,偽 id 因而原封送到官方後端,搜尋直接失敗。
+  // 這裡在請求真正送出前掃過 body,把殘留的偽 id 換回真實條件;換不掉就中止,
+  // 絕不讓壞查詢離開瀏覽器(送壞查詢除了報錯,還可能觸發官方流量限制)。
+  const isSearchUrl = (u) => /\/api\/trade\d*\/search\//.test(String(u ?? ''));
+
+  function rewriteQuery(payload) {
+    let changed = 0;
+    let unresolved = 0;
+    for (const group of payload?.query?.stats ?? []) {
+      for (const f of group?.filters ?? []) {
+        if (!isPseudo(f?.id)) continue;
+        const picked = f.value?.option;
+        const real = picked === undefined ? null : resolve(f.id, picked);
+        if (real) {
+          dbg(`[PTM] 合併選單:送出前還原 ${f.id} option=${picked} → ${real.id}`);
+          f.id = real.id;
+          f.value = { ...real.value, ...(f.disabled !== undefined ? {} : {}) };
+          changed++;
+        } else {
+          unresolved++;
+        }
+      }
+    }
+    return { changed, unresolved };
+  }
+
+  /** 回傳改寫後的 body 字串;無法還原時回 null(呼叫端須中止請求) */
+  function sanitizeBody(body) {
+    if (typeof body !== 'string' || !body.includes(MARK)) return body;
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch (_) {
+      return body; // 不是 JSON,交給官網原樣處理
+    }
+    const { changed, unresolved } = rewriteQuery(payload);
+    if (unresolved) {
+      console.warn(`[PTM] 合併選單:${unresolved} 個條件無法還原成官方詞綴,已中止這次搜尋。` +
+        '請移除該條件後重試,或在擴充設定中關閉「同類詞綴合併選單」。');
+      return null;
+    }
+    return changed ? JSON.stringify(payload) : body;
+  }
+
+  const origSend = XMLHttpRequest.prototype.send;
+  const origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    this.__ptmUrl = url;
+    return origOpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.send = function (body) {
+    try {
+      if (isSearchUrl(this.__ptmUrl)) {
+        const fixed = sanitizeBody(body);
+        if (fixed === null) return; // 中止:不呼叫原生 send
+        return origSend.call(this, fixed);
+      }
+    } catch (err) {
+      console.warn('[PTM] 合併選單:送出前檢查失敗,改用原生行為:', err);
+    }
+    return origSend.call(this, body);
+  };
+
+  const origFetch = window.fetch;
+  window.fetch = function (input, init) {
+    try {
+      const url = typeof input === 'string' ? input : input?.url;
+      if (isSearchUrl(url) && typeof init?.body === 'string') {
+        const fixed = sanitizeBody(init.body);
+        if (fixed === null) return Promise.reject(new Error('[PTM] 合併選單:條件無法還原,已中止搜尋'));
+        if (fixed !== init.body) return origFetch.call(this, input, { ...init, body: fixed });
+      }
+    } catch (err) {
+      console.warn('[PTM] 合併選單:送出前檢查失敗,改用原生行為:', err);
+    }
+    return origFetch.call(this, input, init);
+  };
+
   // 供顯示層(stat-search.js)查詢本功能是否真的可用
   window.__ptmStatGroup = {
     isPseudo,

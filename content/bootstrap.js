@@ -108,11 +108,12 @@ async function main() {
     return;
   }
 
-  // 兩層下拉:設定開啟且有映射表就備妥資料。
-  // 「還原機制掛不掛得上」不在這裡判斷 —— 那是 stat-group.js 在頁面上即時決定的,
-  // 掛不上時顯示層當下就不會放出合併選單。早期版本在這裡讀上次的失敗旗標,
-  // 結果修好之後還要多重新整理一次才恢復,反而更難診斷。
-  const grouping = statGrouping !== false && !!statGroups?.mapping;
+  // 兩層下拉:**預設關閉**。
+  // 0.3.1 實測發現還原機制不可靠 —— 掛在 stat-filter-group.updateFilter 上,
+  // 但使用者從 option 子選單選值時官網並未走這個方法,偽 id 因此原封送到官方
+  // 後端,搜尋直接失敗(Unknown stat provided: …ptm_g_…)。在找到能保證還原的
+  // 掛點之前,只有明確開啟的人才會拿到合併選單。
+  const grouping = statGrouping === true && !!statGroups?.mapping;
   try {
     if (grouping) {
       localStorage.setItem(STAT_GROUPS_KEY, JSON.stringify(statGroups.mapping));
