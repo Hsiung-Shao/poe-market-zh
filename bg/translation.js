@@ -337,6 +337,82 @@ function buildStatMap(usStats, twStats) {
   return map;
 }
 
+// ── 結果列查表的主鍵:國際服 stat id ──
+// 官網在結果列每條詞綴的 DOM 上帶 `data-field="stat.<id>"`,直接取官方 id
+// 查表即可,不必拿英文全句去比對 —— 後者只要措辭有一點出入(遊戲檔的
+// stat_descriptions 與交易站措辭本來就不同一套)整條就翻不出來。
+//
+// 譯文來源優先序(使用者 2026-07-27 裁定):台服 → GGPK → 保留英文。
+//
+// 台服譯文必須通過守門才採用,因為**同 id 不保證同義**:
+//   R1 同一 id 在國際服清單對應多種英文。GGG 會把語意不同的詞綴併成同一
+//      個 id(「Area contains The Sacred Grove」與「Your Maps have +#%
+//      chance to contain The Sacred Grove」),台服只給一條中文,無從判定
+//      它對應哪一條 —— 硬配就會把「必定含有」翻成「有 #% 機率含有」。
+//   R2/R3 佔位符數量或百分比型態與英文不符,回填會產生殘缺(「含有額外
+//      # 個保險箱」)或單位錯置。
+//   R4 台服根本沒翻(整條純 ASCII),讓 GGPK 有機會接手。
+//
+// 刻意**不做**「中文有『機率』但英文沒有 chance」這類詞彙特徵比對:實測
+// 會把「+#% Chance to Block」→「+#% 格擋率」這種正確譯法誤殺 395 條,而
+// 真正該擋的案例 R1 已全數涵蓋。守衛型過濾一律先量化誤殺率再上線。
+const HASH_RE = /#/g;
+const PERCENT_RE = /#\s*%/g;
+const countOf = (s, re) => (String(s ?? '').match(re) ?? []).length;
+
+// 回傳 null 表示台服譯文可用,否則回傳退回原因代碼
+function gateTwStat(enText, zhText, ambiguousId) {
+  if (!zhText) return 'TW_MISSING';
+  if (ambiguousId) return 'R1_AMBIGUOUS_ID';
+  if (countOf(zhText, HASH_RE) !== countOf(enText, HASH_RE)) return 'R2_PLACEHOLDER_COUNT';
+  if (countOf(zhText, PERCENT_RE) !== countOf(enText, PERCENT_RE)) return 'R3_PERCENT_SHAPE';
+  if (!/[^\x00-\x7F]/.test(zhText)) return 'R4_UNTRANSLATED';
+  return null;
+}
+
+// { [statId]: { en, zh, src } }
+//   en  = 國際服模板,結果列用它建擷取正則抓出實際數值(不可省:省了就
+//         退回「數字→#」的脆弱比對,正負號與字面數字都會出錯)
+//   zh  = 中文模板
+//   src = 'tw' | 'ggpk',供診斷與稽核用
+// 帶 option 的條目(星團珠寶、塗油等)刻意不收 —— 它們的 # 放的是選項
+// 文字不是數值,擷取正則會抓錯;那類條目由 buildStatMap 逐選項展開處理。
+function buildStatIdMap(usStats, twStats, ggpkStatMap = {}) {
+  const map = {};
+  const rejected = {};
+  const twIndex = indexStatEntries(twStats);
+
+  // R1:先掃一次,統計每個 id 對應幾種不同英文
+  const enFormsById = new Map();
+  for (const group of usStats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      if (!entry?.id || !entry.text) continue;
+      let set = enFormsById.get(entry.id);
+      if (!set) enFormsById.set(entry.id, (set = new Set()));
+      set.add(entry.text);
+    }
+  }
+
+  for (const group of usStats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      if (!entry?.id || !entry.text || entry.option?.options) continue;
+      if (map[entry.id]) continue; // 同 id 多筆時第一筆為準(R1 已擋掉歧義的)
+      const en = entry.text;
+      const tw = twIndex.get(entry.id);
+      const reason = gateTwStat(en, tw?.text, (enFormsById.get(entry.id)?.size ?? 1) > 1);
+      if (!reason) {
+        map[entry.id] = { en, zh: tw.text, src: 'tw' };
+        continue;
+      }
+      rejected[reason] = (rejected[reason] ?? 0) + 1;
+      const zh = ggpkStatMap[en] ?? ggpkStatMap[`${en} (Local)`];
+      if (zh) map[entry.id] = { en, zh, src: 'ggpk' };
+      // 兩源都沒有 → 不寫入,結果列保留英文(寧缺勿錯)
+    }
+  }
+  return { map, rejected };
+}
+
 // ── 內建資料檔(源自 POE Trade zh,使用者指示直接沿用;README 致謝)──
 // translate.json:物品名 4,636 條,值已是「中文 (英文)」格式
 // translate.zh_TW.json:官網 UI 字串 1,760 條(繁中)
@@ -405,6 +481,8 @@ export const _test = {
   translateStatic,
   translateFilters,
   buildStatMap,
+  buildStatIdMap,
+  gateTwStat,
   buildItemMap,
   makeS2t,
   fetchCommunityDict,
@@ -488,7 +566,9 @@ export async function buildTranslation() {
         // 照常更新(與上方分項容錯同精神)
         const statsUsable = looksEnglish(us.stats);
         if (!statsUsable) degraded.push('官方英文詞綴資料異常(非英文)');
-        const prev = statsUsable ? {} : await chrome.storage.local.get(['translation', 'statMap']);
+        const prev = statsUsable
+          ? {}
+          : await chrome.storage.local.get(['translation', 'statMap', 'statIdMap']);
 
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
         const officialItems = mergeOfficialItems(bundledItems, ggpk.items);
@@ -506,15 +586,28 @@ export async function buildTranslation() {
         const statMap = statsUsable
           ? { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) }
           : { ...ggpk.statMap, ...(prev.statMap ?? {}) };
+        // 結果列的主要查表(依官方 stat id);英文基準異常時沿用上次的,
+        // 絕不用汙染的英文重建 —— 那會讓 R2/R3 守門全數誤判
+        let statIdMap = prev.statIdMap ?? {};
+        let idRejected = null;
+        if (statsUsable) {
+          const built = buildStatIdMap(us.stats, tw?.stats, ggpk.statMap);
+          statIdMap = built.map;
+          idRejected = built.rejected;
+        }
         const itemMap = buildItemMap(us.items, tw?.items, fallbackItems);
         const updated = Date.now();
         const doneMsg =
           `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條` +
           (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
           (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
+        if (idRejected) {
+          dbg('[PTM] build:詞綴 id 對照表', Object.keys(statIdMap).length, '條;退回原因', idRejected);
+        }
         await chrome.storage.local.set({
           translation,
           statMap,
+          statIdMap,
           itemMap,
           uiExtra: { ...communityUI, ...bundledUI }, // 內建繁中字典優先
           updated,
@@ -571,7 +664,8 @@ export async function handleTranslationMessage(msg) {
     case 'translation:clear':
       await chrome.storage.local.remove([
         // statGroups 是 0.3.x 合併選單的產物,功能移除後一併清掉舊資料
-        'translation', 'statMap', 'itemMap', 'uiExtra', 'passives', 'statGroups', 'updated', 'buildStatus',
+        'translation', 'statMap', 'statIdMap', 'itemMap', 'uiExtra', 'passives', 'statGroups',
+        'updated', 'buildStatus',
       ]);
       return { ok: true };
     default:

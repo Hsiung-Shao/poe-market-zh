@@ -1,6 +1,13 @@
 // document_end(isolated):搜尋結果頁即時翻譯。
-// 翻譯法:把詞綴文字的數值正規化成 #,查 statMap(英文模板 → 中文模板),
-// 再把原數值依序回填中文模板。查不到就保留原文(寧缺勿錯)。
+// 詞綴翻譯兩條路徑,依序嘗試:
+//   1. **官方 stat id**(主要)—— 官網在每條詞綴的 DOM 上帶
+//      data-field="stat.<id>",直接取 id 查 statIdMap,再用該條的美服模板
+//      建擷取正則抓出實際數值,填進中文模板。
+//   2. 英文全句比對(後備)—— 把數值正規化成 # 查 statMap。
+// 之所以以 id 為主:英文全句當鍵太脆弱,措辭、正負號、字面數字任一有出入
+// 整條就翻不出來(實測命中率 59% vs id 法 95%)。抓不到 data-field 時
+// 自動退回路徑 2,行為與加入 id 查表之前完全相同。
+// 兩條路徑都查不到就保留原文(寧缺勿錯)。
 // 翻譯採直接替換,英文原文放 title 屬性 hover 可查;popup 可開啟
 // 「詞綴雙語顯示」(bilingualMods),改為在中文下方常駐英文原文小字
 // (僅裝備詞綴;物品名/天賦卡不受此設定影響)。
@@ -14,6 +21,15 @@
     resultsContainer: '.results',
     mod: '.item-mod',
     modText: '.lc.s',
+    // 官方 stat id 的載體,是 .item-mod 的後代。實機結構(2026-07-28 實測):
+    //   <div class="item-mod item-mod--explicit">
+    //     <span data-field="stat.explicit.stat_3610535490" class="s lc">詞綴文字</span>
+    //     <span class="lc l"><span class="d">[30]</span></span>   ← roll 範圍
+    //     <span class="lc r"><span class="d">(≥53)</span></span>  ← 物品等級
+    //   </div>
+    // 帶 data-field 的那個 span 同時就是 .lc.s(class 順序無關),因此譯文
+    // 寫回的目標與 id 的來源是同一個元素。
+    modField: '[data-field^="stat."]',
     itemName: '.itemName .lc',
     notable: '.notableProperty', // 天賦卡(星團珠寶/塗油)
     notableTitle: '.colourAugmented',
@@ -29,6 +45,7 @@
 
   const state = {
     statMap: null,
+    statIdMap: null, // { [statId]: { en, zh, src } },依官方 stat id 查表
     itemMap: null,
     passives: null, // { clusterJewel, passivesNotable }
     bilingualMods: false, // 詞綴雙語顯示(中文下附英文原文小字)
@@ -36,11 +53,78 @@
 
   // 診斷統計(打包後 dbg 為 no-op,只剩極少量計數;可在 console 打
   // __ptmResults() 看目前這批結果的翻譯命中狀況)
-  const stat = { seen: 0, miss: 0, dirty: 0, missSamples: [], dirtySamples: [] };
+  const stat = {
+    seen: 0, byId: 0, byText: 0, miss: 0, dirty: 0,
+    noField: 0, // 有 .item-mod 但抓不到 data-field(官網改版的警訊)
+    missSamples: [], dirtySamples: [],
+  };
 
   function fillTemplate(zhTpl, nums) {
     let i = 0;
     return zhTpl.replace(/#/g, () => nums[i++] ?? '#');
+  }
+
+  // ── 依官方 stat id 翻譯 ──
+  const STAT_FIELD_PREFIX = 'stat.'; // data-field="stat.explicit.stat_123" → explicit.stat_123
+  const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+  // increased/reduced 與 more/less 是**同一個 stat id 的兩種型態**,官方模板
+  // 只會給其中一種。原文與模板不同態時必須兩邊同步互換,否則會把「增加」
+  // 譯成「減少」—— 語意完全相反。中文側找不到對應詞就放棄 id 路徑,
+  // 交給英文全句比對(它用的是精確原文,不會譯反)。
+  // 測試用一律非全域 —— /g 正則的 .test() 會保留 lastIndex,同一個物件重複
+  // 呼叫會時真時假。替換才用 /g。
+  const SYMMETRY = [
+    { want: /\bincreased\b/i, has: /\breduced\b/i, swap: /\breduced\b/gi, to: 'increased', zhHas: '減少', zhTo: '增加' },
+    { want: /\breduced\b/i, has: /\bincreased\b/i, swap: /\bincreased\b/gi, to: 'reduced', zhHas: '增加', zhTo: '減少' },
+    { want: /\bmore\b/i, has: /\bless\b/i, swap: /\bless\b/gi, to: 'more', zhHas: '更少', zhTo: '更多' },
+    { want: /\bless\b/i, has: /\bmore\b/i, swap: /\bmore\b/gi, to: 'less', zhHas: '更多', zhTo: '更少' },
+  ];
+
+  function applySymmetry(text, enTpl, zhTpl) {
+    for (const s of SYMMETRY) {
+      // 原文是 want 態、模板是 has 態(且不含 want)才需要互換
+      if (!s.want.test(text) || !s.has.test(enTpl) || s.want.test(enTpl)) continue;
+      if (!zhTpl.includes(s.zhHas)) return null; // 中文找不到對應詞,不冒險譯反
+      return { en: enTpl.replace(s.swap, s.to), zh: zhTpl.split(s.zhHas).join(s.zhTo) };
+    }
+    return { en: enTpl, zh: zhTpl };
+  }
+
+  // 用美服模板當擷取正則:轉義正則特殊字元後,把 # 換成捕獲群組。
+  // 比「數值→#」穩健 —— 正負號與字面數字(如 per 100 maximum Mana 的
+  // 100)都由模板自己界定,不會被誤當成待填的數值。
+  // 純函式,離線可測(見 tools/verify-statid.mjs)。
+  function renderStat(text, enTpl, zhTpl) {
+    const sym = applySymmetry(text, enTpl, zhTpl);
+    if (!sym) return null;
+    const pattern = sym.en.replace(REGEX_ESCAPE, '\\$&').replace(/#/g, '(\\S+)');
+    let m;
+    try {
+      m = new RegExp(`^${pattern}$`).exec(text);
+    } catch (_) {
+      return null; // 模板轉不成合法正則就放棄,交給後備路徑
+    }
+    if (!m) return null;
+    let i = 1;
+    return sym.zh.replace(/#/g, () => m[i++] ?? '#');
+  }
+
+  function lookupById(mod, text) {
+    if (!state.statIdMap) return null;
+    let el = null;
+    if (mod.matches?.(SELECTORS.modField)) {
+      el = mod;
+    } else {
+      const found = mod.querySelectorAll(SELECTORS.modField);
+      // 一個 .item-mod 底下出現多個 stat id 時無從判定這段文字屬於哪一個,
+      // 直接放棄 id 路徑交給文字比對,不猜
+      if (found.length === 1) el = found[0];
+    }
+    const field = el?.getAttribute('data-field');
+    if (!field) { stat.noField++; return null; }
+    const hit = state.statIdMap[field.slice(STAT_FIELD_PREFIX.length)];
+    if (!hit) return null;
+    return renderStat(text, hit.en, hit.zh);
   }
 
   // 回傳 { tpl, numRe }:命中的中文模板與應使用的數值抓取規則
@@ -98,15 +182,22 @@
     const el = mod.querySelector(SELECTORS.modText) ?? mod;
     const text = modText(el);
     if (!text) return;
-    const hit = lookupStat(text);
     stat.seen++;
-    if (!hit) {
+    // 主要路徑:官方 stat id;失敗才退回英文全句比對
+    let zh = lookupById(mod, text);
+    if (zh) stat.byId++;
+    else {
+      const hit = state.statMap ? lookupStat(text) : null;
+      if (hit) {
+        stat.byText++;
+        zh = fillTemplate(hit.tpl, text.match(hit.numRe) ?? []);
+      }
+    }
+    if (!zh) {
       stat.miss++;
       if (stat.missSamples.length < 5) stat.missSamples.push(text.slice(0, 70));
     }
-    if (hit) {
-      const nums = text.match(hit.numRe) ?? [];
-      const zh = fillTemplate(hit.tpl, nums);
+    if (zh) {
       setModText(el, zh);
       // 譯文寫回後若元素裡還殘留英文原文,代表官網把文字拆進了我們沒清到的
       // 結構(中英會黏成一行)。這是使用者回報過的症狀,留樣本供比對。
@@ -180,15 +271,23 @@
     statTimer = setTimeout(() => {
       statTimer = null;
       if (!stat.seen) return;
-      dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條,查無翻譯 ${stat.miss} 條,譯文殘留原文 ${stat.dirty} 條`);
+      dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
+        `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條`);
+      // id 路徑完全沒命中代表 data-field 抓不到(官網改版),此時全靠後備的
+      // 英文全句比對,命中率會明顯掉下來 —— 值得在主控台明說
+      if (state.statIdMap && stat.seen && !stat.byId) {
+        console.warn(`[PTM] 未從 data-field 取得任何官方詞綴 id(${stat.noField} 條無此屬性),` +
+          '已全部退回英文全句比對。官網可能改版,請回報。');
+      }
       if (stat.miss) dbg('[PTM] 查無翻譯樣本:', stat.missSamples);
       if (stat.dirty) console.warn('[PTM] 譯文殘留英文原文(中英會黏成一行),樣本:', stat.dirtySamples);
     }, 500);
   }
 
   function processContainer(root) {
-    // 詞綴需要 statMap(官方 API);物品名/天賦卡只需內建字典,各自獨立降級
-    if (state.statMap) {
+    // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
+    // 物品名/天賦卡只需內建字典,各自獨立降級
+    if (state.statIdMap || state.statMap) {
       root.querySelectorAll(SELECTORS.mod).forEach(translateModElement);
     }
     if (state.itemMap) {
@@ -244,24 +343,32 @@
   }
 
   async function init() {
-    const { language, statMap, itemMap, passives, bilingualMods } = await chrome.storage.local.get([
-      'language',
-      'statMap',
-      'itemMap',
-      'passives',
-      'bilingualMods',
-    ]);
+    const { language, statMap, statIdMap, itemMap, passives, bilingualMods } =
+      await chrome.storage.local.get([
+        'language',
+        'statMap',
+        'statIdMap',
+        'itemMap',
+        'passives',
+        'bilingualMods',
+      ]);
     if (language !== 'zh_tw') return;
     state.statMap = statMap ?? null; // 官方 API 產物,可能尚未建置
+    state.statIdMap = statIdMap ?? null; // 同上;舊版升級後首次重建才會有
     state.itemMap = itemMap ?? null; // 內建字典即可提供
     state.passives = passives ?? null;
     state.bilingualMods = bilingualMods === true;
-    if (!state.statMap && !state.itemMap && !state.passives) return; // 無資料就不掛 observer
-    dbg(`[PTM] 結果列:詞綴表 ${Object.keys(state.statMap ?? {}).length} 條、` +
+    // 無資料就不掛 observer
+    if (!state.statIdMap && !state.statMap && !state.itemMap && !state.passives) return;
+    dbg(`[PTM] 結果列:詞綴 id 表 ${Object.keys(state.statIdMap ?? {}).length} 條、` +
+      `詞綴文字表 ${Object.keys(state.statMap ?? {}).length} 條、` +
       `物品表 ${Object.keys(state.itemMap ?? {}).length} 條、雙語顯示 ${state.bilingualMods ? '開' : '關'}`);
     // 手動診斷:在 console 打 __ptmResults() 看目前這批結果的命中狀況
     // 打包版 dbg 為 no-op,但在 console 直接呼叫仍看得到回傳值
     window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };
+    // 供離線驗證腳本呼叫真正的實作與常數(不另外複製一份,避免測試與實機分歧)
+    window.__ptmRenderStat = renderStat;
+    window.__ptmInternals = { SELECTORS, statIdOf: (field) => field.slice(STAT_FIELD_PREFIX.length) };
     waitForResults();
   }
 
