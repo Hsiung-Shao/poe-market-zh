@@ -3,9 +3,10 @@
 Path of Exile 1 國際服交易站(`pathofexile.com/trade`)**中文化專用**擴充 —— poe-trade-mate(內部完整版)的精簡分支,僅保留翻譯功能,移除書籤、物價、快捷篩選與側邊欄。兩版擴充 id 不同,可同時載入 Chrome(建議只啟用其中一個,避免互搶官網 lscache 快取)。
 
 - **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯
-- **廣義搜尋**(`page/stat-search.js`):下拉搜尋輸入**含空白的多關鍵字**時改為 token AND
-  配對(每個關鍵字各自命中即可,不限順序連續;中英可混搜,如「phy gem」「物理 gems」);
-  單一關鍵字維持官網原生行為。實作為 MAIN world 對 multiselect Vue 實例的
+- **廣義搜尋**(`page/stat-search.js`):在官網原生結果**後面**補兩層比對,原生命中的
+  順序完全不變 —— **多關鍵字**(輸入含空白時 token AND,中英可混搜,如「phy gem」
+  「物理 gems」)與**模糊比對**(中文簡稱與英文縮寫,如「移速」「火抗」`mvspd`,
+  補充項另立「模糊比對」群組)。實作為 MAIN world 對 multiselect Vue 實例的
   filteredOptions watcher patch,官網結構不符時靜默停用、例外時退回原生過濾
 - **顯示規則**(與完整版不同處):
   - 介面字串(標題、欄位名、按鈕、placeholder):**純中文直接替換**,不做雙語對照
@@ -104,6 +105,7 @@ node tools/verify-offline.mjs      # 離線:內建字典與重建不降級回歸
 node tools/verify-dataquality.mjs  # 資料品質:語言健檢、變體對接、基底名正規化
 node tools/verify-audit.mjs        # 譯名稽核結論的回歸測試
 node tools/verify-statid.mjs       # 詞綴代碼對接、數值回填、增減對稱、覆蓋率門檻
+node tools/verify-fuzzy.mjs        # 下拉模糊比對:評分、門檻、去重、33 案例排名門檻
 node tools/verify-build.mjs        # 官方 API 對接與翻譯產出(需網路)
 node tools/verify-fallback.mjs     # 社群遞補層與 s2t 轉換(需網路)
 ```
