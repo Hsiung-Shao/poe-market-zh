@@ -198,6 +198,15 @@ const __ = (() => {
     'Market Ratios': '市場匯率',
     'Collapse Listings by Account': '依帳號合併列表',
 
+    // ⚠ 官網有**兩套** i18n,這份字典只餵得到舊的那套。
+    //   舊(legacy `plugins.js`):`translate(s)` → `typeof __ != "undefined" && __[s]`
+    //     → 篩選面板、按鈕等,加在這裡有效。
+    //   新(Vue3 app):gettext 式 `catalog[lang].translations[context][msgid]`,
+    //     而且開頭就是 `if (this.lang.value === this.defaultLang) return 原文`
+    //     → 英文站永遠不查表,**加在這裡完全沒有作用**。
+    //   結果列的物品卡(含傭兵契約書的「Tier N」「Mercenary Level」「Build」)
+    //   屬於新的那套,只能在 content/results.js 以 DOM 層處理。
+
     // ── 其他 ──
     'Search Listed Items': '搜尋已上架物品',
     'Recent Searches': '最近的搜尋',

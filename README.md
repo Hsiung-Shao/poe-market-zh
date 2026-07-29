@@ -101,13 +101,15 @@ icons/                   16/32/48/128
 ## 開發驗證
 
 ```
-node tools/verify-offline.mjs      # 離線:內建字典與重建不降級回歸(不需網路)
-node tools/verify-dataquality.mjs  # 資料品質:語言健檢、變體對接、基底名正規化
-node tools/verify-audit.mjs        # 譯名稽核結論的回歸測試
-node tools/verify-statid.mjs       # 詞綴代碼對接、數值回填、增減對稱、覆蓋率門檻
-node tools/verify-fuzzy.mjs        # 下拉模糊比對:評分、門檻、去重、33 案例排名門檻
-node tools/verify-build.mjs        # 官方 API 對接與翻譯產出(需網路)
-node tools/verify-fallback.mjs     # 社群遞補層與 s2t 轉換(需網路)
+node tools/verify-offline.mjs        # 離線:內建字典與重建不降級回歸(不需網路)
+node tools/verify-dataquality.mjs    # 資料品質:語言健檢、變體對接、基底名正規化
+node tools/verify-audit.mjs          # 譯名稽核結論的回歸測試
+node tools/verify-statid.mjs         # 詞綴代碼對接、數值回填、增減對稱、覆蓋率門檻
+node tools/verify-fuzzy.mjs          # 下拉模糊比對:評分、門檻、去重、33 案例排名門檻
+node tools/verify-results-watch.mjs  # 結果容器被 SPA 重建後的重新掛載判定
+node tools/verify-mercenary.mjs      # 傭兵契約書技能/輔助名稱對照(含真實快照)
+node tools/verify-build.mjs          # 官方 API 對接與翻譯產出(需網路)
+node tools/verify-fallback.mjs       # 社群遞補層與 s2t 轉換(需網路)
 ```
 
 (`tools/` 為維護端本地工具,不隨公開存放庫發布。)

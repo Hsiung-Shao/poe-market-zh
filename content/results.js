@@ -30,6 +30,15 @@
     // 帶 data-field 的那個 span 同時就是 .lc.s(class 順序無關),因此譯文
     // 寫回的目標與 id 的來源是同一個元素。
     modField: '[data-field^="stat."]',
+    // 傭兵契約書(3.29)的技能區塊。與一般詞綴同為 .item-mod,但結構完全不同:
+    //   <div class="item-mod item-mod--mercenary">
+    //     <div><img class="lci"><span>技能名</span></div>
+    //     <div><span>輔助名</span> ( <span>Tier 3</span> ) </div>
+    //   </div>
+    // 沒有 <br>、沒有 .lc.s、也沒有 data-field。依 <br> 切行的 modText 會把整塊
+    // 黏成一串(實測「Elemental WeaknessIncreased Area of Effect (Tier 2)」),
+    // 兩條既有路徑都必然落空,因此改走逐個名稱 span 的專用路徑。
+    mercenaryBlock: '.item-mod--mercenary',
     itemName: '.itemName .lc',
     notable: '.notableProperty', // 天賦卡(星團珠寶/塗油)
     notableTitle: '.colourAugmented',
@@ -56,6 +65,9 @@
   const stat = {
     seen: 0, byId: 0, byText: 0, miss: 0, dirty: 0,
     noField: 0, // 有 .item-mod 但抓不到 data-field(官網改版的警訊)
+    reattach: 0, // 結果容器被 SPA 重建後重新掛載監聽的次數
+    merc: 0, mercMiss: 0, // 傭兵契約書:譯出的名稱數 / 查無的名稱數
+    mercMissSamples: [],
     missSamples: [], dirtySamples: [],
   };
 
@@ -177,8 +189,93 @@
     });
   }
 
+  // ── 傭兵契約書(3.29)──
+  // 官方交易 API 有 `mercenary.*` 這組條目(兩服各 534 條、依 id 完全對接),
+  // 但結果列的 DOM **不帶 data-field**,拿不到 id,只能以英文名反查。
+  // API 的條目文字含階級後綴(`Greater More Duration (Tier 3)` /
+  // 「高階更多持續時間 (階級 3)」),而畫面上名稱與階級是**分開兩個元素**,
+  // 所以建表時把兩邊的後綴都剝掉,只留名稱本體;
+  // 「(Tier N)」那段由官網自己查 `__['Tier {tier}']` 翻(見 page/ui-strings.js)。
+  const MERC_ID_PREFIX = 'mercenary.';
+  const TIER_EN_RE = /\s*\(Tier\s*\d+\)\s*$/;
+  const TIER_ZH_RE = /\s*[(（]階級\s*\d+[)）]\s*$/;
+
+  // 純函式,離線可測(tools/verify-mercenary.mjs)
+  function buildMercenaryNames(statIdMap) {
+    const map = new Map();
+    for (const [id, v] of Object.entries(statIdMap ?? {})) {
+      if (!id.startsWith(MERC_ID_PREFIX)) continue;
+      const en = String(v?.en ?? '').replace(TIER_EN_RE, '').trim();
+      const zh = String(v?.zh ?? '').replace(TIER_ZH_RE, '').trim();
+      // en === zh 代表官方那筆根本沒翻,收進來只會讓 hover 原文變成中文
+      if (!en || !zh || en === zh) continue;
+      map.set(en, zh);
+    }
+    return map;
+  }
+
+  let mercNames = null;
+  function mercenaryNames() {
+    if (!mercNames) mercNames = buildMercenaryNames(state.statIdMap);
+    return mercNames;
+  }
+
+  // 階級那段官網走的是**新版 Vue3 的 gettext i18n**(`catalog[lang]...`),
+  // 而它在英文站是 `lang === defaultLang → 直接回原文`,連查表都不做 ——
+  // 也就是說塞進 page/ui-strings.js 的 `__` 字典完全沒有作用,只能在這裡翻。
+  // 「階級 N」是官方用詞:台服 trade API 的傭兵條目即為「… (階級 3)」。
+  // 純函式,離線可測。
+  const TIER_TEXT_RE = /^Tier\s*(\d+)$/;
+  function tierText(text) {
+    const m = TIER_TEXT_RE.exec(String(text ?? '').trim());
+    return m ? `階級 ${m[1]}` : null;
+  }
+
+  function translateMercenary(mod) {
+    const names = mercenaryNames();
+    if (!names.size) return;
+    // 逐個 span 比對:技能名與輔助名各自一個 span,階級那個 span 內容是
+    // 「Tier 3」不在表內,自然略過,不必特別排除
+    mod.querySelectorAll('span').forEach((span) => {
+      const text = modText(span);
+      if (!text) return;
+      // 階級:自己翻,不進名稱表也不算命中/漏譯
+      const tier = tierText(text);
+      if (tier) { setModText(span, tier); return; }
+      const zh = names.get(text);
+      if (!zh) {
+        if (stat.mercMissSamples.length < 5) {
+          stat.mercMiss++;
+          stat.mercMissSamples.push(text.slice(0, 50));
+        }
+        return;
+      }
+      setModText(span, zh);
+      stat.merc++;
+      if (state.bilingualMods) {
+        // 英文原文要掛在**整行的容器**上,不能 append 進 span:span 是行內元素,
+        // 塞 block 進去會把同一行後面的「(階級 N)」擠到下一行(使用者實測回報)
+        const line = span.parentElement ?? span;
+        const orig = document.createElement('div');
+        orig.className = 'ptm-orig';
+        orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;';
+        orig.textContent = text;
+        line.appendChild(orig);
+      } else {
+        span.title = text;
+      }
+    });
+  }
+
   function translateModElement(mod) {
     if (mod.dataset.ptmDone) return;
+    // 傭兵區塊要在既有邏輯之前攔下:它同樣是 .item-mod,但整塊沒有 <br>,
+    // 走既有路徑只會把整塊黏成一串然後算成「查無」
+    if (mod.matches?.(SELECTORS.mercenaryBlock)) {
+      translateMercenary(mod);
+      mod.dataset.ptmDone = '1';
+      return;
+    }
     const el = mod.querySelector(SELECTORS.modText) ?? mod;
     const text = modText(el);
     if (!text) return;
@@ -270,9 +367,15 @@
     if (statTimer) return;
     statTimer = setTimeout(() => {
       statTimer = null;
-      if (!stat.seen) return;
-      dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
-        `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條`);
+      if (!stat.seen && !stat.merc) return;
+      if (stat.seen) {
+        dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
+          `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條`);
+      }
+      if (stat.merc || stat.mercMiss) {
+        dbg(`[PTM] 結果列:傭兵技能/輔助 譯出 ${stat.merc} 條、查無 ${stat.mercMiss} 條`);
+        if (stat.mercMiss) dbg('[PTM] 傭兵查無樣本:', stat.mercMissSamples);
+      }
       // id 路徑完全沒命中代表 data-field 抓不到(官網改版),此時全靠後備的
       // 英文全句比對,命中率會明顯掉下來 —— 值得在主控台明說
       if (state.statIdMap && stat.seen && !stat.byId) {
@@ -315,31 +418,59 @@
     }, DEBOUNCE_MS);
   }
 
-  function watchResults(container) {
-    processContainer(container);
-    new MutationObserver((mutations) => {
+  // 官網是 SPA,切到 History 分頁(/trade/history)會把整個搜尋畫面連同
+  // .results 容器銷毀,切回搜尋分頁時建立的是**全新節點**。
+  // 2026-07-29 於官網實測:切走後舊節點 isConnected=false、全頁 .results
+  // 歸零;切回後的節點與原節點不同一。(切「大宗通貨交易」則不會重建。)
+  // 舊寫法找到容器一次就把 body observer disconnect,此後永遠監聽那個已
+  // 脫離文件的節點 —— 使用者回報的「History 來回後結果完全沒翻譯」即此,
+  // 而且完全無聲。因此 body observer 改為常駐,容器被換掉就重新掛上去。
+  let container = null;
+  let containerObserver = null;
+
+  // 判定某個新增節點是否代表「結果容器被重建」。純函式,離線可測
+  // (tools/verify-results-watch.mjs)。以有無 matches 方法辨識元素節點,
+  // 文字節點自然被濾掉,不依賴 instanceof 以便在測試沙箱中執行。
+  function newContainerIn(node, current) {
+    if (!node || typeof node.matches !== 'function') return null;
+    // 結果列串流時每一列都會進到這裡,而列是掛在現用容器底下的,先擋掉
+    // 才不會每列都跑一次 querySelector
+    if (current && current.contains?.(node)) return null;
+    const found = node.matches(SELECTORS.resultsContainer)
+      ? node
+      : node.querySelector(SELECTORS.resultsContainer);
+    return found && found !== current ? found : null;
+  }
+
+  function attachContainer(el) {
+    if (containerObserver) containerObserver.disconnect();
+    container = el;
+    containerObserver = new MutationObserver((mutations) => {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node instanceof HTMLElement) schedule(node);
         }
       }
-    }).observe(container, { childList: true, subtree: true });
+    });
+    containerObserver.observe(el, { childList: true, subtree: true });
+    processContainer(el);
   }
 
   function waitForResults() {
     const existing = document.querySelector(SELECTORS.resultsContainer);
-    if (existing) {
-      watchResults(existing);
-      return;
-    }
-    const bodyObserver = new MutationObserver(() => {
-      const container = document.querySelector(SELECTORS.resultsContainer);
-      if (container) {
-        bodyObserver.disconnect();
-        watchResults(container);
+    if (existing) attachContainer(existing);
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          const found = newContainerIn(node, container);
+          if (!found) continue;
+          stat.reattach++;
+          dbg(`[PTM] 結果容器已重建(第 ${stat.reattach} 次),重新掛上監聽`);
+          attachContainer(found);
+          return;
+        }
       }
-    });
-    bodyObserver.observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   async function init() {
@@ -368,7 +499,13 @@
     window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };
     // 供離線驗證腳本呼叫真正的實作與常數(不另外複製一份,避免測試與實機分歧)
     window.__ptmRenderStat = renderStat;
-    window.__ptmInternals = { SELECTORS, statIdOf: (field) => field.slice(STAT_FIELD_PREFIX.length) };
+    window.__ptmInternals = {
+      SELECTORS,
+      statIdOf: (field) => field.slice(STAT_FIELD_PREFIX.length),
+      newContainerIn,
+      buildMercenaryNames,
+      tierText,
+    };
     waitForResults();
   }
 
