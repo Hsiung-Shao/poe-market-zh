@@ -2,6 +2,11 @@
 // 依官方 id 對接產生中文化資料。資料來自 GGG 官方公開 API,
 // 另有 data/ggpk.json 離線層(解析本機 Content.ggpk 的官方遊戲資料,
 // 由 tools/gen-ggpk-data.mjs 產生)作為詞綴種子與物品遞補。
+//
+// 六個字典本身走 bg/dict-source.js 的三層降級(遠端 → storage 快取 → 內建),
+// 這個檔只管「拿到字典之後怎麼用」,以及任一字典拿不到時如何只降級那一項。
+
+import { clearDictCache, loadDict, resetDictStatus, saveDictStatus } from './dict-source.js';
 
 const API_BASE = {
   us: 'https://www.pathofexile.com/api/trade/data/',
@@ -413,31 +418,37 @@ function buildStatIdMap(usStats, twStats, ggpkStatMap = {}) {
   return { map, rejected };
 }
 
-// ── 內建資料檔(源自 POE Trade zh,使用者指示直接沿用;README 致謝)──
+// ── 六個字典(源自 POE Trade zh,使用者指示直接沿用;README 致謝)──
 // translate.json:物品名 4,636 條,值已是「中文 (英文)」格式
 // translate.zh_TW.json:官網 UI 字串 1,760 條(繁中)
 // clusterJewel.json / passivesNotable.json:結果頁天賦卡名稱+描述
-async function loadBundled(file) {
-  const res = await fetch(chrome.runtime.getURL(`data/${file}`));
-  const text = await res.text();
-  return JSON.parse(text.replace(/^﻿/, '')); // 部分檔案含 BOM
-}
+// s2t.json:簡→繁字元對照(社群遞補層專用)
+// ggpk.json:本機 Content.ggpk 抽出的官方繁中(詞綴種子 + 物品遞補)
+//
+// 取得方式一律經 loadDict():遠端 → storage 快取 → 擴充內建。
 
-// ── ggpk 離線層:解析本機 Content.ggpk 取得的官方繁中(GGG 遊戲資料)──
-// 由 tools/gen-ggpk-data.mjs 產生 data/ggpk.json;檔案不存在(尚未產生)
-// 時回空集合,完全不影響建置流程
-async function loadGgpk() {
+// 單檔容錯:三層全滅時只讓那一個字典變空,其餘照常。
+// ⚠ 遠端化之前這幾個呼叫**完全沒有錯誤處理**,任一失敗就讓整個 buildTranslation
+// 回 { ok:false }。當時每個檔都在擴充包裡、失敗機率實質為零所以沒事;一旦多了
+// 網路那一層,不補容錯等於把「必定成功」這個性質弄壞。
+async function loadDictOr(file, empty, failed) {
   try {
-    const g = await loadBundled('ggpk.json');
-    return { statMap: g?.statMap ?? {}, items: g?.items ?? {} };
-  } catch (_) {
-    return { statMap: {}, items: {} };
+    return await loadDict(file);
+  } catch (err) {
+    failed.add(file);
+    dbg(`[PTM] 字典 ${file} 三層(遠端/快取/內建)全部失敗:`, err?.message ?? err);
+    return empty;
   }
 }
 
-// ── 遞補層:社群資料下載與簡→繁轉換 ──
-async function loadS2tMap() {
-  return loadBundled('s2t.json');
+// ── ggpk 離線層:解析本機 Content.ggpk 取得的官方繁中(GGG 遊戲資料)──
+// 由 tools/gen-ggpk-data.mjs 產生 data/ggpk.json;拿不到時回空集合,
+// 只影響詞綴種子與物品遞補的覆蓋率,不影響建置流程。
+// meta(遊戲版本、產生時間)一併帶出來給 popup 顯示 —— 以前讀進來就丟掉,
+// 使用者無從得知手上這份遊戲資料是哪個版本抽的。
+async function loadGgpk(failed) {
+  const g = await loadDictOr('ggpk.json', null, failed);
+  return { statMap: g?.statMap ?? {}, items: g?.items ?? {}, meta: g?.meta ?? null };
 }
 
 function makeS2t(charMap) {
@@ -503,32 +514,60 @@ export async function buildTranslation() {
   if (building) return building;
   building = (async () => {
     try {
-      // ── 第一階段:內建字典(源自 POE Trade zh)──
+      // ── 第一階段:字典(遠端 → 快取 → 內建)──
+      resetDictStatus();
       await chrome.storage.local.set({
-        buildStatus: { state: 'building', msg: '載入內建字典…', at: Date.now() },
+        buildStatus: { state: 'building', msg: '載入翻譯字典…', at: Date.now() },
       });
-      const [bundledItems, bundledUI, clusterJewel, passivesNotable, ggpk] = await Promise.all([
-        loadBundled('translate.json'),
-        loadBundled('translate.zh_TW.json'),
-        loadBundled('clusterJewel.json'),
-        loadBundled('passivesNotable.json'),
-        loadGgpk(),
-      ]);
+      const dictFailed = new Set();
+      const [bundledItems, bundledUI, clusterJewel, passivesNotable, s2tMap, ggpk] =
+        await Promise.all([
+          loadDictOr('translate.json', {}, dictFailed),
+          loadDictOr('translate.zh_TW.json', {}, dictFailed),
+          loadDictOr('clusterJewel.json', {}, dictFailed),
+          loadDictOr('passivesNotable.json', {}, dictFailed),
+          loadDictOr('s2t.json', {}, dictFailed),
+          loadGgpk(dictFailed),
+        ]);
+      const dictStatus = await saveDictStatus({
+        failed: [...dictFailed],
+        gameVersion: ggpk.meta?.game_version ?? null,
+        gameDataGeneratedAt: ggpk.meta?.generated_at ?? null,
+      });
+      dbg(
+        `[PTM] 字典來源:遠端 ${dictStatus.counts.remote}、快取 ${dictStatus.counts.cache}、` +
+          `內建 ${dictStatus.counts.bundled}` +
+          (dictStatus.indexVersion != null ? `(遠端索引 v${dictStatus.indexVersion})` : '') +
+          (dictFailed.size ? `;取得失敗:${[...dictFailed].join('、')}` : '')
+      );
+
       const itemMapBundled = {};
       for (const [en, v] of Object.entries(bundledItems)) {
         if (typeof v?.zh_tw === 'string' && v.zh_tw) itemMapBundled[en] = v.zh_tw;
       }
       // 只在資料不存在時寫入(首次啟動);重建時不可用純內建版本
       // 降級掉上一輪第二階段已成功的完整資料
-      const existing = await chrome.storage.local.get(['itemMap', 'uiExtra', 'statMap', 'updated']);
+      const existing = await chrome.storage.local.get([
+        'itemMap',
+        'uiExtra',
+        'statMap',
+        'updated',
+        'passives',
+      ]);
       const stageOne = {
-        passives: { clusterJewel, passivesNotable },
         buildStatus: {
           state: 'building',
-          msg: `內建字典已載入(物品 ${Object.keys(itemMapBundled).length}、UI ${Object.keys(bundledUI).length}),更新官方資料中…`,
+          msg: `字典已載入(物品 ${Object.keys(itemMapBundled).length}、UI ${Object.keys(bundledUI).length}),更新官方資料中…`,
           at: Date.now(),
         },
       };
+      // 天賦卡:兩份都拿得到才覆寫。任一份失敗時若已有舊資料就原封不動 ——
+      // 失敗路徑不得產出比現況差的狀態。從未有過就有多少寫多少(空的也比沒有好懂)。
+      const passivesOk =
+        !dictFailed.has('clusterJewel.json') && !dictFailed.has('passivesNotable.json');
+      if (passivesOk || !existing.passives) {
+        stageOne.passives = { clusterJewel, passivesNotable };
+      }
       if (!existing.itemMap) stageOne.itemMap = itemMapBundled;
       if (!existing.uiExtra) stageOne.uiExtra = bundledUI;
       // ggpk 詞綴種子:讓詞綴翻譯離線即可用;第二階段成功時被官方值覆蓋
@@ -543,13 +582,16 @@ export async function buildTranslation() {
       // 只影響中文覆蓋率 —— 新賽季物品仍以最新美服資料入庫(英文可搜),
       // 不因台服尚未更新而整批沿用舊快照(否則新物品從官網下拉消失)。
       try {
-        const s2t = makeS2t(await loadS2tMap());
+        // s2t 轉換表拿不到就整個跳過社群字典。社群資料是簡體,沒有轉換表會把簡體字
+        // 直接送進字典 —— 那比少幾條翻譯更糟,而且完全無聲。
+        const s2tOk = !dictFailed.has('s2t.json');
+        const s2t = makeS2t(s2tMap);
         dbg('[PTM] build:抓取官方雙服 API 與社群字典…');
         const [usRes, twRes, commItemsRes, commUiRes] = await Promise.allSettled([
           fetchAll(API_BASE.us),
           fetchAll(API_BASE.tw),
-          fetchCommunityDict(COMMUNITY.items, s2t),
-          fetchCommunityDict(COMMUNITY.ui, s2t),
+          s2tOk ? fetchCommunityDict(COMMUNITY.items, s2t) : Promise.resolve({}),
+          s2tOk ? fetchCommunityDict(COMMUNITY.ui, s2t) : Promise.resolve({}),
         ]);
         if (usRes.status === 'rejected') throw usRes.reason; // 英文基準拿不到才算失敗
         const us = usRes.value;
@@ -560,20 +602,39 @@ export async function buildTranslation() {
         if (!tw) degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
         if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
         if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
+        if (!s2tOk) degraded.push('簡繁對照表(社群字典整層停用)');
+        for (const f of dictFailed) degraded.push(`字典 ${f}`);
         if (degraded.length) dbg('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
 
         // 英文基準語言健檢:stats 異常時只降級 stats 一項,items/static/filters
         // 照常更新(與上方分項容錯同精神)
         const statsUsable = looksEnglish(us.stats);
         if (!statsUsable) degraded.push('官方英文詞綴資料異常(非英文)');
-        const prev = statsUsable
-          ? {}
-          : await chrome.storage.local.get(['translation', 'statMap', 'statIdMap']);
+        const prev =
+          statsUsable && !dictFailed.size
+            ? {}
+            : await chrome.storage.local.get([
+                'translation',
+                'statMap',
+                'statIdMap',
+                'itemMap',
+                'uiExtra',
+              ]);
+
+        // 字典降級時不得用縮水的結果蓋掉上一輪的完整資料;但如果從來沒有過舊值,
+        // 就照寫這一份(英文仍搜得到,比整個沒有好)。與上面 stats 的處理同一條規則。
+        const keep = (ok, fresh, old) => (ok || old === undefined ? fresh : old);
+        const itemsDictOk = !dictFailed.has('translate.json');
+        const uiDictOk = !dictFailed.has('translate.zh_TW.json');
 
         const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
         const officialItems = mergeOfficialItems(bundledItems, ggpk.items);
         const translation = {
-          items: translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items),
+          items: keep(
+            itemsDictOk,
+            translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items),
+            prev.translation?.items
+          ),
           static: translateStatic(us.static, tw?.static),
           filters: translateFilters(us.filters, tw?.filters),
         };
@@ -595,10 +656,16 @@ export async function buildTranslation() {
           statIdMap = built.map;
           idRejected = built.rejected;
         }
-        const itemMap = buildItemMap(us.items, tw?.items, fallbackItems);
+        const itemMap = keep(
+          itemsDictOk,
+          buildItemMap(us.items, tw?.items, fallbackItems),
+          prev.itemMap
+        );
+        // 內建繁中字典優先
+        const uiExtra = keep(uiDictOk, { ...communityUI, ...bundledUI }, prev.uiExtra);
         const updated = Date.now();
         const doneMsg =
-          `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(bundledUI).length} 條` +
+          `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(uiExtra).length} 條` +
           (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
           (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
         if (idRejected) {
@@ -609,7 +676,7 @@ export async function buildTranslation() {
           statMap,
           statIdMap,
           itemMap,
-          uiExtra: { ...communityUI, ...bundledUI }, // 內建繁中字典優先
+          uiExtra,
           updated,
           buildStatus: { state: 'done', msg: doneMsg, at: updated },
         });
@@ -621,9 +688,13 @@ export async function buildTranslation() {
         const scope = prevTranslation
           ? '沿用上次成功的官方資料'
           : Object.keys(ggpk.statMap).length
-            ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)'
-            : '詞綴與篩選器翻譯暫不可用(內建字典的物品/UI/天賦卡翻譯不受影響)';
-        const failMsg = `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}`;
+            ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)'
+            : '詞綴與篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)';
+        // ⚠ 字典的降級也要在這條路徑講出來。第二階段失敗時原本只報「官方資料更新
+        // 失敗」,字典缺了哪幾份完全不見 —— 有 fallback 的地方,缺口本來就安靜,
+        // 再被另一個錯誤蓋掉就徹底查不到了。
+        const dictNote = dictFailed.size ? `;字典取得失敗:${[...dictFailed].join('、')}` : '';
+        const failMsg = `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}${dictNote}`;
         dbg('[PTM] build:', failMsg);
         await chrome.storage.local.set({
           buildStatus: { state: 'done', msg: failMsg, at: Date.now() },
@@ -658,8 +729,16 @@ export async function handleTranslationMessage(msg) {
     case 'translation:build':
       return buildTranslation();
     case 'translation:status': {
-      const { buildStatus, updated } = await chrome.storage.local.get(['buildStatus', 'updated']);
-      return { buildStatus: buildStatus ?? null, updated: updated ?? null };
+      const { buildStatus, updated, dictStatus } = await chrome.storage.local.get([
+        'buildStatus',
+        'updated',
+        'dictStatus',
+      ]);
+      return {
+        buildStatus: buildStatus ?? null,
+        updated: updated ?? null,
+        dictStatus: dictStatus ?? null,
+      };
     }
     case 'translation:clear':
       await chrome.storage.local.remove([
@@ -667,6 +746,9 @@ export async function handleTranslationMessage(msg) {
         'translation', 'statMap', 'statIdMap', 'itemMap', 'uiExtra', 'passives', 'statGroups',
         'updated', 'buildStatus',
       ]);
+      // 字典快取一併清掉:使用者按「清除快取」就是要重新拉一份,留著下載好的
+      // 舊字典等於清了一半
+      await clearDictCache();
       return { ok: true };
     default:
       return null;

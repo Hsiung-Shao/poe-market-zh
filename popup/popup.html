@@ -80,6 +80,17 @@
     text-align: center;
   }
   #status.error { color: #c96b6b; }
+  /* 字典來源:使用者要看得出手上這份字典是遠端拉的、快取的,還是擴充內建的 */
+  #dictInfo {
+    font-size: 11px;
+    line-height: 1.6;
+    color: #7a6f5a;
+    text-align: center;
+    white-space: pre-wrap;
+  }
+  #dictInfo .src-remote { color: #8fae7a; }
+  #dictInfo .src-cache { color: #c9a66b; }
+  #dictInfo .src-bundled { color: #7a6f5a; }
   ol {
     margin: 4px 0 0;
     padding: 8px 14px 12px 30px;
@@ -105,6 +116,7 @@
     <button id="bilingualToggle" class="toggle-row"><span>詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
     <button id="clearCache">清除快取</button>
     <div id="status"></div>
+    <div id="dictInfo"></div>
   </main>
   <ol>
     <li>套用後記得重新整理交易頁讓修改生效</li>
