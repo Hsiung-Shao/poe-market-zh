@@ -1,0 +1,539 @@
+/* 側邊欄 + 結果頁翻譯附註樣式(深色全高風格) */
+
+/* 結果頁:詞綴原文參考、價格等值附註 */
+.pmz-orig {
+  font-size: 11px;
+  color: #7a6f5a;
+  line-height: 1.3;
+}
+.pmz-chaos {
+  font-size: 11px;
+  color: #8fae7a;
+  margin-left: 4px;
+}
+
+/* 開關鈕(可垂直拖曳) */
+.pmz-toggle {
+  position: fixed;
+  right: 0;
+  top: 45%;
+  z-index: 9999;
+  width: 36px;
+  height: 52px;
+  border: 1px solid #4a3f2f;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: #211b14;
+  color: #c9a66b;
+  font-size: 18px;
+  cursor: pointer;
+  touch-action: none;
+}
+.pmz-toggle:hover { color: #ffe8b8; border-color: #c9a66b; }
+
+/* 面板:全高固定 */
+.pmz-panel {
+  position: fixed;
+  right: -440px;
+  top: 0;
+  bottom: 0;
+  z-index: 9998;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  background: #14100c;
+  border-left: 1px solid #4a3f2f;
+  color: #cfc3a8;
+  font: 14px/1.55 "Segoe UI", "Microsoft JhengHei", sans-serif;
+  transition: right 0.2s ease;
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.6);
+}
+.pmz-panel.pmz-open { right: 0; }
+
+/* 左側模式 */
+.pmz-toggle.pmz-left {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: 1px solid #4a3f2f;
+  border-radius: 0 8px 8px 0;
+}
+.pmz-panel.pmz-left {
+  right: auto;
+  left: -440px;
+  border-left: none;
+  border-right: 1px solid #4a3f2f;
+  transition: left 0.2s ease;
+  box-shadow: 6px 0 24px rgba(0, 0, 0, 0.6);
+}
+.pmz-panel.pmz-left.pmz-open { left: 0; right: auto; }
+
+/* 滾動條(面板內所有可捲動區) */
+.pmz-panel *::-webkit-scrollbar { width: 8px; height: 8px; }
+.pmz-panel *::-webkit-scrollbar-track { background: transparent; }
+.pmz-panel *::-webkit-scrollbar-thumb {
+  background: #2a241c;
+  border-radius: 4px;
+  border: 2px solid #14100c;
+}
+.pmz-panel *::-webkit-scrollbar-thumb:hover { background: #c9a66b; }
+
+/* 標頭 */
+.pmz-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  background: #211b14;
+  border-bottom: 1px solid #4a3f2f;
+}
+.pmz-header-text { flex: 1; }
+.pmz-header-title {
+  font-size: 17px;
+  font-variant: small-caps;
+  letter-spacing: 0.8px;
+  color: #c9a66b;
+  font-weight: 600;
+}
+.pmz-header-sub {
+  font-size: 11px;
+  color: #a99a7c;
+  font-variant: small-caps;
+  letter-spacing: 0.5px;
+}
+.pmz-header-close {
+  background: none;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  color: #a99a7c;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pmz-header-close:hover { color: #ffe8b8; border-color: #c9a66b; }
+
+/* 分頁列 */
+.pmz-tabs { display: flex; border-bottom: 1px solid #4a3f2f; background: #211b14; }
+.pmz-tab {
+  flex: 1;
+  padding: 11px 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a99a7c;
+  font-size: 14px;
+  font-variant: small-caps;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+.pmz-tab:hover { color: #cfc3a8; }
+.pmz-tab-active { color: #ffe8b8; border-bottom-color: #c9a66b; background: #1a1612; }
+
+.pmz-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+
+/* 按鈕 */
+.pmz-primary {
+  width: 100%;
+  padding: 10px 0;
+  margin-bottom: 10px;
+  background: #1a1612;
+  color: #cfc3a8;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-variant: small-caps;
+  letter-spacing: 0.5px;
+}
+.pmz-primary:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+.pmz-primary:disabled { opacity: 0.45; cursor: default; }
+
+.pmz-secondary {
+  width: 100%;
+  padding: 8px 0;
+  margin-bottom: 10px;
+  background: none;
+  color: #a99a7c;
+  border: 1px dashed #4a3f2f;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pmz-secondary:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+.pmz-secondary:disabled { opacity: 0.45; cursor: default; }
+/* 破壞性操作的文字按鈕(紅色與 modal 確認鈕同一組) */
+.pmz-secondary.pmz-danger { color: #c96b6b; border-color: #5a2f2b; }
+.pmz-secondary.pmz-danger:hover:not(:disabled) { border-color: #8a2f28; color: #e0a8a0; }
+
+.pmz-btnrow { display: flex; gap: 8px; }
+.pmz-btnrow .pmz-secondary { flex: 1; }
+.pmz-btnrow .pmz-primary { flex: 1; margin-bottom: 0; }
+.pmz-error { font-size: 12px; color: #c96b6b; margin: 6px 4px 8px; }
+.pmz-ok { font-size: 12px; color: #8fae7a; margin: 6px 4px 8px; }
+
+.pmz-section-title {
+  font-size: 12px;
+  color: #a99a7c;
+  font-variant: small-caps;
+  letter-spacing: 0.6px;
+  margin: 14px 0 8px;
+  padding-top: 10px;
+  border-top: 1px solid #4a3f2f;
+}
+
+.pmz-toggle.pmz-hidden { display: none; }
+
+/* 拖曳排序:長按 350ms 才進拖曳模式(平時整塊是可點的) */
+.pmz-dragging { opacity: 0.35; }
+.pmz-drop-target { outline: 1px dashed #c9a66b; outline-offset: -1px; }
+.pmz-drag-ghost {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none; /* 不能擋住 elementFromPoint,否則永遠抓到自己 */
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  border-color: #c9a66b !important;
+  transform: rotate(-1deg);
+}
+[data-pmz-drop] { touch-action: pan-y; } /* 長按拖曳時不要被瀏覽器的手勢搶走 */
+
+/* 通用列 */
+/* 書籤列:兩行(上=名稱、下=操作鈕)。側邊欄只有 420px,名稱不該和按鈕搶寬度 */
+.pmz-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 7px;
+  margin: 3px 0;
+  background: #211b14;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+}
+.pmz-item:hover { border-color: #c9a66b; background: #2a241c; }
+.pmz-item-top { display: flex; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
+.pmz-item-acts { display: flex; justify-content: flex-start; gap: 3px; }
+.pmz-item-acts .pmz-act { padding: 1px 6px; font-size: 11px; line-height: 1.5; }
+
+/* ── 線條圖示按鈕(ghost:平時低調,滑過才亮)── */
+.pmz-svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+.pmz-iconact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #8a7f68;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.pmz-iconact:hover { background: #33291d; color: #ffe8b8; }
+.pmz-iconact.pmz-on { color: #c9a66b; }
+.pmz-iconact.pmz-danger:hover { background: #3a2420; color: #e0a8a0; }
+/* 已釘選的書籤:名稱前一個小金針 */
+.pmz-pinned-mark { width: 12px; height: 12px; color: #c9a66b; flex: none; }
+.pmz-history-time { font-size: 11px; color: #7a6f5a; align-self: center; margin-right: 4px; }
+/* 物價分頁沿用 .pmz-item,但它是單行(圖示 + 名稱 + 價格) */
+.pmz-drawer-body .pmz-item { flex-direction: row; align-items: center; gap: 8px; }
+.pmz-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: #cfc3a8;
+}
+.pmz-act {
+  padding: 4px 8px;
+  background: #211b14;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  color: #a99a7c;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pmz-act:hover { border-color: #c9a66b; color: #ffe8b8; }
+
+.pmz-empty { text-align: center; color: #7a6f5a; padding: 18px 0; font-size: 13px; }
+.pmz-hint { font-size: 12px; color: #7a6f5a; margin-bottom: 10px; }
+
+/* 書籤資料夾(仿參考介面的資料夾標題列) */
+.pmz-folder { margin: 10px 0; border: 1px solid #4a3f2f; border-radius: 5px; overflow: hidden; }
+.pmz-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  background: linear-gradient(180deg, #241d15, #211b14);
+}
+.pmz-folder-head:hover { background: linear-gradient(180deg, #4a3f2f, #241d15); }
+.pmz-caret { width: 14px; color: #a99a7c; font-size: 12px; }
+.pmz-folder-name {
+  flex: 1;
+  color: #ffe8b8;
+  font-size: 14px;
+  font-variant: small-caps;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmz-folder-count {
+  font-size: 11px;
+  color: #a99a7c;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 9px;
+  padding: 1px 8px;
+}
+.pmz-folder-body { padding: 4px 8px 8px; background: #1a1612; }
+.pmz-folder-save {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 0;
+  background: #2a241c;
+  color: #a99a7c;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-variant: small-caps;
+  letter-spacing: 0.5px;
+}
+.pmz-folder-save:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+.pmz-folder-save:disabled { opacity: 0.45; cursor: default; }
+
+.pmz-folder-iconbtn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+img.pmz-folder-icon { width: 26px; height: 26px; object-fit: contain; }
+span.pmz-folder-icon { font-size: 18px; }
+
+/* 表單 */
+.pmz-form {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid #4a3f2f;
+  border-radius: 5px;
+  background: #211b14;
+}
+.pmz-form-sub { margin-top: 8px; }
+.pmz-input, .pmz-select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  background: #1a1612;
+  color: #ffe8b8;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.pmz-input:focus, .pmz-select:focus { outline: none; border-color: #c9a66b; }
+.pmz-select-inline { width: auto; max-width: 200px; margin-bottom: 0; padding: 4px 6px; font-size: 13px; }
+.pmz-form-btns { display: flex; gap: 8px; }
+.pmz-form-btns .pmz-primary { margin-bottom: 0; }
+
+/* 圖示選擇器 */
+.pmz-icon-pop { max-height: 320px; overflow-y: auto; }
+.pmz-icon-title { font-size: 14px; color: #c9a66b; margin-bottom: 6px; font-variant: small-caps; }
+.pmz-icon-section {
+  font-size: 12px;
+  color: #a99a7c;
+  margin: 8px 0 4px;
+  border-bottom: 1px solid #4a3f2f;
+  padding-bottom: 3px;
+  font-variant: small-caps;
+  letter-spacing: 0.5px;
+}
+.pmz-icon-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.pmz-icon-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1612;
+  border: 1px solid #4a3f2f;
+  border-radius: 5px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.pmz-icon-btn:hover { border-color: #c9a66b; }
+.pmz-icon-active { border-color: #c9a66b; background: #33291d; }
+img.pmz-icon-glyph { width: 34px; height: 34px; object-fit: contain; }
+span.pmz-icon-glyph { font-size: 19px; }
+
+.pmz-inline-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  background: #1a1612;
+  color: #ffe8b8;
+  border: 1px solid #c9a66b;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.pmz-inline-input:focus { outline: none; }
+
+/* 物價分頁 */
+img.pmz-price-icon { width: 26px; height: 26px; object-fit: contain; flex-shrink: 0; }
+.pmz-price-val { font-size: 13px; color: #debe84; white-space: nowrap; }
+.pmz-conf { font-size: 11px; color: #c9a66b; cursor: help; }
+.pmz-price-variant {
+  font-size: 11px;
+  color: #7a6f5a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+  flex-shrink: 0;
+}
+
+.pmz-drawer { margin: 8px 0; border: 1px solid #4a3f2f; border-radius: 5px; overflow: hidden; }
+.pmz-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: linear-gradient(180deg, #241d15, #211b14);
+}
+.pmz-drawer-head:hover { background: linear-gradient(180deg, #4a3f2f, #241d15); }
+.pmz-drawer-name {
+  flex: 1;
+  color: #ffe8b8;
+  font-size: 13px;
+  font-variant: small-caps;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+}
+.pmz-drawer-body { padding: 4px 8px 8px; background: #1a1612; }
+
+/* 設定分頁 */
+.pmz-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  font-size: 14px;
+  color: #a99a7c;
+  cursor: pointer;
+}
+.pmz-setting-row > span { flex: 1; }
+.pmz-setting-row input[type="checkbox"] { accent-color: #c9a66b; width: 16px; height: 16px; }
+.pmz-seg { display: flex; gap: 5px; }
+.pmz-seg-btn {
+  padding: 5px 13px;
+  background: #1a1612;
+  color: #a99a7c;
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pmz-seg-btn:hover { border-color: #c9a66b; }
+.pmz-seg-active { background: #33291d; color: #ffe8b8; border-color: #c9a66b; }
+.pmz-credit { margin-top: 14px; font-size: 11px; color: #7a6f5a; }
+/* 支持與社群連結:與 credit 同一級的小字,顏色與底線寫死免得被官網的 a 樣式吃掉 */
+.pmz-links { display: flex; justify-content: center; gap: 14px; margin-top: 12px; }
+.pmz-link { font-size: 11px; color: #7a6f5a; text-decoration: none; }
+.pmz-link:hover { color: #c9a66b; text-decoration: underline; }
+
+/* ── 兩層資料夾:子資料夾縮排 + 左側連接線 ── */
+.pmz-folder-child {
+  margin-left: 16px;
+  border-left: 2px solid #4a3f2f;
+  padding-left: 4px;
+}
+.pmz-folder-child .pmz-folder-head { font-size: 13px; }
+
+/* ── 匯入 PoE Trade Extension 匯出碼 ── */
+.pmz-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: #1a1612;
+  border: 1px solid #4a3f2f;
+  border-radius: 3px;
+  color: #cfc3a8;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  resize: vertical;
+}
+.pmz-textarea:focus { outline: none; border-color: #c9a66b; }
+
+/* 匯入結果會分行說明(略過幾筆、圖示對不到幾種) */
+.pmz-ok, .pmz-error { white-space: pre-line; }
+
+/* ── 偽屬性(合計)詞綴高亮 ──
+   官網把 pseudo 詞綴渲染成 .item-mod--pseudo(data-field="stat.pseudo.*"),
+   預設只有淡淡的底色,和一般詞綴混在一起不好認。開關由側邊欄設定切 body class,
+   關掉就完全不影響官網原樣。 */
+body.pmz-hl-pseudo .item-mod--pseudo {
+  background: rgba(200, 170, 110, 0.12);
+  border-left: 3px solid #c9a66b;
+  padding-left: 5px;
+  border-radius: 2px;
+}
+body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
+
+/* ── 確認對話框(取代瀏覽器原生 confirm)── */
+.pmz-modal-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.pmz-modal {
+  width: 88%;
+  padding: 18px 20px 16px;
+  background: #14100c;
+  border: 1px solid #4a3f2f;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+.pmz-modal-title { font-size: 17px; font-weight: 700; color: #ffe8b8; margin-bottom: 14px; }
+.pmz-modal-q { font-size: 14px; font-weight: 700; color: #ffe8b8; margin-bottom: 6px; }
+.pmz-modal-msg { font-size: 12px; color: #a99a7c; line-height: 1.6; margin-bottom: 18px; white-space: pre-line; }
+.pmz-modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.pmz-modal-btns button {
+  min-width: 64px;
+  padding: 7px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pmz-modal-cancel { background: #2a241c; border: 1px solid #4a3f2f; color: #cfc3a8; }
+.pmz-modal-cancel:hover { border-color: #c9a66b; }
+.pmz-modal-ok { background: #6b2420; border: 1px solid #8a2f28; color: #ffe0d8; font-weight: 600; }
+.pmz-modal-ok:hover { background: #8a2f28; }
+
+/* 拖曳資料夾時的落點指示:上緣/下緣 = 排在前/後(同一層),中間 = 放進去當子 */
+.pmz-drop-before { box-shadow: inset 0 3px 0 0 #c9a66b; }
+.pmz-drop-after { box-shadow: inset 0 -3px 0 0 #c9a66b; }

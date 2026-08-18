@@ -1,0 +1,106 @@
+[
+  {
+    "id": "職業(昇華)",
+    "label": "職業(昇華)",
+    "icons": [
+      {
+        "name": "昇華使徒 (Ascendant)",
+        "url": "https://www.poewiki.net/images/1/14/Ascendant_avatar.png"
+      },
+      {
+        "name": "處刑者 (Slayer)",
+        "url": "https://www.poewiki.net/images/4/4a/Slayer_avatar.png"
+      },
+      {
+        "name": "神鬥士 (Gladiator)",
+        "url": "https://www.poewiki.net/images/8/8b/Gladiator_avatar.png"
+      },
+      {
+        "name": "勇士 (Champion)",
+        "url": "https://www.poewiki.net/images/8/89/Champion_avatar.png"
+      },
+      {
+        "name": "不朽之王 (Juggernaut)",
+        "url": "https://www.poewiki.net/images/c/c4/Juggernaut_avatar.png"
+      },
+      {
+        "name": "狂戰士 (Berserker)",
+        "url": "https://www.poewiki.net/images/8/80/Berserker_avatar.png"
+      },
+      {
+        "name": "酋長 (Chieftain)",
+        "url": "https://www.poewiki.net/images/4/41/Chieftain_avatar.png"
+      },
+      {
+        "name": "銳眼 (Deadeye)",
+        "url": "https://www.poewiki.net/images/8/8e/Deadeye_avatar.png"
+      },
+      {
+        "name": "尋路者 (Pathfinder)",
+        "url": "https://www.poewiki.net/images/a/a1/Pathfinder_avatar.png"
+      },
+      {
+        "name": "守林者 (Warden)",
+        "url": "https://www.poewiki.net/images/a/a7/Warden_avatar.png"
+      },
+      {
+        "name": "秘術家 (Occultist)",
+        "url": "https://www.poewiki.net/images/e/e9/Occultist_avatar.png"
+      },
+      {
+        "name": "元素使 (Elementalist)",
+        "url": "https://www.poewiki.net/images/c/c5/Elementalist_avatar.png"
+      },
+      {
+        "name": "死靈師 (Necromancer)",
+        "url": "https://www.poewiki.net/images/7/7f/Necromancer_avatar.png"
+      },
+      {
+        "name": "判官 (Inquisitor)",
+        "url": "https://www.poewiki.net/images/2/2d/Inquisitor_avatar.png"
+      },
+      {
+        "name": "聖宗 (Hierophant)",
+        "url": "https://www.poewiki.net/images/6/64/Hierophant_avatar.png"
+      },
+      {
+        "name": "守護者 (Guardian)",
+        "url": "https://www.poewiki.net/images/7/7a/Guardian_avatar.png"
+      },
+      {
+        "name": "暗殺者 (Assassin)",
+        "url": "https://www.poewiki.net/images/d/dc/Assassin_avatar.png"
+      },
+      {
+        "name": "破壞者 (Saboteur)",
+        "url": "https://www.poewiki.net/images/d/d2/Saboteur_avatar.png"
+      },
+      {
+        "name": "詭術師 (Trickster)",
+        "url": "https://www.poewiki.net/images/6/6d/Trickster_avatar.png"
+      }
+    ]
+  },
+  {
+    "id": "常用",
+    "label": "常用",
+    "icons": [
+      {
+        "name": "Chaos Orb",
+        "url": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxSYXJlIiwic2NhbGUiOjF9XQ/46a2347805/CurrencyRerollRare.png"
+      },
+      {
+        "name": "Divine Orb",
+        "url": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lNb2RWYWx1ZXMiLCJzY2FsZSI6MX1d/ec48896769/CurrencyModValues.png"
+      },
+      {
+        "name": "Nightmare Map",
+        "url": "https://web.poecdn.com/gen/image/WzMxLDE0LHsiZiI6IjJESXRlbXMvTWFwcy9BdGxhczJNYXBzL05ldy9OaWdodG1hcmVNYXBTeW1ib2wiLCJzY2FsZSI6MSwibXViIjpmYWxzZSwibWIiOmZhbHNlLCJtbSI6ZmFsc2UsIm1uIjoyNCwibW5tIjp0cnVlfV0/cb958fa557/NightmareMapSymbol.png"
+      },
+      {
+        "name": "Map (Tier 16)",
+        "url": "https://web.poecdn.com/gen/image/WzMxLDE0LHsiZiI6IjJESXRlbXMvTWFwcy9BdGxhczJNYXBzL05ldy9NYXBOdW1iZXJzMTYiLCJzY2FsZSI6MSwibXViIjpmYWxzZSwibWIiOmZhbHNlLCJtbSI6ZmFsc2UsIm1uIjoyNH1d/f624364ed4/MapNumbers16.png"
+      }
+    ]
+  }
+]

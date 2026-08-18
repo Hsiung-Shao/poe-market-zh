@@ -1,0 +1,540 @@
+// 書籤資料模型(純邏輯:不碰 chrome API、不碰 DOM)。
+//   · 本擴充的格式 v3:資料夾最多兩層(parentId 指向第一層,不再往下)
+//   · 匯入 PoE Trade Extension 的匯出碼(標準 base64 的 {"settings":{…}})
+//   · 匯入 PoE Trade Mate 的 v1(扁平)/v2(單層)JSON 與本擴充自己的 v3 JSON
+//   · 開啟書籤時的聯盟解析與交易站 URL 組法
+//
+// ⚠ 使用者裁定(2026-08-14):匯入 PoE Trade Extension 的碼時**只取書籤資料**,
+//   它 settings 裡另外 43 個欄位(介面偏好、快捷鍵、監看清單…)一律不讀、不寫,
+//   也不提供「匯出成 Extension 碼」——它的匯入是整包覆蓋,回送會清掉對方設定。
+//
+// 以 UMD 形式輸出:content script(isolated world)掛全域 pmzBookmarks;
+// tools/verify-bookmarks.mjs 以 node:vm 載入這同一份出貨檔驗證,不另寫一份實作。
+(function (root) {
+  'use strict';
+
+  const VERSION = 3;
+  const DEFAULT_ICON = '📁';
+  const SEARCH_ID_RE = /^[a-zA-Z0-9]+$/; // 官方 search id 的字元集(與官網路由一致)
+  const TYPES = new Set(['search', 'exchange']);
+  const GAME_VERSIONS = new Set(['Poe1', 'Poe2']);
+  // PoE Trade Extension 的 icon 欄位是列舉字串(不是圖檔位址)。這幾個列舉值指的是
+  // 通貨圖示,對到 data/icons.json 的官方英文名;其餘(PoE1/TFT/各種 Stash)本擴充
+  // 沒有對應圖,一律落預設符號並在匯入報告列出,不做沒有根據的猜測對映。
+  const EXT_ICON_ALIAS = {
+    Chaos1: 'Chaos Orb',
+    Chaos2: 'Chaos Orb',
+    Divine1: 'Divine Orb',
+    Divine2: 'Divine Orb',
+  };
+
+  let seq = 0;
+  function newId(prefix) {
+    seq = (seq + 1) % 1e6;
+    return `${prefix}-${Date.now().toString(36)}-${seq.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  function newFolder(name, icon, parentId) {
+    return {
+      id: newId('fd'),
+      name: String(name ?? '').trim() || '未命名',
+      icon: icon || DEFAULT_ICON,
+      parentId: parentId ?? null,
+      collapsed: false,
+      bookmarks: [],
+    };
+  }
+
+  // ── 單筆書籤的補齊與檢查 ──
+  // searchId 是唯一不可缺的欄位(沒有它連網址都組不出來),缺或不合法就丟棄並回報。
+  function sanitizeBookmark(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const searchId = String(raw.searchId ?? raw.endpoint ?? '').trim();
+    // 兩種書籤:存官方搜尋編號的,和存查詢條件的(PoB 匯入產生的,見 pob-import.js)。
+    // 至少要有一個,不然連網址都組不出來。
+    const query = raw.query && typeof raw.query === 'object' && raw.query.query ? raw.query : null;
+    if (!SEARCH_ID_RE.test(searchId) && !query) return null;
+    if (!SEARCH_ID_RE.test(searchId) && query) {
+      // 帶條件的書籤第一次開啟時,官網會把 ?q= 換成一個官方搜尋編號;把它記下來,
+      // 下次就不必再讓官網重建一次搜尋(那一趟往返就是「點下去很慢」的來源)。
+      const cached = String(raw.cachedSearchId ?? '').trim();
+      return {
+        id: typeof raw.id === 'string' && raw.id ? raw.id : newId('bm'),
+        name: String(raw.name ?? '').trim() || '自訂搜尋',
+        searchId: '',
+        query,
+        cachedSearchId: SEARCH_ID_RE.test(cached) ? cached : '',
+        cachedLeague: typeof raw.cachedLeague === 'string' ? raw.cachedLeague : '',
+        league: typeof raw.league === 'string' && raw.league && raw.league !== 'Auto' ? raw.league : null,
+        type: TYPES.has(raw.type) ? raw.type : 'search',
+        poeVersion: GAME_VERSIONS.has(raw.poeVersion) ? raw.poeVersion : 'Poe1',
+        pinned: raw.pinned === true,
+        isDone: raw.isDone === true,
+        createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+      };
+    }
+    const league = typeof raw.league === 'string' && raw.league && raw.league !== 'Auto' ? raw.league : null;
+    return {
+      id: typeof raw.id === 'string' && raw.id ? raw.id : newId('bm'),
+      name: String(raw.name ?? '').trim() || searchId,
+      searchId,
+      league, // null = 開啟時才決定(Extension 的 "Auto")
+      type: TYPES.has(raw.type) ? raw.type : 'search',
+      poeVersion: GAME_VERSIONS.has(raw.poeVersion) ? raw.poeVersion : 'Poe1',
+      pinned: raw.pinned === true,
+      isDone: raw.isDone === true, // 只保存不顯示,免得匯入即丟資料
+      createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
+    };
+  }
+
+  // ── 資料夾清單的正規化 ──
+  // 保留既有 id(storage 讀回來時 id 不能變,否則拖曳/刪除會對錯目標)。
+  // 三件事:補齊缺欄位、孤兒 parentId 提升為第一層、超過兩層的壓回第二層。
+  function normalizeFolders(list) {
+    const src = Array.isArray(list) ? list.filter((f) => f && typeof f === 'object') : [];
+    const folders = src.map((f) => {
+      const dropped = [];
+      const bookmarks = [];
+      for (const b of Array.isArray(f.bookmarks) ? f.bookmarks : []) {
+        const clean = sanitizeBookmark(b);
+        if (clean) bookmarks.push(clean);
+        else dropped.push(b);
+      }
+      return {
+        id: typeof f.id === 'string' && f.id ? f.id : newId('fd'),
+        name: String(f.name ?? '').trim() || '未命名',
+        icon: f.icon || DEFAULT_ICON,
+        parentId: typeof f.parentId === 'string' && f.parentId ? f.parentId : null,
+        collapsed: f.collapsed === true,
+        bookmarks,
+        _dropped: dropped.length,
+      };
+    });
+
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    for (const f of folders) {
+      if (!f.parentId) continue;
+      if (f.parentId === f.id || !byId.has(f.parentId)) {
+        f.parentId = null; // 孤兒:父不存在(或指向自己)就提升為第一層
+        continue;
+      }
+      // 兩層封頂:父自己還有父時,接到祖父那一層去。沿著鏈往上走,
+      // 步數以資料夾總數為上限,壞資料形成的環也不會卡住。
+      let guard = folders.length;
+      while (guard-- > 0) {
+        const parent = byId.get(f.parentId);
+        if (!parent || !parent.parentId) break;
+        if (parent.parentId === f.id) {
+          f.parentId = null; // 互為父子的環:斷開
+          break;
+        }
+        f.parentId = parent.parentId;
+      }
+    }
+    for (const f of folders) delete f._dropped;
+    return folders;
+  }
+
+  // 任何來源(storage、匯入檔)都先過這裡 → 一律得到 v3
+  function migrate(data) {
+    if (Array.isArray(data?.folders)) return { version: VERSION, folders: normalizeFolders(data.folders) };
+    if (Array.isArray(data?.bookmarks)) {
+      // PoE Trade Mate v1:扁平書籤清單,包成一個資料夾
+      const folder = newFolder('我的書籤', DEFAULT_ICON, null);
+      folder.bookmarks = data.bookmarks.map(sanitizeBookmark).filter(Boolean);
+      return { version: VERSION, folders: [folder] };
+    }
+    return { version: VERSION, folders: [] };
+  }
+
+  // ── 走訪序 ──
+  // 第一層照陣列順序,每個第一層後面緊接它的子資料夾(同樣照陣列順序)。
+  // ⚠ 刻意不讀 PoE Trade Extension 的 index / idx:實測那兩欄有重複也有跳號
+  //   (23 個資料夾裡 index 22、24 各出現兩次;書籤 idx 出現 [21,36,42,42]),
+  //   當成排序真值畫面順序會亂跳。
+  function orderedFolders(folders, opts) {
+    const skipCollapsed = opts?.skipCollapsed === true;
+    const list = Array.isArray(folders) ? folders : [];
+    const byId = new Map(list.map((f) => [f.id, f]));
+    const children = new Map();
+    const roots = [];
+    for (const f of list) {
+      if (f.parentId && byId.has(f.parentId)) {
+        if (!children.has(f.parentId)) children.set(f.parentId, []);
+        children.get(f.parentId).push(f);
+      } else {
+        roots.push(f);
+      }
+    }
+    const out = [];
+    for (const r of roots) {
+      const kids = children.get(r.id) ?? [];
+      out.push({ folder: r, depth: 0, childCount: kids.length });
+      if (skipCollapsed && r.collapsed) continue;
+      for (const c of kids) out.push({ folder: c, depth: 1, childCount: 0 });
+    }
+    return out;
+  }
+
+  function childFolders(folders, parentId) {
+    return (Array.isArray(folders) ? folders : []).filter((f) => f.parentId === parentId);
+  }
+
+  // ── 資料夾拖放 ──
+  // 放置位置由游標落在目標標題列的哪一段決定(與檔案總管、VS Code 同一套):
+  //   上緣 → 插到目標前面(同一層)   中間 → 變成目標的子   下緣 → 插到目標後面(同一層)
+  // 「拖到第一層資料夾的上/下緣」就等於把子資料夾移出來變獨立,不需要另外的放置區。
+  function dropPosition(offsetY, height) {
+    const h = Number(height) || 0;
+    if (h <= 0) return 'inside';
+    const r = Number(offsetY) / h;
+    if (r < 0.28) return 'before';
+    if (r > 0.72) return 'after';
+    return 'inside';
+  }
+
+  // 算出「這樣放會變成什麼」,不動資料;不允許時回 { error }
+  function planFolderDrop(folders, movedId, targetId, position) {
+    const list = Array.isArray(folders) ? folders : [];
+    const moved = list.find((f) => f.id === movedId);
+    const target = list.find((f) => f.id === targetId);
+    if (!moved || !target || moved.id === target.id) return { error: '' }; // 無動作,不必提示
+    let parentId;
+    if (position === 'inside') {
+      // 兩層封頂:目標本身是子資料夾時,「放進去」降級成放在它後面(同一層)
+      parentId = target.parentId ? target.parentId : target.id;
+    } else {
+      parentId = target.parentId ?? null;
+    }
+    if (parentId === moved.id) return { error: '不能把資料夾放進自己底下' };
+    if (parentId && childFolders(list, moved.id).length) {
+      return { error: `「${moved.name}」底下還有資料夾,不能再變成子資料夾(最多兩層)` };
+    }
+    const beforeId = position === 'inside' && parentId === target.id ? null : target.id;
+    const after = position === 'after' || (position === 'inside' && parentId === target.parentId);
+    return { parentId, beforeId, after };
+  }
+
+  // 套用 plan:回傳新的 folders 陣列(不改原陣列)
+  function applyFolderDrop(folders, movedId, plan) {
+    const list = (Array.isArray(folders) ? folders : []).slice();
+    const from = list.findIndex((f) => f.id === movedId);
+    if (from < 0 || !plan || plan.error) return list;
+    const [moved] = list.splice(from, 1);
+    moved.parentId = plan.parentId ?? null;
+    if (!plan.beforeId) {
+      // 放進某個資料夾:排在它現有子資料夾的最後,走訪序才會緊跟著父
+      const kids = list.filter((f) => f.parentId === moved.parentId);
+      const anchor = kids.length ? kids[kids.length - 1].id : moved.parentId;
+      const at = list.findIndex((f) => f.id === anchor);
+      list.splice(at < 0 ? list.length : at + 1, 0, moved);
+      return list;
+    }
+    const to = list.findIndex((f) => f.id === plan.beforeId);
+    list.splice(to < 0 ? list.length : to + (plan.after ? 1 : 0), 0, moved);
+    return list;
+  }
+
+  function countBookmarks(folders) {
+    return (Array.isArray(folders) ? folders : []).reduce((n, f) => n + (f.bookmarks?.length ?? 0), 0);
+  }
+
+  // 資料夾自己的書籤數 +(第一層時)子資料夾的書籤數
+  function folderTotal(folders, folder) {
+    const own = folder?.bookmarks?.length ?? 0;
+    if (folder?.parentId) return own;
+    return own + childFolders(folders, folder?.id).reduce((n, f) => n + (f.bookmarks?.length ?? 0), 0);
+  }
+
+  // ── 匯入 ──
+  // 匯入一律重新產生 id:匯入是「附加到現有清單」,沿用來源 id 會和既有資料撞。
+  function importFolders(list, opts) {
+    const iconIndex = opts?.iconIndex ?? null;
+    const src = Array.isArray(list) ? list.filter((f) => f && typeof f === 'object') : [];
+    const report = { folders: 0, bookmarks: 0, droppedBookmarks: [], orphanFolders: 0, flattened: 0, unknownIcons: [] };
+    const idMap = new Map();
+    const folders = [];
+
+    for (const f of src) {
+      const folder = newFolder(f.name, DEFAULT_ICON, null);
+      const rawIcon = typeof f.icon === 'string' ? f.icon : '';
+      if (rawIcon) {
+        const mapped = mapExtensionIcon(rawIcon, iconIndex);
+        if (mapped) folder.icon = mapped;
+        else if (!report.unknownIcons.includes(rawIcon)) report.unknownIcons.push(rawIcon);
+      }
+      folder.collapsed = f.isOpen === undefined ? f.collapsed === true : f.isOpen !== true;
+      for (const b of Array.isArray(f.bookmarks) ? f.bookmarks : []) {
+        const clean = sanitizeBookmark({ ...b, id: undefined });
+        if (clean) folder.bookmarks.push(clean);
+        else report.droppedBookmarks.push({ folder: folder.name, name: String(b?.name ?? '(無名稱)') });
+      }
+      if (typeof f.id === 'string' && f.id) idMap.set(f.id, folder.id);
+      folders.push({ folder, srcParentId: typeof f.parentId === 'string' ? f.parentId : null });
+    }
+
+    for (const { folder, srcParentId } of folders) {
+      if (!srcParentId) continue;
+      const mapped = idMap.get(srcParentId);
+      if (!mapped) {
+        report.orphanFolders++; // 父不在這份匯出裡 → 留在第一層
+        continue;
+      }
+      folder.parentId = mapped;
+    }
+
+    const out = normalizeFolders(folders.map((x) => x.folder));
+    // normalizeFolders 會把孫層壓回第二層,壓了幾個要據實回報
+    for (const { folder, srcParentId } of folders) {
+      if (!srcParentId) continue;
+      const before = idMap.get(srcParentId);
+      const after = out.find((f) => f.id === folder.id)?.parentId ?? null;
+      if (before && after && before !== after) report.flattened++;
+    }
+    report.folders = out.length;
+    report.bookmarks = countBookmarks(out);
+    return { folders: out, report };
+  }
+
+  function decodeBase64Utf8(text) {
+    const cleaned = String(text ?? '').replace(/\s+/g, '');
+    if (!cleaned) throw new Error('沒有內容');
+    // 同時接受標準 base64 與 url-safe 變體(貼上時可能經過網址列)
+    const std = cleaned.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = std + '='.repeat((4 - (std.length % 4)) % 4);
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(padded)) throw new Error('這段文字不是匯出碼(不是 base64)');
+    const decode = root.atob;
+    if (typeof decode !== 'function') throw new Error('環境不支援 base64 解碼');
+    const binary = decode(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new root.TextDecoder('utf-8').decode(bytes);
+  }
+
+  // PoE Trade Extension 的「匯出設定」文字(剪貼簿內容)
+  function parseExtensionCode(text, opts) {
+    const json = decodeBase64Utf8(text);
+    let data;
+    try {
+      data = JSON.parse(json);
+    } catch (_) {
+      throw new Error('這段文字不是匯出碼(內容不是 JSON)');
+    }
+    const folders = Array.isArray(data?.settings?.folders)
+      ? data.settings.folders
+      : Array.isArray(data?.folders)
+        ? data.folders
+        : null;
+    if (!folders) throw new Error('這份匯出碼裡沒有書籤資料');
+    return importFolders(folders, opts);
+  }
+
+  // ── 完整備份 ──
+  // 匯出的是「設定 + 書籤 + 歷史」整包,換電腦時一個檔就能還原。
+  // 舊的、只有 folders 的檔仍然吃得下(那種是「匯入書籤」= 附加,不是還原)。
+  const BACKUP_KIND = 'backup';
+
+  function makeBackup({ settings, folders, history, appVersion }) {
+    return {
+      app: 'poe-market-zh',
+      kind: BACKUP_KIND,
+      version: VERSION,
+      appVersion: appVersion ?? '',
+      exportedAt: new Date().toISOString(),
+      settings: settings ?? {},
+      folders: Array.isArray(folders) ? folders : [],
+      history: Array.isArray(history) ? history : [],
+    };
+  }
+
+  // 只收模板裡有、而且型別相符的鍵 —— 匯入的檔案可能是手改過或別版的
+  function pickKnown(raw, template) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    for (const [k, v] of Object.entries(template ?? {})) {
+      const got = raw[k];
+      if (got !== undefined && typeof got === typeof v) out[k] = got;
+    }
+    return out;
+  }
+
+  function sanitizeHistory(list, max) {
+    const seen = new Set();
+    const out = [];
+    for (const h of Array.isArray(list) ? list : []) {
+      const searchId = String(h?.searchId ?? '').trim();
+      if (!SEARCH_ID_RE.test(searchId) || seen.has(searchId)) continue;
+      seen.add(searchId);
+      out.push({
+        searchId,
+        league: typeof h.league === 'string' ? h.league : '',
+        type: TYPES.has(h.type) ? h.type : 'search',
+        poeVersion: GAME_VERSIONS.has(h.poeVersion) ? h.poeVersion : 'Poe1',
+        name: String(h.name ?? '').trim() || searchId,
+        at: Number.isFinite(h.at) ? h.at : Date.now(),
+      });
+      // 呼叫端一律會傳(sidebar.js 的 HISTORY_MAX),這個預設值只是保險 ——
+      // 但兩個數字不一致日後一定會有人踩,改一邊就要改另一邊。
+      if (out.length >= (max ?? 20)) break;
+    }
+    return out;
+  }
+
+  // 回 { isBackup, folders, report, settings?, history? }
+  function parseBackupFile(text, opts) {
+    let data;
+    try {
+      data = JSON.parse(String(text ?? ''));
+    } catch (_) {
+      throw new Error('檔案內容不是 JSON');
+    }
+    const isBackup = !!data && typeof data === 'object' && data.kind === BACKUP_KIND && Array.isArray(data.folders);
+    if (!isBackup) return { isBackup: false, ...parseBookmarkFile(text, opts) };
+    const { folders, report } = importFolders(data.folders, opts);
+    return {
+      isBackup: true,
+      folders,
+      report,
+      settings: pickKnown(data.settings, opts?.settingsTemplate),
+      history: sanitizeHistory(data.history, opts?.historyMax),
+      exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : '',
+    };
+  }
+
+  // 書籤 JSON 檔(本擴充 v3 / PoE Trade Mate v1、v2)
+  function parseBookmarkFile(text, opts) {
+    let data;
+    try {
+      data = JSON.parse(String(text ?? ''));
+    } catch (_) {
+      throw new Error('檔案內容不是 JSON');
+    }
+    if (Array.isArray(data?.folders)) return importFolders(data.folders, opts);
+    if (Array.isArray(data?.bookmarks)) {
+      return importFolders([{ name: '我的書籤', bookmarks: data.bookmarks }], opts);
+    }
+    throw new Error('這個檔案裡沒有書籤資料');
+  }
+
+  // ── 圖示 ──
+  // data/icons.json 的名稱有兩種寫法:「中文 (English)」(職業)與純英文(通貨等)。
+  // 一律以英文為鍵(語言無關的對接鍵),不用位置對位。
+  function buildIconIndex(iconList) {
+    const index = new Map();
+    for (const section of Array.isArray(iconList) ? iconList : []) {
+      for (const item of Array.isArray(section?.icons) ? section.icons : []) {
+        const name = String(item?.name ?? '').trim();
+        const url = item?.url;
+        if (!name || typeof url !== 'string' || !url) continue;
+        // ⚠ 只有「中文 (English)」這種才抽括號內的英文;純英文名稱要整個當鍵,
+        //   否則「Map (Tier 16)」會被索引成「Tier 16」(2026-08-14 實際踩到)。
+        const paren = /[一-鿿]/.test(name) ? name.match(/\(([^()]+)\)\s*$/) : null;
+        const key = (paren ? paren[1] : name).trim();
+        if (key && !index.has(key)) index.set(key, url); // 同名以先出現的分區為準
+      }
+    }
+    return index;
+  }
+
+  function mapExtensionIcon(iconName, iconIndex) {
+    const name = String(iconName ?? '').trim();
+    if (!name) return null;
+    if (/^https?:\/\//.test(name)) return name; // 已經是圖檔位址(本擴充自己的資料)
+    // Extension 的 icon 列舉一律是純英數字(Assassin/Chaos1/TFT…);其餘形態
+    // (emoji、符號)是 PoE Trade Mate 或本擴充的圖示,本來就能直接顯示,原樣留著。
+    if (!/^[A-Za-z0-9]+$/.test(name)) return name;
+    const key = EXT_ICON_ALIAS[name] ?? name;
+    const url = iconIndex?.get?.(key);
+    return typeof url === 'string' && url ? url : null;
+  }
+
+  // ── 網址 ──
+  const TRADE_PATH_RE = /^\/trade(2)?\/(search|exchange)(\/poe2)?\/([^/]+)(?:\/([^/]+))?/;
+
+  function leagueFromHref(href) {
+    try {
+      const m = new URL(href).pathname.match(TRADE_PATH_RE);
+      return m ? decodeURIComponent(m[4]) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 目前頁面正開著一個搜尋時,回它的 {league, searchId, type, poeVersion}
+  function parseSearchUrl(href) {
+    let m = null;
+    try {
+      m = new URL(href).pathname.match(TRADE_PATH_RE);
+    } catch (_) {
+      return null;
+    }
+    if (!m || !m[5]) return null;
+    const searchId = decodeURIComponent(m[5]);
+    if (!SEARCH_ID_RE.test(searchId)) return null; // 例如 /live 之類的尾段
+    return {
+      league: decodeURIComponent(m[4]),
+      searchId,
+      type: m[2],
+      poeVersion: m[1] || m[3] ? 'Poe2' : 'Poe1',
+    };
+  }
+
+  // 書籤存的是與聯盟無關的 search id,所以換季後舊書籤照樣能開。
+  // 順序:**設定的聯盟** → 書籤自己存的 → 目前頁面 → 上次看到的 → Standard
+  // 設定的聯盟排最前面是使用者裁定的(2026-08-14):書籤的聯盟由「聯盟」設定
+  // 統一決定,書籤列不再有「自動/固定」切換鈕。書籤自己的 league 仍然保存
+  // (從 PoE Trade Extension 匯入的固定聯盟不會被丟掉),只在設定為「自動」時才用。
+  function resolveLeague(bookmark, href, opts) {
+    const o = typeof opts === 'string' ? { lastLeague: opts } : (opts ?? {});
+    return o.settingLeague || bookmark?.league || leagueFromHref(href) || o.lastLeague || 'Standard';
+  }
+
+  function buildTradeUrl(origin, bookmark, league) {
+    const type = TYPES.has(bookmark?.type) ? bookmark.type : 'search';
+    const lg = encodeURIComponent(league || 'Standard');
+    const base = bookmark?.poeVersion === 'Poe2'
+      ? `${origin}/trade2/${type}/poe2/${lg}`
+      : `${origin}/trade/${type}/${lg}`;
+    // 存查詢條件的書籤:官網吃 ?q=<url-encoded JSON>,會自己建立搜尋並換上 search id
+    if (!bookmark?.searchId && bookmark?.query) {
+      // 上次開過而且還是同一個聯盟 → 直接用記下來的編號,省掉「重建搜尋」那一趟
+      if (bookmark.cachedSearchId && bookmark.cachedLeague === (league || 'Standard')) {
+        return `${base}/${encodeURIComponent(bookmark.cachedSearchId)}`;
+      }
+      return `${base}?q=${encodeURIComponent(JSON.stringify(bookmark.query))}`;
+    }
+    return `${base}/${encodeURIComponent(String(bookmark?.searchId ?? ''))}`;
+  }
+
+  const api = {
+    VERSION,
+    DEFAULT_ICON,
+    newId,
+    newFolder,
+    sanitizeBookmark,
+    normalizeFolders,
+    migrate,
+    orderedFolders,
+    childFolders,
+    dropPosition,
+    planFolderDrop,
+    applyFolderDrop,
+    countBookmarks,
+    folderTotal,
+    importFolders,
+    parseExtensionCode,
+    parseBookmarkFile,
+    parseBackupFile,
+    makeBackup,
+    pickKnown,
+    sanitizeHistory,
+    buildIconIndex,
+    mapExtensionIcon,
+    leagueFromHref,
+    parseSearchUrl,
+    resolveLeague,
+    buildTradeUrl,
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.pmzBookmarks = api;
+})(globalThis);

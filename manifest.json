@@ -21,6 +21,13 @@
     "https://pathofexile.tw/*",
     "https://raw.githubusercontent.com/*"
   ],
+  "optional_host_permissions": ["https://poe.ninja/*"],
+  "web_accessible_resources": [
+    {
+      "resources": ["data/icons.json"],
+      "matches": ["https://www.pathofexile.com/*", "https://pathofexile.com/*"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
@@ -36,6 +43,12 @@
     {
       "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
       "js": ["content/results.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "js": ["content/bookmarks-model.js", "content/pob-import.js", "content/sidebar.js"],
+      "css": ["content/sidebar.css"],
       "run_at": "document_end"
     }
   ]

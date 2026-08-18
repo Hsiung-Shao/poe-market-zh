@@ -55,13 +55,18 @@
   }
   button:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
   button:disabled { opacity: 0.4; cursor: default; }
-  #applyZh.armed {
+  #applyZh.armed,
+  #ninjaToggle.armed {
     background: #6b5324;
     border-color: #c9a66b;
     color: #ffe8b8;
   }
   #clearCache { color: #b98a80; }
   #clearCache:hover:not(:disabled) { border-color: #c96b6b; color: #e0a8a0; }
+  /* ⚠ 一定要留這條:HTML 的 hidden 屬性等於 display:none,但**任何顯式的 display
+     宣告都會蓋掉它** —— .toggle-row 的 display:flex 就讓 hidden 完全失效
+     (2026-08-15 使用者回報 poe.ninja 那顆該藏起來的按鈕還在)。 */
+  [hidden] { display: none !important; }
   .toggle-row {
     display: flex;
     justify-content: space-between;
@@ -70,6 +75,8 @@
     text-align: left;
   }
   .toggle-row .state { color: #7a6f5a; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row button { flex: 1; }
   .toggle-row.on { border-color: #c9a66b; }
   .toggle-row.on .state { color: #ffe8b8; }
   #status {
@@ -114,6 +121,11 @@
     <button id="applyZh">繁體中文化(ZH_TW)</button>
     <button id="restoreEn">還原回英文(US)</button>
     <button id="bilingualToggle" class="toggle-row"><span>詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
+    <button id="sidebarToggle" class="toggle-row"><span>側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
+    <!-- poe.ninja 的授權按鈕平常不顯示:安裝/更新後 background 會把這頁開成
+         popup.html?ask=ninja 專門問一次,側邊欄設定裡的開關也是開這個網址。
+         chrome.permissions.request 只能從擴充頁面呼叫,所以按鈕得留在這裡。 -->
+    <button id="ninjaToggle" class="toggle-row" hidden><span>物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
     <button id="clearCache">清除快取</button>
     <div id="status"></div>
     <div id="dictInfo"></div>

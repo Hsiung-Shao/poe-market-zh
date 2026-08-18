@@ -87,14 +87,72 @@ function renderBilingual(on) {
   $('#bilingualState').textContent = on ? '開' : '關';
 }
 
+// ── poe.ninja 選用權限 ──
+// 放進 manifest 的 host_permissions 會讓 Chrome 在擴充更新後停用它、等使用者手動
+// 重新授權(所有現有使用者都會被打斷),所以物價功能改成使用者自己開。
+// chrome.permissions.request 只能從這裡呼叫(需要使用者手勢),content script 不行。
+const NINJA_ORIGIN = 'https://poe.ninja/*';
+
+function renderSidebar(on) {
+  $('#sidebarToggle').classList.toggle('on', on);
+  $('#sidebarState').textContent = on ? '開' : '關';
+}
+
+$('#sidebarToggle').addEventListener('click', async () => {
+  const { sidebarEnabled } = await chrome.storage.local.get('sidebarEnabled');
+  const next = sidebarEnabled === false; // 只有明確關掉才算關
+  await chrome.storage.local.set({ sidebarEnabled: next });
+  renderSidebar(next);
+  showStatus(`已${next ? '開啟' : '關閉'}側邊欄,重新整理交易頁生效`);
+});
+
+function renderNinja(on) {
+  $('#ninjaToggle').classList.toggle('on', on);
+  $('#ninjaState').textContent = on ? '開' : '關';
+}
+
+// init 裡任何一步丟例外都會讓 popup 停在半成品狀態(語系、字典狀態全都不顯示),
+// 所以權限查詢自己吞掉錯誤,查不到就當作沒開。
+async function ninjaGranted() {
+  try {
+    return await chrome.permissions.contains({ origins: [NINJA_ORIGIN] });
+  } catch (_) {
+    return false;
+  }
+}
+
 async function init() {
   $('#version').textContent = chrome.runtime.getManifest().version;
   const { language, bilingualMods } = await chrome.storage.local.get(['language', 'bilingualMods']);
   renderLang(language ?? 'zh_tw');
   renderBilingual(bilingualMods === true);
+  const { sidebarEnabled } = await chrome.storage.local.get('sidebarEnabled');
+  renderSidebar(sidebarEnabled !== false);
+  const granted = await ninjaGranted();
+  renderNinja(granted);
+  // 安裝/更新後 background 會把這頁開成分頁(?ask=ninja)問一次物價權限,
+  // 側邊欄的物價開關也是開這個網址 —— content script 呼叫不到 permissions.request。
+  if (new URLSearchParams(location.search).get('ask') === 'ninja' && !granted) {
+    $('#ninjaToggle').hidden = false;
+    $('#ninjaToggle').classList.add('armed');
+    showStatus('側邊欄的「物價」分頁要讀 poe.ninja 的公開匯率。\n要用的話請按上面的「物價查詢(poe.ninja)」允許存取;不需要就直接關掉這一頁。');
+    return; // 這一頁是來問權限的,不要再蓋掉訊息
+  }
   refreshBuildStatus();
 }
 
+$('#ninjaToggle').addEventListener('click', async () => {
+  const on = await chrome.permissions.contains({ origins: [NINJA_ORIGIN] });
+  const next = on
+    ? !(await chrome.permissions.remove({ origins: [NINJA_ORIGIN] }))
+    : await chrome.permissions.request({ origins: [NINJA_ORIGIN] });
+  renderNinja(next);
+  showStatus(next ? '已開啟物價查詢,回交易頁的側邊欄「物價」分頁即可使用' : '已關閉物價查詢');
+});
+
+// ── 語系與雙語顯示 ──
+// 側邊欄 ⚙ 的「中文化」區塊改的是同一組 storage 鍵(language / bilingualMods),
+// 兩邊都能開關,誰改了另一邊都跟著動(見下方 onChanged)。
 $('#applyZh').addEventListener('click', async () => {
   await chrome.storage.local.set({ language: 'zh_tw' });
   renderLang('zh_tw');
@@ -128,4 +186,15 @@ $('#clearCache').addEventListener('click', async () => {
   showStatus('已清除,下次開啟交易頁會重新建置');
 });
 
-init();
+// 側邊欄(或其他分頁)改了共用設定 → 這裡跟著更新。
+// popup 每次開啟都重新 init,平時用不到;但 popup 開著時 background 完成建置、
+// 或使用者在另一個視窗操作,畫面不該停在舊狀態。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.language) renderLang(changes.language.newValue ?? 'zh_tw');
+  if (changes.bilingualMods) renderBilingual(changes.bilingualMods.newValue === true);
+  if (changes.sidebarEnabled) renderSidebar(changes.sidebarEnabled.newValue !== false);
+});
+
+// init 任何一步失敗都不該讓 popup 停在半成品(語系、字典狀態全都不顯示)
+init().catch((err) => showStatus(`初始化失敗:${err?.message ?? err}`, true));
