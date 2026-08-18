@@ -3,9 +3,9 @@
 Path of Exile 1 國際服交易站(`pathofexile.com/trade`)中文化擴充,另附書籤、歷史與物價。與 poe-trade-mate(內部完整版)擴充 id 不同,可同時載入 Chrome(建議只啟用其中一個,避免互搶官網 lscache 快取;兩者的 CSS class 與設定鍵已分別使用 `pmz-` / `ptm-` 前綴,不會互相覆寫)。
 
 - **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯
-- **書籤**:側邊欄以**兩層資料夾**收藏常用搜尋,**整塊點下去就是搜尋、按住 0.35 秒才是拖曳**(拖到別的資料夾上變成它的子、拖到上下緣則是同層排序);標題列內聯改名、釘選;可從 **PoE Trade Extension 的匯出碼**與 **Path of Building code** 匯入;書籤存的是與聯盟無關的搜尋編號,**換季後照樣打得開**
+- **書籤**:側邊欄以**兩層資料夾**收藏常用搜尋,**整塊點下去就是搜尋、按住 0.35 秒才是拖曳**(拖到別的資料夾上變成它的子、拖到上下緣則是同層排序);標題列內聯改名、釘選;可從 **PoE Trade Extension 的匯出碼**與 **Path of Building code** 匯入;書籤存的是與聯盟無關的搜尋編號,**換季後照樣打得開**;設定分頁可**一鍵清除所有書籤**(會先確認,搜尋紀錄與設定不受影響)
 - **PoB 匯入**:貼一份 PoB code,自動照部位建資料夾(武器/防具/飾品/珠寶/藥水),每件裝備一個交易搜尋 —— 傳奇用「傳奇名 + 基底」、稀有用「基底 + 全部詞綴」,等於把 poe.ninja 上看到的流派整套存成書籤
-- **歷史**:開過的搜尋自動記在「歷史」分頁(**只記搜尋框有填東西的**,同一個搜尋重複進去只更新時間,上限 50 筆),可一鍵加進任一資料夾
+- **歷史**:開過的搜尋自動記在「歷史」分頁(**只記搜尋框有填東西的**,同一個搜尋重複進去只更新時間,上限 20 筆),可一鍵加進任一資料夾
 - **物價**:側邊欄「物價」分頁快查 poe.ninja 經濟 API,分類抽屜呈現、中英即打即搜、15 分鐘快取(**選用功能**,需自行開啟,見下)
 - **偽屬性高亮**:結果列的「合計」詞綴(`.item-mod--pseudo`)加底色與左側金線,和一般詞綴分得開,可在設定關掉
 - **廣義搜尋**(`page/stat-search.js`):在官網原生結果**後面**補兩層比對,原生命中的
@@ -208,4 +208,6 @@ node tools/verify-fallback.mjs       # 社群遞補層與 s2t 轉換(需網路)
 
 <a href="https://buymeacoffee.com/hsiung" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48" width="174"></a>
 
-問題回報與建議請開 [Issue](https://github.com/Hsiung-Shao/poe-market-zh/issues)。
+問題回報與建議請開 [Issue](https://github.com/Hsiung-Shao/poe-market-zh/issues),或到 [Discord 社群](https://discord.gg/6VamPQb8nC) 聊聊。
+
+(擴充內的側邊欄 ⚙ 設定分頁最下方也有這兩個連結。)
