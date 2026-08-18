@@ -54,6 +54,12 @@ function lscacheSignature(updated, parts) {
 }
 
 async function main() {
+  // 「content script 在交易站上跑得起來」的證據。背景那邊看不到這件事,而它是
+  // 唯一能分辨兩種失敗的訊號:瀏覽器管理原則的 runtime_blocked_hosts 會連
+  // **JavaScript 注入**一起擋,那種情況下拿到再多資料也沒有地方用;若只是背景
+  // 請求被擋,翻譯其實還活著。診斷訊息靠這筆分流(見 diagnoseApiFailure)。
+  chrome.storage.local.set({ contentAliveAt: Date.now() }).catch(() => {});
+
   const { language, translation, updated, uiExtra } = await chrome.storage.local.get([
     'language',
     'translation',

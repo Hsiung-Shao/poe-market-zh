@@ -8,10 +8,13 @@
 
 import { clearDictCache, loadDict, resetDictStatus, saveDictStatus } from './dict-source.js';
 
+const API_ORIGIN = 'https://www.pathofexile.com';
 const API_BASE = {
-  us: 'https://www.pathofexile.com/api/trade/data/',
+  us: `${API_ORIGIN}/api/trade/data/`,
   tw: 'https://pathofexile.tw/api/trade/data/',
 };
+// 官方 API 的遠端快照檔名(維護端由 tools/gen-api-snapshot.mjs 產生,推 dict 分支)
+const API_SNAPSHOT = { us: 'api-us.json', tw: 'api-tw.json' };
 // 遞補層資料來源:cswzhang/Poe-trade-zh(Apache-2.0,簡體,經 s2t 轉繁)。
 // 僅用於填補官方資料對不齊的缺口,官方台服資料永遠優先。
 const COMMUNITY = {
@@ -35,6 +38,85 @@ async function fetchKind(base, kind) {
 async function fetchAll(base) {
   const results = await Promise.all(KINDS.map((k) => fetchKind(base, k)));
   return Object.fromEntries(KINDS.map((k, i) => [k, results[i]]));
+}
+
+// ── 官方 API 的遠端快照 ──
+// 四個端點被擋住時的後路。快照是**API 回應的逐字副本**({items,stats,static,filters}
+// 各自原樣),所以走這條路與走正常路徑,下游拿到的資料形狀完全一樣,不必有第二套
+// 程式碼 —— 替身與本尊不同等於沒測。
+// 走 dict-source 的「遠端 → 快取 → 內建」三層;快照刻意不內建(擴充包不為此變大),
+// 所以三層全滅時 loadDict 會 throw,這裡吞掉並回 null 交給呼叫端決定。
+export async function loadApiSnapshot(name) {
+  try {
+    const json = await loadDict(name);
+    // 形狀先驗:缺任一個端點就不能用,否則下游會拿到 undefined 再炸在別的地方
+    const missing = KINDS.filter((k) => !json?.[k]);
+    if (missing.length) {
+      dbg(`[PTM] 快照 ${name} 缺端點:${missing.join('、')},不採用`);
+      return null;
+    }
+    return json;
+  } catch (err) {
+    dbg(`[PTM] 快照 ${name} 取不到:${String(err?.message ?? err)}`);
+    return null;
+  }
+}
+
+/**
+ * 官方 API 失敗時,把「Failed to fetch」翻成使用者真的能據以行動的說明。
+ *
+ * ⚠ 判準的核心是那組矛盾:**`permissions.contains` 回 true、fetch 卻拋
+ * TypeError,就不是權限問題**,而是瀏覽器管理原則(Edge/Chrome 的
+ * ExtensionSettings.runtime_blocked_hosts)或安全軟體在 network 層攔截 ——
+ * permissions API 看的是擴充自身的權限集合,原則作用在 URLLoaderFactory,兩者不同層。
+ *
+ * ⚠ 再往下分一層:原則的封鎖**連 content script 注入都擋**。所以要看
+ * `contentAliveAt`(交易站上的 content script 自己寫的)——
+ * 有值 = 注入還活著,只有背景請求被擋,翻譯其實還在動;
+ * 從來沒有 = 那個網域上我們一行程式都跑不了,講「詞綴暫不可用」會誤導。
+ */
+export async function diagnoseApiFailure(err) {
+  const raw = String(err?.message ?? err);
+  // 有 HTTP 狀態碼代表請求確實到得了對方,那是站方的事,不是這台機器的環境
+  if (/HTTP \d{3}/.test(raw)) return `官方站台回應異常(${raw}),稍後會自動重試`;
+
+  let granted = null;
+  try {
+    granted = await chrome.permissions.contains({ origins: [`${API_ORIGIN}/*`] });
+  } catch (_) {
+    // 問不到就別猜,退回原始訊息那一路
+  }
+  if (granted === false) {
+    return `擴充沒有存取 ${API_ORIGIN} 的權限(${raw})。請到擴充管理頁把本擴充的「網站存取」設為允許`;
+  }
+  if (granted === true) {
+    let alive = null;
+    try {
+      ({ contentAliveAt: alive = null } = await chrome.storage.local.get('contentAliveAt'));
+    } catch (_) { /* 讀不到就當作沒有 */ }
+    // ⚠ 網址後面不要緊接 ASCII 括號:主控台/聊天視窗的自動連結化會把 `(Chrome`
+    //   一起吃進網址裡,點下去就是壞連結。網址後面一律留空白。
+    // ⚠ **不要叫使用者只看 edge://policy**(2026-08-17 實際個案推翻):那頁顯示
+    //   「未設定任何原則」時問題照樣在,最後是刪掉登錄檔機碼才好的。
+    //   看得見的原則是子集合,登錄檔才是真相。
+    const how =
+      '這通常是瀏覽器管理原則在擋,不是擴充自身的權限問題。' +
+      '⚠ edge://policy 那頁就算顯示「未設定任何原則」也不代表沒有 — 要直接查登錄檔。' +
+      '以系統管理員身分開啟命令提示字元,三個位置都要查:' +
+      'reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge" /s ,' +
+      'reg query "HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge" /s ,' +
+      'reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge" /s /reg:32 。' +
+      '⚠ 只刪 HKLM 那一個常常沒用,原則可能設在使用者層或 32 位元檢視。' +
+      'Chrome 把路徑裡的 Microsoft\\Edge 換成 Google\\Chrome。' +
+      '若擴充管理頁左下角出現「由您的組織管理」,代表原則來自公司派送,刪掉會被刷回來。';
+    // ⚠ 沒有 contentAliveAt 有兩種可能:注入被擋,或使用者根本還沒開過交易站。
+    //   分不出來就不要替使用者斷定 —— 給條件式的判斷法,讓他自己一眼確認。
+    return alive
+      ? `連得到網路但官方資料被擋(${raw})。交易站頁面上的翻譯仍可運作。${how}`
+      : `官方站台被擋(${raw})。若你開過交易站頁面卻完全沒有中文,` +
+          `代表擴充在該網站上整個沒有作用。${how}`;
+  }
+  return `官方資料取得失敗(${raw})`;
 }
 
 // 建立 tw stats 的 id → entry 索引
@@ -593,13 +675,32 @@ export async function buildTranslation() {
           s2tOk ? fetchCommunityDict(COMMUNITY.items, s2t) : Promise.resolve({}),
           s2tOk ? fetchCommunityDict(COMMUNITY.ui, s2t) : Promise.resolve({}),
         ]);
-        if (usRes.status === 'rejected') throw usRes.reason; // 英文基準拿不到才算失敗
-        const us = usRes.value;
-        const tw = twRes.status === 'fulfilled' ? twRes.value : null;
         const communityItems = commItemsRes.status === 'fulfilled' ? commItemsRes.value : {};
         const communityUI = commUiRes.status === 'fulfilled' ? commUiRes.value : {};
         const degraded = [];
-        if (!tw) degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
+
+        // 官方 API 連不上時改吃遠端快照。快照與 API 回應同形狀,所以換完之後
+        // 底下那一整段建置邏輯完全不必知道資料是哪來的。
+        // ⚠ 兩服分開退:台服拿不到只影響中文覆蓋率,不該讓它把英文基準一起拖下水。
+        const snapNote = (snap) =>
+          snap.generatedAt ? `遠端快照(${String(snap.generatedAt).slice(0, 10)})` : '遠端快照';
+        let us = usRes.status === 'fulfilled' ? usRes.value : null;
+        if (!us) {
+          const snap = await loadApiSnapshot(API_SNAPSHOT.us);
+          if (!snap) throw usRes.reason; // 快照也沒有 → 英文基準真的沒了,整段降級
+          us = snap;
+          degraded.push(`美服 API 連不上,改用${snapNote(snap)}`);
+        }
+        let tw = twRes.status === 'fulfilled' ? twRes.value : null;
+        if (!tw) {
+          const snap = await loadApiSnapshot(API_SNAPSHOT.tw);
+          if (snap) {
+            tw = snap;
+            degraded.push(`台服 API 連不上,改用${snapNote(snap)}`);
+          } else {
+            degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
+          }
+        }
         if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
         if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
         if (!s2tOk) degraded.push('簡繁對照表(社群字典整層停用)');
@@ -694,7 +795,9 @@ export async function buildTranslation() {
         // 失敗」,字典缺了哪幾份完全不見 —— 有 fallback 的地方,缺口本來就安靜,
         // 再被另一個錯誤蓋掉就徹底查不到了。
         const dictNote = dictFailed.size ? `;字典取得失敗:${[...dictFailed].join('、')}` : '';
-        const failMsg = `官方資料更新失敗,${scope}:${String(apiErr?.message ?? apiErr)}${dictNote}`;
+        // 原本這裡直接印 apiErr.message,使用者只看得到「Failed to fetch」,
+        // 既不知道發生什麼事也無從自救。改成可據以行動的說明。
+        const failMsg = `官方資料更新失敗,${scope}:${await diagnoseApiFailure(apiErr)}${dictNote}`;
         dbg('[PTM] build:', failMsg);
         await chrome.storage.local.set({
           buildStatus: { state: 'done', msg: failMsg, at: Date.now() },

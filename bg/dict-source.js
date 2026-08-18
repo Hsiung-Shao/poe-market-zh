@@ -35,7 +35,16 @@ export const DICT_FILES = [
   'passivesNotable.json',
   's2t.json',
   'ggpk.json',
+  // 官方 trade data API 的快照,四個端點的逐字副本。**只有遠端,沒有內建版本** ——
+  // 用途是「官方 API 被擋時的後路」,擴充包不為此變大 5MB;拿不到就退回原本的降級。
+  // ⚠ 列在這裡**不會**讓第一階段多抓東西:第一階段是逐檔明列 loadDictOr(...) 的,
+  //   這份清單只餵給 DICT_STORAGE_KEYS(清除快取)與 tools/gen-dict-index.mjs。
+  'api-us.json',
+  'api-tw.json',
 ];
+// 沒有內建版本的檔。索引產生器不能拿 data/ 底下的同名檔跟它們比涵蓋率(根本沒有),
+// 擴充端的 loadDict 走到第三層也會直接 throw —— 兩邊都要知道這件事。
+export const REMOTE_ONLY_FILES = new Set(['api-us.json', 'api-tw.json']);
 
 // 逾時:第一階段的性質是「不需網路、必定成功」,遠端拖住就直接走本地。
 // 可由 _test.setTimeouts 調整,讓離線驗證不必真的等 30 秒。
@@ -266,6 +275,11 @@ export async function loadDict(name) {
     }
   }
 
+  // 只有遠端的檔沒有第三層。講清楚是「遠端與快取都沒有」,不要讓呼叫端看到
+  // 一個指向 data/ 的 404 —— 那會把人帶去找根本不該存在的檔案。
+  if (REMOTE_ONLY_FILES.has(name)) {
+    throw new Error(`${name} 只有遠端版本,這次遠端與快取都拿不到`);
+  }
   const json = await loadBundledDict(name);
   record(name, 'bundled', {});
   return json;
