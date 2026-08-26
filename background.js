@@ -9,13 +9,26 @@ import {
 } from './bg/translation.js';
 import { handleNinjaMessage } from './bg/ninja.js';
 
+// 要建哪幾款遊戲的資料:**依使用者實際開過的交易站決定**(使用者 2026-08-26 裁定)。
+// content/bootstrap.js 每次在 /trade/ 或 /trade2/ 上跑起來就記一筆 gamesSeen[game]。
+// 兩款全建會讓每日 alarm 從 8 個端點變 16 個、chrome.storage 用量約翻倍,
+// 而多數人只玩其中一款。
+// ⚠ 全新安裝時 gamesSeen 是空的 —— 這時只建 PoE1,維持「裝完打開交易站就有中文」
+//   的既有行為;PoE2 在第一次開 /trade2/ 時觸發建置,重新整理後生效
+//   (與首次安裝完全相同的體驗,不是回歸)。
+async function gamesToBuild() {
+  const { gamesSeen } = await chrome.storage.local.get('gamesSeen');
+  const seen = Object.keys(gamesSeen ?? {});
+  return seen.length ? seen : ['poe1'];
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   const defaults = await chrome.storage.local.get('language');
   const language = defaults.language ?? 'zh_tw';
   await chrome.storage.local.set({ language });
   await ensureAlarm();
   // 安裝/更新後立即建置,使用者開啟交易頁時內建字典已就緒
-  if (language === 'zh_tw') buildTranslation();
+  if (language === 'zh_tw') for (const g of await gamesToBuild()) buildTranslation(g);
   maybeAskForNinja();
 });
 
@@ -26,7 +39,8 @@ chrome.runtime.onStartup?.addListener(() => {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!isRebuildAlarm(alarm)) return;
   const { language } = await chrome.storage.local.get('language');
-  if (language === 'zh_tw') buildTranslation();
+  if (language !== 'zh_tw') return;
+  for (const g of await gamesToBuild()) buildTranslation(g);
 });
 
 // poe.ninja 是選用權限(optional_host_permissions):放進 host_permissions 會讓

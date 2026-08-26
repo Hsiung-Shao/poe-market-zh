@@ -537,3 +537,30 @@ body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
 /* 拖曳資料夾時的落點指示:上緣/下緣 = 排在前/後(同一層),中間 = 放進去當子 */
 .pmz-drop-before { box-shadow: inset 0 3px 0 0 #c9a66b; }
 .pmz-drop-after { box-shadow: inset 0 -3px 0 0 #c9a66b; }
+
+/* ── 書籤/歷史頂部的 PoE1 / PoE2 分頁 ── */
+/* 依網址自動切換,也可以手動點。數量直接標在標籤上,不必再靠事後補說明。 */
+.pmz-gametabs { margin-bottom: 8px; }
+.pmz-gametabs .pmz-seg-btn { flex: 1; }
+
+/* ── 匯入:先攤開檔案內容再讓使用者決定 ── */
+.pmz-import-card {
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  background: #211b14;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pmz-import-name {
+  font-size: 12px;
+  color: #ffe8b8;
+  word-break: break-all;
+}
+.pmz-sub-title {
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #a99a7c;
+}

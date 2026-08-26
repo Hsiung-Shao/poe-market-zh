@@ -239,6 +239,16 @@
     return (Array.isArray(folders) ? folders : []).reduce((n, f) => n + (f.bookmarks?.length ?? 0), 0);
   }
 
+  // 分款計數。匯出/匯入的 UI 要先講清楚「這裡面有幾個 PoE1、幾個 PoE2」,
+  // 使用者才不會在不知情的狀況下少匯出一半。
+  function countByGame(folders) {
+    const out = { Poe1: 0, Poe2: 0 };
+    for (const f of Array.isArray(folders) ? folders : []) {
+      for (const b of f.bookmarks ?? []) out[b?.poeVersion === 'Poe2' ? 'Poe2' : 'Poe1']++;
+    }
+    return out;
+  }
+
   // 資料夾自己的書籤數 +(第一層時)子資料夾的書籤數
   function folderTotal(folders, folder) {
     const own = folder?.bookmarks?.length ?? 0;
@@ -329,21 +339,70 @@
     return importFolders(folders, opts);
   }
 
+  // ── 依遊戲過濾(匯出/匯入的「只要某一款」)──
+  // game 傳 null / 'all' = 不過濾。書籤沒有 poeVersion 的當 'Poe1'(舊資料的預設)。
+  //
+  // ⚠ 資料夾空了才丟,**但第一層若還有留下來的子資料夾就必須留著** ——
+  //   父被丟掉後子的 parentId 會變孤兒,normalizeFolders 會把它提升到第一層,
+  //   兩層結構就走樣了(而且是安靜地走樣)。
+  const gameOfBookmark = (b) => (b?.poeVersion === 'Poe2' ? 'Poe2' : 'Poe1');
+
+  function filterFoldersByGame(folders, game) {
+    const list = Array.isArray(folders) ? folders : [];
+    if (!game || game === 'all') return list.map((f) => ({ ...f, bookmarks: [...(f.bookmarks ?? [])] }));
+    const kept = list.map((f) => ({
+      ...f,
+      bookmarks: (f.bookmarks ?? []).filter((b) => gameOfBookmark(b) === game),
+    }));
+    const nonEmpty = new Set(kept.filter((f) => f.bookmarks.length).map((f) => f.id));
+    // 第二層留下來 → 它的第一層父也要留
+    for (const f of kept) {
+      if (f.parentId && nonEmpty.has(f.id)) nonEmpty.add(f.parentId);
+    }
+    return kept.filter((f) => nonEmpty.has(f.id));
+  }
+
+  function filterHistoryByGame(history, game) {
+    const list = Array.isArray(history) ? history : [];
+    if (!game || game === 'all') return [...list];
+    return list.filter((h) => gameOfBookmark(h) === game);
+  }
+
   // ── 完整備份 ──
   // 匯出的是「設定 + 書籤 + 歷史」整包,換電腦時一個檔就能還原。
   // 舊的、只有 folders 的檔仍然吃得下(那種是「匯入書籤」= 附加,不是還原)。
   const BACKUP_KIND = 'backup';
+  // 分款匯出的檔。**刻意不是 backup** —— 匯入端看到 backup 會走「取代」,
+  // 拿一個只有 PoE2 的檔去取代,PoE1 的書籤會整批消失。標成 bookmarks 就會落到
+  // parseBookmarkFile 那條路(附加),語意才對。
+  const BOOKMARKS_KIND = 'bookmarks';
 
   function makeBackup({ settings, folders, history, appVersion }) {
     return {
       app: 'poe-market-zh',
       kind: BACKUP_KIND,
       version: VERSION,
+      scope: 'all',
       appVersion: appVersion ?? '',
       exportedAt: new Date().toISOString(),
       settings: settings ?? {},
       folders: Array.isArray(folders) ? folders : [],
       history: Array.isArray(history) ? history : [],
+    };
+  }
+
+  // 只有某一款書籤的匯出檔。**不含設定、不含歷史**:
+  // 設定(尤其聯盟)是每款一份的,把 PoE1 的設定塞進 PoE2 的檔只會製造混亂;
+  // 歷史屬於「這台機器最近做了什麼」,不是要帶著走的東西。
+  function makeBookmarkExport({ folders, game, appVersion }) {
+    return {
+      app: 'poe-market-zh',
+      kind: BOOKMARKS_KIND,
+      version: VERSION,
+      scope: game === 'Poe2' ? 'Poe2' : 'Poe1',
+      appVersion: appVersion ?? '',
+      exportedAt: new Date().toISOString(),
+      folders: filterFoldersByGame(folders, game),
     };
   }
 
@@ -520,12 +579,16 @@
     planFolderDrop,
     applyFolderDrop,
     countBookmarks,
+    countByGame,
+    filterFoldersByGame,
+    filterHistoryByGame,
     folderTotal,
     importFolders,
     parseExtensionCode,
     parseBookmarkFile,
     parseBackupFile,
     makeBackup,
+    makeBookmarkExport,
     pickKnown,
     sanitizeHistory,
     buildIconIndex,

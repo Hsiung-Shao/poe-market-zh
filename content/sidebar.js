@@ -34,13 +34,27 @@
   // ⚠ 前綴一定要是 pmz-:PoE Trade Mate 用的是 ptm-settings,兩個擴充可能同時
   //   裝在同一個瀏覽器,共用鍵會互相覆寫設定。
   const SETTINGS_KEY = 'pmz-settings';
+  // 本頁是哪一款遊戲。bootstrap.js(document_start)已經算好掛在 globalThis;
+  // 這裡是 document_end,跨檔讀 globalThis 是可靠的(壞掉的只有 document_start
+  // 那一刻,見 bootstrap.js 的警語)。仍留一條自己算的備援。
+  const GAME = globalThis.PMZ_GAME
+    ?? (/^\/trade2(\/|$)/.test(location.pathname) ? { id: 'poe2', label: 'PoE2' } : { id: 'poe1', label: 'PoE1' });
+  const IS_POE2 = GAME.id === 'poe2';
+  const POE_VER = IS_POE2 ? 'Poe2' : 'Poe1'; // 書籤/歷史的 poeVersion 欄位用的字面值
+
   const DEFAULT_SETTINGS = {
     autoInstantBuyout: false, // 開頁自動把狀態設為「即刻購買」
     highlightPseudo: true, // 結果列的偽屬性(合計)詞綴高亮
-    league: '', // 聯盟:物價與書籤共用;空字串 = 自動(poe.ninja 最新 / 目前頁面)
+    // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
+    //   —— 共用一個欄位會讓 PoE2 書籤套上 PoE1 的聯盟,開出空搜尋而且完全無聲。
+    //   `league` / `lastLeague` **維持是 PoE1 的**(不做 migration,現有設定原封不動),
+    //   PoE2 另立 `league2` / `lastLeague2`。
+    league: '', // PoE1 聯盟:物價與書籤共用;空字串 = 自動(poe.ninja 最新 / 目前頁面)
+    league2: '', // PoE2 聯盟
     sidebarSide: 'right',
     sidebarTop: 45, // 開關鈕垂直位置(vh 百分比,可拖曳調整)
-    lastLeague: '', // 最後看到的聯盟,設定為「自動」時當退路
+    lastLeague: '', // PoE1 最後看到的聯盟,設定為「自動」時當退路
+    lastLeague2: '', // PoE2 同上
   };
 
   const state = {
@@ -65,6 +79,12 @@
     editingFolderId: null, // 正在改名(同時顯示圖示選擇器)的資料夾
     dataMsg: null, // 匯出/匯入結果訊息 { ok, text, detail? }
     codeBoxOpen: null, // 匯入輸入框:null | 'ext'(Extension 匯出碼)| 'pob'(PoB code)
+    // 書籤/歷史頂部的遊戲分頁:'Poe1' | 'Poe2'。
+    // 預設跟著目前頁面的遊戲,換頁(SPA 導航)時自動切過去;使用者手動點過之後
+    // 維持到下一次換頁。這是「現在在看哪一款」,不是偏好,所以不進 settings。
+    gameTab: POE_VER,
+    // 匯入時先解析檔案再問要匯入什麼(檔案裡有什麼,開之前根本不知道)
+    pendingImport: null, // { folders, report, isBackup, settings, history, exportedAt, counts, name }
   };
 
   // ── URL 解析與 SPA 導航偵測 ──
@@ -72,15 +92,28 @@
     return M.parseSearchUrl(location.href);
   }
 
+  // 聯盟設定是 per-game 的,而且要看**書籤自己的**遊戲,不是目前頁面的 ——
+  // 在 PoE1 頁面點一個 PoE2 書籤,套 PoE1 的聯盟就會開出空搜尋。
+  function leagueOptsFor(poeVersion) {
+    return poeVersion === 'Poe2'
+      ? { settingLeague: state.settings.league2, lastLeague: state.settings.lastLeague2 }
+      : { settingLeague: state.settings.league, lastLeague: state.settings.lastLeague };
+  }
+
   function leagueFor(bm) {
-    return M.resolveLeague(bm, location.href, {
-      settingLeague: state.settings.league,
-      lastLeague: state.settings.lastLeague,
-    });
+    // ⚠ resolveLeague 的第三順位是「目前頁面的聯盟」。書籤與本頁不同款時那個值是
+    //   **另一款的聯盟**,不能用 —— 傳 null 讓它跳過這一順位。
+    const sameGame = (bm?.poeVersion ?? 'Poe1') === POE_VER;
+    return M.resolveLeague(bm, sameGame ? location.href : null, leagueOptsFor(bm?.poeVersion));
   }
 
   function urlFor(bm) {
     return M.buildTradeUrl(location.origin, bm, leagueFor(bm));
+  }
+
+  // 書籤/歷史是否屬於**目前選中的分頁**(不是目前頁面 —— 使用者可以手動切過去看)
+  function inCurrentGame(entry) {
+    return (entry?.poeVersion ?? 'Poe1') === state.gameTab;
   }
 
   // ── 帶條件的書籤:開過一次就把官方搜尋編號記起來 ──
@@ -137,16 +170,28 @@
   // 記住最後看到的聯盟:書籤存的是與聯盟無關的 search id,不在搜尋頁時要有退路
   function rememberLeague() {
     const league = M.leagueFromHref(location.href);
-    if (league && league !== state.settings.lastLeague) {
-      state.settings.lastLeague = league;
+    const key = IS_POE2 ? 'lastLeague2' : 'lastLeague';
+    if (league && league !== state.settings[key]) {
+      state.settings[key] = league;
       persistSettings();
     }
+  }
+
+  // 網址換到另一款時,書籤/歷史的分頁自動跟著切過去(使用者要求「依 URL 自動辨別」)。
+  // ⚠ 只有**真的換款**才動:同一款內換聯盟/換搜尋不該把使用者手動切過去的分頁拉回來。
+  function syncGameTab() {
+    const now = /^\/trade2(\/|$)/.test(location.pathname)
+      || /^\/trade\/[^/]+\/poe2(\/|$)/.test(location.pathname) ? 'Poe2' : 'Poe1';
+    if (state.gameTab === now) return false;
+    state.gameTab = now;
+    return true;
   }
 
   let lastHref = location.href;
   function onUrlMaybeChanged() {
     if (location.href === lastHref) return;
     lastHref = location.href;
+    syncGameTab();
     rememberLeague();
     adoptSearchId(); // ?q= 換成正式編號的那一刻,把編號寫回書籤
     scheduleHistory();
@@ -255,7 +300,12 @@
     header.appendChild(closeBtn);
     panel.appendChild(header);
     const tabs = el('div', 'pmz-tabs');
-    for (const [id, label] of [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']]) {
+    // ⚠ 物價只有 PoE1:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
+    //   在 PoE2 頁面顯示一個永遠載不出東西的分頁,比沒有這個分頁更糟。
+    const TABS = IS_POE2
+      ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
+      : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
+    for (const [id, label] of TABS) {
       const tab = el('button', 'pmz-tab', label);
       tab.dataset.tab = id;
       tab.title = id === 'settings' ? '設定' : label;
@@ -734,7 +784,7 @@
     const nameRow = el('div', 'pmz-item-top');
     if (bm.pinned) nameRow.appendChild(svgIcon('pin', 'pmz-pinned-mark'));
     const name = el('span', 'pmz-item-name', (bm.type === 'exchange' ? '⇄ ' : '') + bm.name);
-    name.title = `${bm.searchId ? bm.searchId : '自訂搜尋條件'}${bm.poeVersion === 'Poe2' ? ' / PoE2' : ''}`;
+    name.title = `${bm.searchId ? bm.searchId : '自訂搜尋條件'} / ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'}`;
     nameRow.appendChild(name);
     item.appendChild(nameRow);
 
@@ -847,8 +897,10 @@
 
     if (!folder.collapsed) {
       const list = el('div', 'pmz-folder-body');
+      // 依頂部選中的遊戲分頁過濾。數量已經標在分頁標籤上,這裡不必再補說明。
+      const visible = folder.bookmarks.filter(inCurrentGame);
       // 手動拖曳順序為主,釘選的穩定浮到最上面(組內維持手動順序)
-      const sorted = [...folder.bookmarks].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+      const sorted = [...visible].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
       if (!sorted.length && !childCount) list.appendChild(el('div', 'pmz-empty', '(空)'));
       for (const bm of sorted) list.appendChild(renderBookmarkItem(folder, bm));
       const saveBtn = el('button', 'pmz-folder-save', '儲存目前搜尋');
@@ -863,7 +915,26 @@
     body.appendChild(wrap);
   }
 
+  // 書籤/歷史共用的遊戲分頁列。數量直接標在標籤上 —— 使用者一眼就知道另一款
+  // 有沒有東西,不必再靠「另有 N 個」那種事後補說明。
+  function renderGameTabs(body, counts) {
+    const seg = el('div', 'pmz-seg pmz-gametabs');
+    for (const [val, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
+      const n = counts[val] ?? 0;
+      const btn = el('button', 'pmz-seg-btn', `${label} (${n})`);
+      if (state.gameTab === val) btn.classList.add('pmz-seg-active');
+      btn.addEventListener('click', () => {
+        state.gameTab = val;
+        state.historyPickId = null;
+        render();
+      });
+      seg.appendChild(btn);
+    }
+    body.appendChild(seg);
+  }
+
   function renderBookmarks(body) {
+    renderGameTabs(body, M.countByGame(state.data.folders));
     const cur = currentSearch();
     const addBtn = el('button', 'pmz-primary', cur ? '＋ 將目前搜尋加入書籤' : '(開啟一個搜尋後可加入書籤)');
     addBtn.disabled = !cur;
@@ -942,6 +1013,11 @@
   }
 
   function renderHistory(body) {
+    const counts = { Poe1: 0, Poe2: 0 };
+    for (const h of state.history) counts[h?.poeVersion === 'Poe2' ? 'Poe2' : 'Poe1']++;
+    renderGameTabs(body, counts);
+    // 與書籤同一條規則:依頂部選中的分頁過濾
+    const shown = state.history.filter(inCurrentGame);
     if (!state.history.length) {
       body.appendChild(el('div', 'pmz-hint', '開過的搜尋會記在這裡(只記搜尋框有填東西的那些)。'));
       body.appendChild(el('div', 'pmz-empty', '還沒有紀錄'));
@@ -962,8 +1038,9 @@
     });
     bar.appendChild(clear);
     body.appendChild(bar);
+    if (!shown.length) body.appendChild(el('div', 'pmz-empty', '這一款還沒有紀錄'));
 
-    for (const h of state.history) {
+    for (const h of shown) {
       const item = el('div', 'pmz-item');
       const top = el('div', 'pmz-item-top');
       const name = el('span', 'pmz-item-name', (h.type === 'exchange' ? '⇄ ' : '') + h.name);
@@ -1248,25 +1325,40 @@
 
   // ── 匯出/匯入(設定分頁使用)──
   // 匯出的是**完整備份**:設定 + 所有書籤 + 歷史紀錄,換一台電腦一個檔就還原得回來。
-  function exportBackup() {
-    const payload = M.makeBackup({
-      settings: state.settings,
-      folders: state.data.folders,
-      history: state.history,
-      appVersion: chrome.runtime.getManifest().version,
-    });
+  // scope='all' → 完整備份(設定 + 全部書籤 + 歷史),匯入時是「取代」。
+  // scope='Poe1'/'Poe2' → 只有那一款的書籤,**不含設定與歷史**,匯入時是「附加」。
+  // ⚠ 分款檔刻意標成 kind:'bookmarks' 而不是 'backup' —— 標成 backup 的話,拿一個
+  //   只有 PoE2 的檔去還原會把 PoE1 的書籤整批刪光(取代語意),而且完全無聲。
+  function exportBackup(scope) {
+    const version = chrome.runtime.getManifest().version;
+    const all = scope === 'all';
+    const payload = all
+      ? M.makeBackup({
+        settings: state.settings,
+        folders: state.data.folders,
+        history: state.history,
+        appVersion: version,
+      })
+      : M.makeBookmarkExport({ folders: state.data.folders, game: scope, appVersion: version });
     // 剔除 _ 開頭的內部欄位(如寫入者蓋章 _writer)
     const json = JSON.stringify(payload, (k, v) => (k.startsWith('_') ? undefined : v), 2);
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     const a = document.createElement('a');
+    const day = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `pmz-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = all ? `pmz-backup-${day}.json` : `pmz-bookmarks-${scope.toLowerCase()}-${day}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    const n = M.countBookmarks(payload.folders);
     state.dataMsg = {
       ok: true,
-      text: `已匯出備份:${M.countBookmarks(state.data.folders)} 個書籤、${state.history.length} 筆歷史,含目前設定`,
+      text: all
+        ? `已匯出完整備份:${n} 個書籤、${state.history.length} 筆歷史,含目前設定`
+        : `已匯出 ${scope === 'Poe2' ? 'PoE2' : 'PoE1'} 書籤 ${n} 個(不含設定與歷史;匯入時是附加)`,
     };
+    if (!all && !n) {
+      state.dataMsg = { ok: false, text: `目前沒有 ${scope === 'Poe2' ? 'PoE2' : 'PoE1'} 的書籤可以匯出` };
+    }
     render();
   }
 
@@ -1296,6 +1388,59 @@
     render();
   }
 
+  // 只加入某一款(一律附加)。
+  // ⚠ 不能走「完整備份 = 取代」那條路:取代會把檔案裡沒有的另一款整批刪光,
+  //   而且完全無聲(對話框只說「會取代目前內容」,沒人會想到少了另一款)。
+  function importOneGame(result, game) {
+    const label = game === 'Poe2' ? 'PoE2' : 'PoE1';
+    const picked = M.filterFoldersByGame(result.folders, game);
+    const n = M.countBookmarks(picked);
+    state.pendingImport = null;
+    if (!n) {
+      state.dataMsg = { ok: false, text: `這個檔裡沒有 ${label} 的書籤` };
+      render();
+      return;
+    }
+    applyImport(
+      { folders: picked, report: { ...result.report, folders: picked.length, bookmarks: n } },
+      `檔案的 ${label} 部分`
+    );
+  }
+
+  // 完整備份的「還原」:取代目前內容(含設定與歷史)
+  function restoreBackup(result) {
+    const inFile = M.countByGame(result.folders);
+    const when = result.exportedAt ? `(${result.exportedAt.slice(0, 10)} 匯出)` : '';
+    confirmDialog({
+      title: '還原備份',
+      message: `備份${when}裡有 ${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤`
+        + `(PoE1 ${inFile.Poe1}、PoE2 ${inFile.Poe2})、${result.history.length} 筆歷史。\n`
+        + `目前的 ${state.data.folders.length} 個資料夾、${M.countBookmarks(state.data.folders)} 個書籤與設定會被取代。\n`
+        + '此操作將永久刪除資料。',
+      okLabel: '還原',
+      onOk: () => {
+        state.data = { version: M.VERSION, folders: result.folders };
+        state.settings = { ...DEFAULT_SETTINGS, ...result.settings };
+        state.history = result.history;
+        state.pendingImport = null;
+        chrome.storage.local.set({ searchHistory: state.history });
+        persist();
+        persistSettings();
+        applySide();
+        applyTop();
+        applyPseudoHighlight();
+        state.dataMsg = {
+          ok: true,
+          text: `已還原備份:${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤、${result.history.length} 筆歷史,設定也一併套用`,
+        };
+        render();
+      },
+    });
+  }
+
+  // 匯入的第一步:**先解析,把檔案裡有什麼攤開來**,再讓使用者按對應的鈕。
+  // ⚠ 舊做法是「匯入前先選範圍」,那不直觀 —— 開檔之前根本不知道檔案裡有什麼,
+  //   只能瞎猜。現在是看著「PoE1 12 個、PoE2 5 個」再決定。
   async function importBackupFile(file) {
     try {
       const result = M.parseBackupFile(await file.text(), {
@@ -1303,38 +1448,18 @@
         settingsTemplate: DEFAULT_SETTINGS,
         historyMax: HISTORY_MAX,
       });
-      // 只有 folders 的舊檔 = 單純匯入書籤(附加);完整備份 = 還原(取代)
-      if (!result.isBackup) {
-        applyImport(result, '檔案');
+      if (!result.folders.length) {
+        state.dataMsg = { ok: false, text: '這個檔案裡沒有可用的書籤' };
+        render();
         return;
       }
-      const when = result.exportedAt ? `(${result.exportedAt.slice(0, 10)} 匯出)` : '';
-      confirmDialog({
-        title: '還原備份',
-        message: `備份${when}裡有 ${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤、`
-          + `${result.history.length} 筆歷史。
-`
-          + `目前的 ${state.data.folders.length} 個資料夾、${M.countBookmarks(state.data.folders)} 個書籤與設定會被取代。
-`
-          + '此操作將永久刪除資料。',
-        okLabel: '還原',
-        onOk: () => {
-          state.data = { version: M.VERSION, folders: result.folders };
-          state.settings = { ...DEFAULT_SETTINGS, ...result.settings };
-          state.history = result.history;
-          chrome.storage.local.set({ searchHistory: state.history });
-          persist();
-          persistSettings();
-          applySide();
-          applyTop();
-          applyPseudoHighlight();
-          state.dataMsg = {
-            ok: true,
-            text: `已還原備份:${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤、${result.history.length} 筆歷史,設定也一併套用`,
-          };
-          render();
-        },
-      });
+      state.pendingImport = {
+        ...result,
+        counts: M.countByGame(result.folders),
+        name: file.name,
+      };
+      state.dataMsg = null;
+      render();
     } catch (err) {
       // 行內錯誤訊息,不用 alert 阻斷官網頁面
       state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
@@ -1509,19 +1634,27 @@
     body.appendChild(ninjaRow);
     if (state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
 
+    // ⚠ 書籤/歷史的遊戲切換已改成**分頁頂部的 PoE1/PoE2 標籤**(依網址自動切),
+    //   這裡不再有那個設定 —— 同一件事有兩個入口只會讓人不知道哪個說了算。
+
     // 聯盟:物價與書籤共用。空字串 = 自動(物價用 poe.ninja 最新、書籤用目前頁面)
+    // ⚠ **每款一份**:兩款的聯盟名不同,共用一個欄位會讓另一款開出空搜尋。
+    //   這個下拉改的是**目前頁面那一款**的設定,標題也寫清楚是哪一款。
+    const LKEY = IS_POE2 ? 'league2' : 'league';
+    const LLAST = IS_POE2 ? 'lastLeague2' : 'lastLeague';
     const leagueRow = el('div', 'pmz-setting-row');
-    leagueRow.appendChild(el('span', null, '聯盟'));
+    leagueRow.appendChild(el('span', null, `聯盟(${GAME.label})`));
     const leagueSel = el('select', 'pmz-select pmz-select-inline');
-    const autoOpt = el('option', null, `自動(目前:${state.ninjaLeagues?.latest ?? (state.settings.lastLeague || '…')})`);
+    const autoOpt = el('option', null, `自動(目前:${(IS_POE2 ? null : state.ninjaLeagues?.latest) ?? (state.settings[LLAST] || '…')})`);
     autoOpt.value = '';
     leagueSel.appendChild(autoOpt);
-    const manual = state.settings.league;
-    // 沒授權 poe.ninja 時清單抓不到,至少把目前頁面的聯盟放進去可選
+    const manual = state.settings[LKEY];
+    // 沒授權 poe.ninja 時清單抓不到,至少把目前頁面的聯盟放進去可選。
+    // ⚠ poe.ninja 的聯盟清單是 PoE1 的,不要餵給 PoE2 的下拉。
     const known = new Set([
       ...(manual ? [manual] : []),
-      ...(state.ninjaLeagues?.leagues ?? []),
-      ...(state.settings.lastLeague ? [state.settings.lastLeague] : []),
+      ...(IS_POE2 ? [] : (state.ninjaLeagues?.leagues ?? [])),
+      ...(state.settings[LLAST] ? [state.settings[LLAST]] : []),
     ]);
     for (const name of known) {
       const opt = el('option', null, name);
@@ -1530,14 +1663,15 @@
     }
     leagueSel.value = manual || '';
     leagueSel.addEventListener('change', () => {
-      state.settings.league = leagueSel.value;
+      state.settings[LKEY] = leagueSel.value;
       persistSettings();
       // 清掉已載入的物價,下次開物價分頁以新聯盟重新載入
       state.prices = { ...state.prices, list: [], at: 0, league: null, error: null };
       render();
     });
-    // 沒授權 poe.ninja 就不要白打請求(清單抓不到,下拉維持「自動」)
-    if (!state.ninjaLeagues && state.ninjaPerm === true) {
+    // 沒授權 poe.ninja 就不要白打請求(清單抓不到,下拉維持「自動」)。
+    // PoE2 頁面根本不用它的清單,更不必打。
+    if (!IS_POE2 && !state.ninjaLeagues && state.ninjaPerm === true) {
       loadNinjaLeagues().then((leagues) => {
         if (leagues && state.tab === 'settings') render(); // 清單到位後補全選項
       });
@@ -1584,25 +1718,89 @@
     body.appendChild(modeRow);
 
     // ── 書籤資料 ──
+    // ⚠ 直觀優先:匯出是**三顆各自寫清楚做什麼的鈕**(不必先選再按);
+    //   匯入是**先開檔、把裡面有什麼攤出來**,再按對應的鈕(開檔前根本不知道有什麼)。
     body.appendChild(el('div', 'pmz-section-title', '備份與匯入'));
-    body.appendChild(el('div', 'pmz-hint', '「匯出備份」會把設定、全部書籤與歷史紀錄存成一個檔;還原時會取代目前的內容。只有書籤的舊檔匯入則是附加。'));
-    const dataRow = el('div', 'pmz-btnrow');
-    const exportBtn = el('button', 'pmz-primary', '匯出備份');
-    exportBtn.addEventListener('click', exportBackup);
-    const importBtn = el('button', 'pmz-primary', '匯入備份 / 書籤檔');
-    const importInput = el('input');
-    importInput.type = 'file';
-    importInput.accept = 'application/json';
-    importInput.style.display = 'none'; // 行內樣式,避免官網 CSS 蓋掉 hidden 屬性
-    importInput.addEventListener('change', (e) => {
-      const file = e.target.files?.[0];
-      e.target.value = '';
-      if (file) importBackupFile(file);
-    });
-    importBtn.addEventListener('click', () => importInput.click());
-    dataRow.append(exportBtn, importBtn, importInput);
-    body.appendChild(dataRow);
+    const have = M.countByGame(state.data.folders);
 
+    body.appendChild(el('div', 'pmz-sub-title', '匯出'));
+    const expFull = el('button', 'pmz-primary', '完整備份(設定 + 全部書籤 + 歷史)');
+    expFull.addEventListener('click', () => exportBackup('all'));
+    body.appendChild(expFull);
+    const expRow = el('div', 'pmz-btnrow');
+    for (const [game, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
+      const n = have[game];
+      const btn = el('button', 'pmz-secondary', `只匯出 ${label} 書籤(${n})`);
+      btn.disabled = !n;
+      btn.addEventListener('click', () => exportBackup(game));
+      expRow.appendChild(btn);
+    }
+    body.appendChild(expRow);
+    body.appendChild(el('div', 'pmz-hint',
+      // ⚠ 這是 DOM 文字不是 markdown,不要寫 ** ** —— 會原樣顯示成星號
+      '完整備份還原時會「取代」目前內容;單款檔只有書籤(不含設定與歷史),匯入時是「附加」。'));
+
+    body.appendChild(el('div', 'pmz-sub-title', '匯入'));
+    const pend = state.pendingImport;
+    if (pend) {
+      // 檔案已經解析好:把內容攤開,讓使用者看著數字決定
+      const card = el('div', 'pmz-import-card');
+      card.appendChild(el('div', 'pmz-import-name', pend.name));
+      const when = pend.exportedAt ? `,${pend.exportedAt.slice(0, 10)} 匯出` : '';
+      card.appendChild(el('div', 'pmz-hint',
+        `${pend.isBackup ? '完整備份' : '書籤檔'}${when}:`
+        + `PoE1 ${pend.counts.Poe1} 個、PoE2 ${pend.counts.Poe2} 個書籤`
+        + (pend.isBackup ? `、${pend.history.length} 筆歷史` : '')));
+      const acts = el('div', 'pmz-btnrow');
+      for (const [game, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
+        const btn = el('button', 'pmz-primary', `只加入 ${label}(${pend.counts[game]})`);
+        btn.disabled = !pend.counts[game];
+        btn.addEventListener('click', () => importOneGame(pend, game));
+        acts.appendChild(btn);
+      }
+      card.appendChild(acts);
+      const acts2 = el('div', 'pmz-btnrow');
+      const addAll = el('button', 'pmz-secondary', '兩款都加入(附加)');
+      addAll.addEventListener('click', () => {
+        const r = pend;
+        state.pendingImport = null;
+        applyImport({ folders: r.folders, report: r.report }, '檔案');
+      });
+      acts2.appendChild(addAll);
+      if (pend.isBackup) {
+        // 只有完整備份才給「還原」—— 單款檔拿去取代會把另一款刪光,那條路不開
+        const restore = el('button', 'pmz-secondary pmz-danger', '還原備份(取代目前內容)');
+        restore.addEventListener('click', () => restoreBackup(pend));
+        acts2.appendChild(restore);
+      }
+      const cancel = el('button', 'pmz-secondary', '取消');
+      cancel.addEventListener('click', () => {
+        state.pendingImport = null;
+        render();
+      });
+      acts2.appendChild(cancel);
+      card.appendChild(acts2);
+      body.appendChild(card);
+    } else {
+      const importBtn = el('button', 'pmz-primary', '選擇備份 / 書籤檔…');
+      const importInput = el('input');
+      importInput.type = 'file';
+      importInput.accept = 'application/json';
+      importInput.style.display = 'none'; // 行內樣式,避免官網 CSS 蓋掉 hidden 屬性
+      importInput.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) importBackupFile(file);
+      });
+      importBtn.addEventListener('click', () => importInput.click());
+      body.append(importBtn, importInput);
+      body.appendChild(el('div', 'pmz-hint', '選好檔案後會先顯示裡面有什麼,再決定要匯入哪些。'));
+    }
+
+    // ⚠ **PoB code 匯入是 PoE1 專屬,PoE2 不顯示**(使用者 2026-08-26 裁定)。
+    //   它靠 `statIdMap` 反查英文模板拿官方詞綴代碼,還要靠 POB `Data/Mod*.lua` 的
+    //   `tradeHashes` + `weightKey` 判 local/global —— PoE2 沒有任何一份對應資料,
+    //   硬給只會產出查不到東西的搜尋(而且是 0 筆那種無聲的失敗)。
     const CODE_SOURCES = [
       ['ext', '從 PoE Trade Extension 匯入…',
         '在 PoE Trade Extension 按「匯出設定」(匯出碼會複製到剪貼簿),貼進下面的框。只會讀取書籤,它的其他設定不會被讀取,也不會寫回去。',
@@ -1610,7 +1808,7 @@
       ['pob', '從 Path of Building code 匯入…',
         '貼上 PoB code(pobb.in、poe.ninja 的 build 頁面都能複製)。會照部位建資料夾:傳奇用「傳奇名 + 基底」搜,稀有用「基底 + 全部詞綴」搜,到交易站再自己取消不要的條件。',
         '在這裡貼上 PoB code…', importPobCode],
-    ];
+    ].filter(([key]) => !(IS_POE2 && key === 'pob'));
     for (const [key, label] of CODE_SOURCES) {
       const btn = el('button', 'pmz-secondary', label);
       btn.addEventListener('click', () => {

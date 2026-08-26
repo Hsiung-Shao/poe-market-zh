@@ -26,7 +26,7 @@ const dbg = (...a) => console.info(...a);
 const REMOTE_BASE = 'https://raw.githubusercontent.com/Hsiung-Shao/poe-market-zh/dict/';
 const INDEX_NAME = 'dict-index.json';
 
-// 六個字典的檔名(順序即 popup 顯示順序)。tools/gen-dict-index.mjs 產生索引時
+// 字典檔名(順序即 popup 顯示順序)。tools/gen-dict-index.mjs 產生索引時
 // 用的是同一份清單,兩邊要一起改。
 export const DICT_FILES = [
   'translate.json',
@@ -35,16 +35,24 @@ export const DICT_FILES = [
   'passivesNotable.json',
   's2t.json',
   'ggpk.json',
+  // PoE2 的遊戲檔字典(詞綴種子 + 物品錨定 + 傳奇名),由 tools/gen-ggpk2-data.mjs
+  // 從 PoE2 GGPK 的 `data/balance/traditional chinese/` 產生。與 ggpk.json 同形,
+  // 多一個 uniques 區塊(傳奇名必須與基底/寶石名分開,見該腳本註解的 Briarpatch)。
+  'ggpk2.json',
   // 官方 trade data API 的快照,四個端點的逐字副本。**只有遠端,沒有內建版本** ——
   // 用途是「官方 API 被擋時的後路」,擴充包不為此變大 5MB;拿不到就退回原本的降級。
   // ⚠ 列在這裡**不會**讓第一階段多抓東西:第一階段是逐檔明列 loadDictOr(...) 的,
   //   這份清單只餵給 DICT_STORAGE_KEYS(清除快取)與 tools/gen-dict-index.mjs。
   'api-us.json',
   'api-tw.json',
+  'api2-us.json',
+  'api2-tw.json',
 ];
 // 沒有內建版本的檔。索引產生器不能拿 data/ 底下的同名檔跟它們比涵蓋率(根本沒有),
 // 擴充端的 loadDict 走到第三層也會直接 throw —— 兩邊都要知道這件事。
-export const REMOTE_ONLY_FILES = new Set(['api-us.json', 'api-tw.json']);
+export const REMOTE_ONLY_FILES = new Set([
+  'api-us.json', 'api-tw.json', 'api2-us.json', 'api2-tw.json',
+]);
 
 // 逾時:第一階段的性質是「不需網路、必定成功」,遠端拖住就直接走本地。
 // 可由 _test.setTimeouts 調整,讓離線驗證不必真的等 30 秒。

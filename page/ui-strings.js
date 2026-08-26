@@ -1,6 +1,8 @@
 // MAIN world / document_start:官網前端會讀取全域 `__` 字典作為介面字串
 // 的替換來源(站方自身的 i18n 掛勾點)。此字典為本專案自行撰寫的翻譯,
 // 依 localStorage['ptm-ui-mode'] 決定 中文(zh)/ 純英(en)。
+// PoE2 交易站載入的是**同一套 legacy bundle**,`plugins.js` 的 `__` 掛勾仍在
+// (2026-08-26 實測),所以這個機制在 PoE2 一樣有效;遞補字典鍵改用 ptm-ui-extra2。
 // UI 字串一律直接替換為單一語言(純中文),不做雙語對照 ——
 // 下拉選單的中英對照屬 lscache 資料層(bg/translation.js),與此無關。
 
@@ -225,15 +227,29 @@ const __ = (() => {
     'No Results': '沒有結果',
   };
 
+  // ── PoE2 專屬覆寫 ──
+  // 上面那份自寫字典兩款共用(頂欄、按鈕、狀態這些字 PoE1 與 PoE2 一樣)。
+  // 這裡只收**確定有出入**的字。
+  // ⚠ 目前是空的,而且刻意保持空的:PoE2 與 PoE1 用語不同的 UI 字串必須先有官方
+  //   依據(台服 trade2 站的實際用字)才能寫進來 —— 憑印象填會製造「看起來對但
+  //   不是官方用語」的譯文,那比留英文更難發現。發現一條加一條,附上出處。
+  const poe2Overrides = {};
+
   let mode = 'zh';
   let merged = dict;
   try {
     mode = localStorage.getItem('ptm-ui-mode') || 'zh';
+    // ⚠ **本檔不得依賴其他 content script 先跑過**(見 content/bootstrap.js 的警語):
+    //   isolated world 的 document_start 讀不到別的檔設的 globalThis。這裡只需要
+    //   「哪一款遊戲 + 該用哪個鍵」,所以自己判就好。
+    const isPoe2 = /^\/trade2(\/|$)/.test(location.pathname)
+      || /^\/trade\/[^/]+\/poe2(\/|$)/.test(location.pathname);
+    const base = isPoe2 ? { ...dict, ...poe2Overrides } : dict;
     // 主字典(background 建置時整合的內建繁中字典 + 社群遞補,
     // 由 bootstrap.js 同步到 localStorage);實站驗證過的主字典優先,
     // 上方自寫字典僅填其缺口
-    const extra = JSON.parse(localStorage.getItem('ptm-ui-extra') ?? '{}');
-    merged = { ...dict, ...extra };
+    const extra = JSON.parse(localStorage.getItem(isPoe2 ? 'ptm-ui-extra2' : 'ptm-ui-extra') ?? '{}');
+    merged = { ...base, ...extra };
   } catch (_) { /* localStorage 不可用或字典資料損毀時,退回自寫字典 */ }
 
   if (mode === 'en') return {};

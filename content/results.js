@@ -16,6 +16,23 @@
   // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
   const dbg = (...a) => console.info(...a);
 
+  // 本頁是哪一款遊戲。bootstrap.js(document_start,同一個 isolated world)已經算好
+  // 並掛在 globalThis;**document_end 這個時點跨檔 globalThis 是可靠的**
+  // (壞掉的只有 document_start 那一刻,見 bootstrap.js 的警語)。
+  // 仍留一條自己算的備援 —— 萬一 bootstrap 因故沒跑起來,這裡不該跟著整支死掉。
+  const GAME =
+    globalThis.PMZ_GAME ??
+    (/^\/trade2(\/|$)/.test(location.pathname) ? { id: 'poe2', label: 'PoE2' } : { id: 'poe1', label: 'PoE1' });
+  if (!globalThis.PMZ_GAME) {
+    console.warn('[PTM] bootstrap 沒有掛上 PMZ_GAME,結果列改用自算的遊戲別:', GAME.id);
+  }
+  const TAG = GAME.label;
+  const IS_POE2 = GAME.id === 'poe2';
+  // storage 鍵:PoE2 一律 `2` 後綴(與 shared/games.js、bootstrap.js 同一組)
+  const K = IS_POE2
+    ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2' }
+    : { statMap: 'statMap', statIdMap: 'statIdMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap' };
+
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
   const SELECTORS = {
     resultsContainer: '.results',
@@ -38,11 +55,25 @@
     // 沒有 <br>、沒有 .lc.s、也沒有 data-field。依 <br> 切行的 modText 會把整塊
     // 黏成一串(實測「Elemental WeaknessIncreased Area of Effect (Tier 2)」),
     // 兩條既有路徑都必然落空,因此改走逐個名稱 span 的專用路徑。
+    // 傭兵契約書是 PoE1 3.29 的東西;PoE2 沒有這個區塊,選擇器留著也不會命中
     mercenaryBlock: '.item-mod--mercenary',
-    itemName: '.itemName .lc',
-    notable: '.notableProperty', // 天賦卡(星團珠寶/塗油)
+    // ── 以下 per-game(2026-08-26 於 PoE2 活站逐項實測)──
+    // PoE1:<div class="itemName"><span class="lc">名稱</span></div>
+    // PoE2:<div class="item-popup item-popup--unique item-popup--poe2">
+    //         <div class="item-popup__header …">
+    //           <div class="item-popup__header-line">傳奇名 / 稀有名</div>
+    //           <div class="item-popup__header-line">基底名</div>
+    //   一張卡最多兩行,兩行各自查表(官方 items 的傳奇名與基底名本來就是兩個欄位)。
+    // ⚠ `.notableProperty` / `.itemBoxContent` 在 PoE2 **都不存在**
+    //   (星團珠寶/塗油是 PoE1 才有的東西)。
+    itemName: IS_POE2 ? '.item-popup__header-line' : '.itemName .lc',
+    notable: IS_POE2 ? null : '.notableProperty', // 天賦卡(星團珠寶/塗油)
     notableTitle: '.colourAugmented',
     notableDesc: '.lc',
+    // 傳奇卡的根節點(PoE2)。同一個英文可以既是基底/寶石名又是傳奇名
+    // (`Briarpatch` = 寶石「荊棘叢」+ 傳奇靴「薔薇眼罩」,台服 trade2 兩者都證實),
+    // 一張扁平表分不出來 —— 靠卡片自己的 BEM 修飾字判角色。
+    uniqueCard: IS_POE2 ? '.item-popup--unique' : null,
   };
 
   // 與 bg/translation.js 的正規化規則一致(不含正負號)
@@ -55,8 +86,9 @@
   const state = {
     statMap: null,
     statIdMap: null, // { [statId]: { en, zh, src } },依官方 stat id 查表
-    itemMap: null,
-    passives: null, // { clusterJewel, passivesNotable }
+    itemMap: null, // 基底名 / 寶石名
+    uniqueMap: null, // 傳奇名(獨立一張,見 SELECTORS.uniqueCard 的說明)
+    passives: null, // { clusterJewel, passivesNotable }(PoE1 專屬)
     bilingualMods: false, // 詞綴雙語顯示(中文下附英文原文小字)
   };
 
@@ -136,8 +168,26 @@
     if (!field) { stat.noField++; return null; }
     const hit = state.statIdMap[field.slice(STAT_FIELD_PREFIX.length)];
     if (!hit) return null;
-    return renderStat(text, hit.en, hit.zh);
+    const direct = renderStat(text, hit.en, hit.zh);
+    if (direct) return direct;
+    // ⚠ `(Local)` 是**交易站篩選清單**的消歧義後綴,物品那一行根本不會印它
+    //   (「只影響這件裝備本身」的詞綴另發一個 id,文字與全域版一模一樣)。
+    //   拿帶後綴的模板去組擷取正則 → `^(\S+) to Accuracy Rating \(Local\)$` ——
+    //   對上畫面的「+143 to Accuracy Rating」永遠比不中,整條退回文字路徑,
+    //   而文字路徑的鍵同樣帶後綴,也落空 → **完全沒翻**。
+    //   受影響的正好是最常見的四個(命中值/護甲值/閃避值/最大能量護盾),
+    //   因為它們帶 `+` 號;沒有 `+` 的(增加 #% 攻擊速度)剛好被文字路徑救回來,
+    //   所以看起來像「只有幾條沒翻」而不像系統性缺陷(使用者 2026-08-26 回報)。
+    //   ⚠ 先試沒剝的再試剝過的:萬一哪天官網真的把後綴印出來,原路徑仍會先命中。
+    return renderStat(text, stripLocal(hit.en), stripLocalZh(hit.zh));
   }
+
+  // 台服對應的後綴是「 (部分)」(PoE2 的 US 端 9 個相異 (Local) 模板,台服 8 個是
+  // 這個形態、1 個未翻;PoE1 有 20 條)。全形括號一併吃掉,官方兩種都出現過。
+  const LOCAL_EN_RE = /\s*\(Local\)\s*$/;
+  const LOCAL_ZH_RE = /\s*[(（]部分[)）]\s*$/;
+  const stripLocal = (s) => String(s ?? '').replace(LOCAL_EN_RE, '');
+  const stripLocalZh = (s) => String(s ?? '').replace(LOCAL_ZH_RE, '');
 
   // 回傳 { tpl, numRe }:命中的中文模板與應使用的數值抓取規則
   function lookupStat(text) {
@@ -317,10 +367,19 @@
     mod.dataset.ptmDone = '1';
   }
 
+  // 這一行是不是「傳奇卡的第一行(= 傳奇名)」。PoE2 的傳奇卡兩行都是
+  // .item-popup__header-line:第一行傳奇名、第二行基底名。
+  function isUniqueNameLine(el) {
+    if (!state.uniqueMap || !SELECTORS.uniqueCard) return false;
+    if (!el.closest?.(SELECTORS.uniqueCard)) return false;
+    return el.parentElement?.querySelector(SELECTORS.itemName) === el;
+  }
+
   function translateNameElement(el) {
     if (el.dataset.ptmDone) return;
     const text = el.textContent.trim();
-    const zh = state.itemMap[text];
+    // 傳奇名優先查 uniqueMap;其餘(含傳奇卡第二行的基底名)走 itemMap
+    const zh = (isUniqueNameLine(el) ? state.uniqueMap[text] : null) ?? state.itemMap[text];
     if (zh) {
       // 字典值多為「中文 (English)」;結果列採直接替換,strip 為純中文,
       // 英文原文放 hover title
@@ -369,11 +428,11 @@
       statTimer = null;
       if (!stat.seen && !stat.merc) return;
       if (stat.seen) {
-        dbg(`[PTM] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
+        dbg(`[PTM/${TAG}] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
           `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條`);
       }
       if (stat.merc || stat.mercMiss) {
-        dbg(`[PTM] 結果列:傭兵技能/輔助 譯出 ${stat.merc} 條、查無 ${stat.mercMiss} 條`);
+        dbg(`[PTM/${TAG}] 結果列:傭兵技能/輔助 譯出 ${stat.merc} 條、查無 ${stat.mercMiss} 條`);
         if (stat.mercMiss) dbg('[PTM] 傭兵查無樣本:', stat.mercMissSamples);
       }
       // id 路徑完全沒命中代表 data-field 抓不到(官網改版),此時全靠後備的
@@ -396,7 +455,8 @@
     if (state.itemMap) {
       root.querySelectorAll(SELECTORS.itemName).forEach(translateNameElement);
     }
-    if (state.passives) {
+    // 天賦卡只有 PoE1 有(PoE2 結果列沒有 .notableProperty),選擇器為 null 就整段跳過
+    if (state.passives && SELECTORS.notable) {
       root.querySelectorAll(SELECTORS.notable).forEach(translateNotable);
       if (root.matches?.(SELECTORS.notable)) translateNotable(root);
     }
@@ -465,7 +525,7 @@
           const found = newContainerIn(node, container);
           if (!found) continue;
           stat.reattach++;
-          dbg(`[PTM] 結果容器已重建(第 ${stat.reattach} 次),重新掛上監聽`);
+          dbg(`[PTM/${TAG}] 結果容器已重建(第 ${stat.reattach} 次),重新掛上監聽`);
           attachContainer(found);
           return;
         }
@@ -474,26 +534,28 @@
   }
 
   async function init() {
-    const { language, statMap, statIdMap, itemMap, passives, bilingualMods } =
-      await chrome.storage.local.get([
-        'language',
-        'statMap',
-        'statIdMap',
-        'itemMap',
-        'passives',
-        'bilingualMods',
-      ]);
-    if (language !== 'zh_tw') return;
-    state.statMap = statMap ?? null; // 官方 API 產物,可能尚未建置
-    state.statIdMap = statIdMap ?? null; // 同上;舊版升級後首次重建才會有
-    state.itemMap = itemMap ?? null; // 內建字典即可提供
-    state.passives = passives ?? null;
-    state.bilingualMods = bilingualMods === true;
+    const got = await chrome.storage.local.get([
+      'language',
+      K.statMap,
+      K.statIdMap,
+      K.itemMap,
+      K.uniqueMap,
+      'passives', // PoE1 專屬(天賦卡),鍵不分遊戲
+      'bilingualMods',
+    ]);
+    if (got.language !== 'zh_tw') return;
+    state.statMap = got[K.statMap] ?? null; // 官方 API 產物,可能尚未建置
+    state.statIdMap = got[K.statIdMap] ?? null; // 同上;舊版升級後首次重建才會有
+    state.itemMap = got[K.itemMap] ?? null; // 內建字典即可提供
+    state.uniqueMap = got[K.uniqueMap] ?? null;
+    state.passives = SELECTORS.notable ? (got.passives ?? null) : null;
+    state.bilingualMods = got.bilingualMods === true;
     // 無資料就不掛 observer
     if (!state.statIdMap && !state.statMap && !state.itemMap && !state.passives) return;
-    dbg(`[PTM] 結果列:詞綴 id 表 ${Object.keys(state.statIdMap ?? {}).length} 條、` +
+    dbg(`[PTM/${TAG}] 結果列:詞綴 id 表 ${Object.keys(state.statIdMap ?? {}).length} 條、` +
       `詞綴文字表 ${Object.keys(state.statMap ?? {}).length} 條、` +
-      `物品表 ${Object.keys(state.itemMap ?? {}).length} 條、雙語顯示 ${state.bilingualMods ? '開' : '關'}`);
+      `物品表 ${Object.keys(state.itemMap ?? {}).length} 條、` +
+      `傳奇名表 ${Object.keys(state.uniqueMap ?? {}).length} 條、雙語顯示 ${state.bilingualMods ? '開' : '關'}`);
     // 手動診斷:在 console 打 __ptmResults() 看目前這批結果的命中狀況
     // 打包版 dbg 為 no-op,但在 console 直接呼叫仍看得到回傳值
     window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Poe Market Zh",
   "version": "3.29.10",
-  "description": "PoE1 國際服交易站中文化:介面、詞綴、下拉選單中文化 + 搜尋結果即時翻譯,另附書籤側邊欄與物價查詢",
+  "description": "PoE1 / PoE2 國際服交易站中文化:介面、詞綴、下拉選單中文化 + 搜尋結果即時翻譯,另附書籤側邊欄與物價查詢",
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
     "default_popup": "popup/popup.html",
@@ -30,23 +30,43 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "matches": [
+        "https://www.pathofexile.com/trade/*",
+        "https://pathofexile.com/trade/*",
+        "https://www.pathofexile.com/trade2/*",
+        "https://pathofexile.com/trade2/*"
+      ],
       "js": ["page/ui-strings.js", "page/stat-search.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "matches": [
+        "https://www.pathofexile.com/trade/*",
+        "https://pathofexile.com/trade/*",
+        "https://www.pathofexile.com/trade2/*",
+        "https://pathofexile.com/trade2/*"
+      ],
       "js": ["content/bootstrap.js"],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "matches": [
+        "https://www.pathofexile.com/trade/*",
+        "https://pathofexile.com/trade/*",
+        "https://www.pathofexile.com/trade2/*",
+        "https://pathofexile.com/trade2/*"
+      ],
       "js": ["content/results.js"],
       "run_at": "document_end"
     },
     {
-      "matches": ["https://www.pathofexile.com/trade/*", "https://pathofexile.com/trade/*"],
+      "matches": [
+        "https://www.pathofexile.com/trade/*",
+        "https://pathofexile.com/trade/*",
+        "https://www.pathofexile.com/trade2/*",
+        "https://pathofexile.com/trade2/*"
+      ],
       "js": ["content/bookmarks-model.js", "content/pob-import.js", "content/sidebar.js"],
       "css": ["content/sidebar.css"],
       "run_at": "document_end"

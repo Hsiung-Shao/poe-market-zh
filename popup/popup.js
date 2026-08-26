@@ -59,27 +59,50 @@ function renderDictInfo(ds) {
   // 使用者無從得知手上這份遊戲資料是哪個版本、什麼時候抽的
   if (ds.gameVersion) {
     const day = String(ds.gameDataGeneratedAt ?? '').slice(0, 10);
-    line(`遊戲資料 ${ds.gameVersion}${day ? `(${day})` : ''}`);
+    line(`PoE1 遊戲資料 ${ds.gameVersion}${day ? `(${day})` : ''}`);
+  }
+  if (ds.gameVersion2) {
+    const day = String(ds.gameDataGeneratedAt2 ?? '').slice(0, 10);
+    line(`PoE2 遊戲資料 ${ds.gameVersion2}${day ? `(${day})` : ''}`);
   }
   if (ds.failed?.length) line(`⚠ 取得失敗:${ds.failed.join('、')}`);
+}
+
+// 只顯示**已經建過**的那幾款(資料是依實際開過的交易站建的,沒開過 PoE2 的人
+// 不該看到一行「PoE2 尚未建置」而以為壞了)
+function formatGameStatus(games) {
+  const parts = [];
+  for (const info of Object.values(games ?? {})) {
+    const st = info?.buildStatus;
+    if (!st) continue;
+    const time = new Date(st.at).toLocaleString();
+    if (st.state === 'building') parts.push(`${info.label} 建置中… (${time})`);
+    else if (st.state === 'done') parts.push(`✓ ${st.msg}\n更新於 ${time}`);
+    else parts.push(`✗ ${info.label} 建置失敗:${st.msg}`);
+  }
+  return parts;
 }
 
 async function refreshBuildStatus() {
   try {
     const res = await chrome.runtime.sendMessage({ t: 'translation:status' });
     renderDictInfo(res?.dictStatus);
-    const st = res?.buildStatus;
-    if (!st) {
+    const parts = formatGameStatus(res?.games);
+    if (!parts.length) {
       showStatus('尚未建置翻譯資料');
       return;
     }
-    const time = new Date(st.at).toLocaleString();
-    if (st.state === 'building') showStatus(`建置中… (${time})`);
-    else if (st.state === 'done') showStatus(`✓ ${st.msg}\n更新於 ${time}`);
-    else showStatus(`✗ 建置失敗:${st.msg}`, true);
+    showStatus(parts.join('\n\n'), parts.some((p) => p.startsWith('✗')));
   } catch (err) {
     showStatus(`無法取得狀態:${err.message}`, true);
   }
+}
+
+// 「套用中文化」要重建**使用者實際用過的每一款**,不是只有 PoE1
+async function seenGames() {
+  const { gamesSeen } = await chrome.storage.local.get('gamesSeen');
+  const seen = Object.keys(gamesSeen ?? {});
+  return seen.length ? seen : ['poe1'];
 }
 
 function renderBilingual(on) {
@@ -158,9 +181,13 @@ $('#applyZh').addEventListener('click', async () => {
   renderLang('zh_tw');
   showStatus('已套用中文化,建置翻譯資料中…');
   try {
-    const res = await chrome.runtime.sendMessage({ t: 'translation:build' });
-    if (res?.ok) await refreshBuildStatus();
-    else showStatus(`✗ ${res?.error ?? '未知錯誤'}`, true);
+    const failed = [];
+    for (const game of await seenGames()) {
+      const res = await chrome.runtime.sendMessage({ t: 'translation:build', game });
+      if (!res?.ok) failed.push(`${game}:${res?.error ?? '未知錯誤'}`);
+    }
+    if (failed.length) showStatus(`✗ ${failed.join('、')}`, true);
+    else await refreshBuildStatus();
   } catch (err) {
     showStatus(`✗ ${err.message}`, true);
   }

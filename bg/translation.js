@@ -3,24 +3,21 @@
 // 另有 data/ggpk.json 離線層(解析本機 Content.ggpk 的官方遊戲資料,
 // 由 tools/gen-ggpk-data.mjs 產生)作為詞綴種子與物品遞補。
 //
-// 六個字典本身走 bg/dict-source.js 的三層降級(遠端 → storage 快取 → 內建),
+// 字典本身走 bg/dict-source.js 的三層降級(遠端 → storage 快取 → 內建),
 // 這個檔只管「拿到字典之後怎麼用」,以及任一字典拿不到時如何只降級那一項。
+//
+// ── 兩款遊戲 ──
+// PoE1(`/trade/`)與 PoE2(`/trade2/`)的官方 API **回應形狀逐欄相同**
+// (2026-08-26 兩服四端點逐一實測),所以整段建置邏輯共用一份,差異全部收在
+// shared/games.js 的 GAMES 表。storage 鍵分兩組(PoE2 一律 `2` 後綴),
+// **PoE1 的鍵一個都沒動** —— 動了等於要求所有現有使用者重建資料。
+// 建置是**依實際開過的交易站觸發**的(content/bootstrap.js 寫 gamesSeen),
+// 不會為了沒在用的那一款每天多抓 4 個端點。
 
 import { clearDictCache, loadDict, resetDictStatus, saveDictStatus } from './dict-source.js';
+import { GAMES, GAME_IDS, allStoreKeys } from '../shared/games.js';
 
 const API_ORIGIN = 'https://www.pathofexile.com';
-const API_BASE = {
-  us: `${API_ORIGIN}/api/trade/data/`,
-  tw: 'https://pathofexile.tw/api/trade/data/',
-};
-// 官方 API 的遠端快照檔名(維護端由 tools/gen-api-snapshot.mjs 產生,推 dict 分支)
-const API_SNAPSHOT = { us: 'api-us.json', tw: 'api-tw.json' };
-// 遞補層資料來源:cswzhang/Poe-trade-zh(Apache-2.0,簡體,經 s2t 轉繁)。
-// 僅用於填補官方資料對不齊的缺口,官方台服資料永遠優先。
-const COMMUNITY = {
-  items: 'https://raw.githubusercontent.com/cswzhang/Poe-trade-zh/master/json/item.json',
-  ui: 'https://raw.githubusercontent.com/cswzhang/Poe-trade-zh/master/json/interface.json',
-};
 const KINDS = ['items', 'stats', 'static', 'filters'];
 // 不含正負號:官方模板寫作「+#%」,若把 +12 整段換成 # 會與模板 key 對不上
 const NUM_RE = /\d+(?:\.\d+)?/g;
@@ -268,7 +265,7 @@ function uniqueSuffix(entry, en) {
 }
 const uniqueName = (entry, en) => uniqueSuffix(entry, en) !== null;
 
-function translateItems(usItems, twItems, fallbackItems = {}, officialItems = fallbackItems, ggpkItems = {}) {
+function translateItems(usItems, twItems, fallbackItems = {}, officialItems = fallbackItems, ggpkItems = {}, ggpkUniques = {}) {
   const out = structuredClone(usItems);
   const twCats = new Map((twItems?.result ?? []).map((c) => [c.id, c]));
   const twVariants = indexTwVariants(twItems);
@@ -294,18 +291,22 @@ function translateItems(usItems, twItems, fallbackItems = {}, officialItems = fa
       // 搜 Legacy 或 Chain Belt 都找不到)。兩段都查得到才組,否則保留英文。
       const uSfx = uniqueSuffix(entry, en);
       const isUnique = uSfx !== null;
-      const uCombo = (dict) => {
-        const outer = dict[entry.name], inner = dict[entry.type];
+      // ⚠ 傳奇名先查 nameDict(GGPK 的 words),查不到才退回一般表;基底名恆用一般表。
+      //   同一個英文可以既是基底/寶石名又是傳奇名(PoE2 的 `Briarpatch` = 技能寶石
+      //   「荊棘叢」+ 傳奇靴「薔薇眼罩」,台服 trade2 兩者都證實),壓成一張必然錯一個
+      //   —— 這正是 PoE1 `Wildfire` 那個 first-wins 的坑。
+      const uCombo = (dict, nameDict) => {
+        const outer = nameDict?.[entry.name] ?? dict[entry.name], inner = dict[entry.type];
         return outer && inner ? bilingual(`${stripEnSuffix(outer)} ${stripEnSuffix(inner)}${uSfx}`, en) : null;
       };
-      let zh = isUnique ? uCombo(ggpkItems) : null; // 遊戲檔優先(內建字典是舊賽季快照)
+      let zh = isUnique ? uCombo(ggpkItems, ggpkUniques) : null; // 遊戲檔優先(內建字典是舊賽季快照)
       zh = zh ?? officialItems[en];
-      if (!zh && isUnique) zh = uCombo(officialItems);
+      if (!zh && isUnique) zh = uCombo(officialItems, ggpkUniques);
       zh = zh
         ?? (isUnique ? null : officialItems[entry.name])
         ?? comboLookup(officialItems, en)
         ?? fallbackItems[en];
-      if (!zh && isUnique) zh = uCombo(fallbackItems);
+      if (!zh && isUnique) zh = uCombo(fallbackItems, ggpkUniques);
       zh = zh
         ?? (isUnique ? null : fallbackItems[entry.name])
         ?? comboLookup(fallbackItems, en);
@@ -443,6 +444,75 @@ function buildStatMap(usStats, twStats) {
 // 刻意**不做**「中文有『機率』但英文沒有 chance」這類詞彙特徵比對:實測
 // 會把「+#% Chance to Block」→「+#% 格擋率」這種正確譯法誤殺 395 條,而
 // 真正該擋的案例 R1 已全數涵蓋。守衛型過濾一律先量化誤殺率再上線。
+// ── 跨群橋接:同一個 stat 在不同群組是不同 id,但雜湊後綴相同 ──
+//
+// 交易站的 stat id 長成 `<群組>.stat_<雜湊>`,而**同一個雜湊會出現在多個群組**
+// (`explicit.stat_1234` / `crafted.stat_1234` / `fractured.stat_1234`)。
+// PoE2 的台服資料只有 71.6% 的 id 有譯文,缺口幾乎全在 crafted(238/1081)與
+// fractured(458/1242)—— 但那些詞綴的 explicit 版台服**有翻**。把同後綴的譯文
+// 借過來即可補到 98.9%(2026-08-26 實測 8,258 條:同 id 5,911、橋接 2,257、
+// 英文守門擋下 2、無候選 88)。
+//
+// ⚠ **不可以裸借**:實測 US 端有 **68 組**後綴的英文其實不同 ——
+//   `stat_689816330` 在一群是「Area has #% increased chance to contain Shrines」、
+//   另一群是「Map has …」。借過去就是譯錯。
+//   守門:**只有當國際服兩條的英文模板逐字相同才採用**,否則放棄(保留英文)。
+// ⚠ 帶 option 的條目一律不借:它們的 # 放的是選項文字,選項 id 兩邊未必對得上。
+//
+// 產出是一份「補過的 twStats」,形狀與原始 API 回應完全相同 —— 下游的
+// translateStats / buildStatMap / buildStatIdMap 一行都不用改,gateTwStat 的
+// R1-R4 照樣跑在借來的譯文上(兩層守門疊加)。
+//
+// ⚠ **只對 PoE2 開**(GAMES[].bridgeStats):PoE1 台服已有 97.4%,開了只多 357 條,
+//   卻會動到已驗證的行為,值得另開一次帶稽核的變更。
+const statSuffix = (id) => String(id ?? '').split('.').slice(1).join('.');
+
+function bridgeTwStats(usStats, twStats) {
+  const counts = { adopted: 0, rejectedEn: 0, noCandidate: 0, skippedOption: 0 };
+  if (!usStats?.result || !twStats?.result) return { stats: twStats, counts };
+  const out = structuredClone(twStats);
+
+  const usById = new Map();
+  for (const g of usStats.result) for (const e of g.entries ?? []) if (e.id) usById.set(e.id, e);
+
+  const twById = new Map();
+  const twBySuffix = new Map();
+  for (const g of out.result) {
+    for (const e of g.entries ?? []) {
+      if (!e.id) continue;
+      twById.set(e.id, e);
+      const k = statSuffix(e.id);
+      if (!twBySuffix.has(k)) twBySuffix.set(k, []);
+      twBySuffix.get(k).push(e);
+    }
+  }
+
+  const outGroups = new Map(out.result.map((g) => [g.id, g]));
+  for (const usGroup of usStats.result) {
+    for (const usEntry of usGroup.entries ?? []) {
+      if (!usEntry?.id || !usEntry.text) continue;
+      if (twById.has(usEntry.id)) continue;
+      if (usEntry.option?.options) { counts.skippedOption++; continue; }
+      const cands = twBySuffix.get(statSuffix(usEntry.id)) ?? [];
+      if (!cands.length) { counts.noCandidate++; continue; }
+      // 英文守門:借出方在國際服的英文模板必須與本條逐字相同
+      const donor = cands.find((c) => !c.option?.options && usById.get(c.id)?.text === usEntry.text);
+      if (!donor) { counts.rejectedEn++; continue; }
+      let group = outGroups.get(usGroup.id);
+      if (!group) {
+        group = { id: usGroup.id, label: usGroup.label, entries: [] };
+        out.result.push(group);
+        outGroups.set(usGroup.id, group);
+      }
+      if (!group.entries) group.entries = [];
+      group.entries.push({ id: usEntry.id, text: donor.text, type: usGroup.id });
+      twById.set(usEntry.id, group.entries[group.entries.length - 1]);
+      counts.adopted++;
+    }
+  }
+  return { stats: out, counts };
+}
+
 const HASH_RE = /#/g;
 const PERCENT_RE = /#\s*%/g;
 const countOf = (s, re) => (String(s ?? '').match(re) ?? []).length;
@@ -528,9 +598,15 @@ async function loadDictOr(file, empty, failed) {
 // 只影響詞綴種子與物品遞補的覆蓋率,不影響建置流程。
 // meta(遊戲版本、產生時間)一併帶出來給 popup 顯示 —— 以前讀進來就丟掉,
 // 使用者無從得知手上這份遊戲資料是哪個版本抽的。
-async function loadGgpk(failed) {
-  const g = await loadDictOr('ggpk.json', null, failed);
-  return { statMap: g?.statMap ?? {}, items: g?.items ?? {}, meta: g?.meta ?? null };
+async function loadGgpk(failed, file = 'ggpk.json') {
+  const g = await loadDictOr(file, null, failed);
+  return {
+    statMap: g?.statMap ?? {},
+    items: g?.items ?? {},
+    // PoE2 的字典多一張傳奇名表(見 translateItems 的 uCombo 註解);PoE1 沒有,回空的
+    uniques: g?.uniques ?? {},
+    meta: g?.meta ?? null,
+  };
 }
 
 function makeS2t(charMap) {
@@ -566,6 +642,11 @@ function buildItemMap(_usItems, _twItems, fallbackItems = {}) {
   return { ...fallbackItems };
 }
 
+// 結果列的傳奇名查表。與 buildItemMap 分開的理由同 uCombo(Briarpatch)。
+function buildUniqueMap(ggpkUniques = {}) {
+  return { ...ggpkUniques };
+}
+
 // 供離線測試腳本驗證對照邏輯用,執行期不使用
 export const _test = {
   looksEnglish,
@@ -576,244 +657,301 @@ export const _test = {
   buildStatMap,
   buildStatIdMap,
   gateTwStat,
+  bridgeTwStats,
+  statSuffix,
   buildItemMap,
+  buildUniqueMap,
   makeS2t,
   fetchCommunityDict,
   mergeFallbackItems,
   mergeOfficialItems,
   normalizeBaseName,
   indexTwVariants,
-  COMMUNITY,
+  GAMES,
 };
 
-let building = null;
+// 每款遊戲各一個進行中的建置(同 game 去重),但**跨 game 串成一條鏈** ——
+// 字典來源 session(resetDictStatus)是全域單例,兩份同時跑會互相蓋掉來源記錄。
+const building = new Map();
+let buildChain = Promise.resolve();
 
 // 兩階段建置:
 // 第一階段「內建字典」不需網路、必定成功 —— UI 字串、物品名、天賦卡立即可用;
 // 第二階段「官方 API + 社群遞補」best-effort —— 提供詞綴/篩選器 lscache 資料與
 // 台服官方用語強化,失敗只降級不影響第一階段成果。
-export async function buildTranslation() {
-  if (building) return building;
-  building = (async () => {
-    try {
-      // ── 第一階段:字典(遠端 → 快取 → 內建)──
-      resetDictStatus();
-      await chrome.storage.local.set({
-        buildStatus: { state: 'building', msg: '載入翻譯字典…', at: Date.now() },
-      });
-      const dictFailed = new Set();
-      const [bundledItems, bundledUI, clusterJewel, passivesNotable, s2tMap, ggpk] =
-        await Promise.all([
-          loadDictOr('translate.json', {}, dictFailed),
-          loadDictOr('translate.zh_TW.json', {}, dictFailed),
-          loadDictOr('clusterJewel.json', {}, dictFailed),
-          loadDictOr('passivesNotable.json', {}, dictFailed),
-          loadDictOr('s2t.json', {}, dictFailed),
-          loadGgpk(dictFailed),
-        ]);
-      const dictStatus = await saveDictStatus({
-        failed: [...dictFailed],
-        gameVersion: ggpk.meta?.game_version ?? null,
-        gameDataGeneratedAt: ggpk.meta?.generated_at ?? null,
-      });
-      dbg(
-        `[PTM] 字典來源:遠端 ${dictStatus.counts.remote}、快取 ${dictStatus.counts.cache}、` +
-          `內建 ${dictStatus.counts.bundled}` +
-          (dictStatus.indexVersion != null ? `(遠端索引 v${dictStatus.indexVersion})` : '') +
-          (dictFailed.size ? `;取得失敗:${[...dictFailed].join('、')}` : '')
-      );
+export function buildTranslation(game = 'poe1') {
+  if (!GAMES[game]) return Promise.resolve({ ok: false, error: `unknown game: ${game}` });
+  if (building.has(game)) return building.get(game);
+  const p = buildChain.then(() => buildOne(game)).finally(() => building.delete(game));
+  buildChain = p.then(() => {}, () => {});
+  building.set(game, p);
+  return p;
+}
 
-      const itemMapBundled = {};
-      for (const [en, v] of Object.entries(bundledItems)) {
-        if (typeof v?.zh_tw === 'string' && v.zh_tw) itemMapBundled[en] = v.zh_tw;
-      }
-      // 只在資料不存在時寫入(首次啟動);重建時不可用純內建版本
-      // 降級掉上一輪第二階段已成功的完整資料
-      const existing = await chrome.storage.local.get([
-        'itemMap',
-        'uiExtra',
-        'statMap',
-        'updated',
-        'passives',
+async function buildOne(game) {
+  const CFG = GAMES[game];
+  const K = CFG.store;
+  const tag = CFG.label;
+  try {
+    // ── 第一階段:字典(遠端 → 快取 → 內建)──
+    resetDictStatus();
+    await chrome.storage.local.set({
+      [K.buildStatus]: { state: 'building', msg: `載入 ${tag} 翻譯字典…`, at: Date.now() },
+    });
+    const dictFailed = new Set();
+    // ⚠ PoE2 沒有天賦卡(星團珠寶/塗油是 PoE1 的東西,PoE2 結果列根本沒有
+    //   `.notableProperty`),那兩份字典不載入;物品名由 ggpk2.items/uniques 負責,
+    //   PoE1 的 translate.json 也不載入。translate.zh_TW.json 兩款共用當介面字串的底。
+    const [bundledItems, bundledUI, clusterJewel, passivesNotable, s2tMap, ggpk] =
+      await Promise.all([
+        CFG.passives ? loadDictOr('translate.json', {}, dictFailed) : Promise.resolve({}),
+        loadDictOr('translate.zh_TW.json', {}, dictFailed),
+        CFG.passives ? loadDictOr('clusterJewel.json', {}, dictFailed) : Promise.resolve({}),
+        CFG.passives ? loadDictOr('passivesNotable.json', {}, dictFailed) : Promise.resolve({}),
+        loadDictOr('s2t.json', {}, dictFailed),
+        loadGgpk(dictFailed, CFG.ggpkDict),
       ]);
-      const stageOne = {
-        buildStatus: {
-          state: 'building',
-          msg: `字典已載入(物品 ${Object.keys(itemMapBundled).length}、UI ${Object.keys(bundledUI).length}),更新官方資料中…`,
-          at: Date.now(),
-        },
-      };
-      // 天賦卡:兩份都拿得到才覆寫。任一份失敗時若已有舊資料就原封不動 ——
-      // 失敗路徑不得產出比現況差的狀態。從未有過就有多少寫多少(空的也比沒有好懂)。
+    // 遊戲版本是 per-game 的:寫自己那份時要把另一款的欄位原樣帶過去,
+    // 否則建完 PoE2 就會把 popup 上的 PoE1 遊戲資料版本抹掉。
+    const { dictStatus: prevStatus = {} } = await chrome.storage.local.get('dictStatus');
+    const verFields =
+      game === 'poe1'
+        ? {
+            gameVersion: ggpk.meta?.game_version ?? null,
+            gameDataGeneratedAt: ggpk.meta?.generated_at ?? null,
+            gameVersion2: prevStatus.gameVersion2 ?? null,
+            gameDataGeneratedAt2: prevStatus.gameDataGeneratedAt2 ?? null,
+          }
+        : {
+            gameVersion2: ggpk.meta?.game_version ?? null,
+            gameDataGeneratedAt2: ggpk.meta?.generated_at ?? null,
+            gameVersion: prevStatus.gameVersion ?? null,
+            gameDataGeneratedAt: prevStatus.gameDataGeneratedAt ?? null,
+          };
+    const dictStatus = await saveDictStatus({
+      failed: [...dictFailed],
+      lastBuiltGame: game,
+      ...verFields,
+    });
+    dbg(
+      `[PTM/${tag}] 字典來源:遠端 ${dictStatus.counts.remote}、快取 ${dictStatus.counts.cache}、` +
+        `內建 ${dictStatus.counts.bundled}` +
+        (dictStatus.indexVersion != null ? `(遠端索引 v${dictStatus.indexVersion})` : '') +
+        (dictFailed.size ? `;取得失敗:${[...dictFailed].join('、')}` : '')
+    );
+
+    const itemMapBundled = {};
+    for (const [en, v] of Object.entries(bundledItems)) {
+      if (typeof v?.zh_tw === 'string' && v.zh_tw) itemMapBundled[en] = v.zh_tw;
+    }
+    // 只在資料不存在時寫入(首次啟動);重建時不可用純內建版本降級掉上一輪
+    // 第二階段已成功的完整資料
+    const existing = await chrome.storage.local.get([
+      K.itemMap, K.uiExtra, K.statMap, K.updated, 'passives',
+    ]);
+    const stageOne = {
+      [K.buildStatus]: {
+        state: 'building',
+        msg: `${tag} 字典已載入(物品 ${Object.keys(itemMapBundled).length}、UI ${Object.keys(bundledUI).length}),更新官方資料中…`,
+        at: Date.now(),
+      },
+    };
+    // 天賦卡:兩份都拿得到才覆寫。任一份失敗時若已有舊資料就原封不動 ——
+    // 失敗路徑不得產出比現況差的狀態。
+    // ⚠ `passives` 是**兩款共用的 storage 鍵**,而且只有 PoE1 有 —— PoE2 的建置
+    //   一律不碰它,碰了會把 PoE1 的天賦卡資料寫成空的。
+    if (CFG.passives) {
       const passivesOk =
         !dictFailed.has('clusterJewel.json') && !dictFailed.has('passivesNotable.json');
       if (passivesOk || !existing.passives) {
         stageOne.passives = { clusterJewel, passivesNotable };
       }
-      if (!existing.itemMap) stageOne.itemMap = itemMapBundled;
-      if (!existing.uiExtra) stageOne.uiExtra = bundledUI;
-      // ggpk 詞綴種子:讓詞綴翻譯離線即可用;第二階段成功時被官方值覆蓋
-      if (!existing.statMap && Object.keys(ggpk.statMap).length) {
-        stageOne.statMap = ggpk.statMap;
-      }
-      if (!existing.updated) stageOne.updated = Date.now();
-      await chrome.storage.local.set(stageOne);
-
-      // ── 第二階段:官方 API + 社群遞補(失敗不影響內建字典)──
-      // 分項容錯:美服(英文基準)必須成功,否則整段降級;台服/社群個別失敗
-      // 只影響中文覆蓋率 —— 新賽季物品仍以最新美服資料入庫(英文可搜),
-      // 不因台服尚未更新而整批沿用舊快照(否則新物品從官網下拉消失)。
-      try {
-        // s2t 轉換表拿不到就整個跳過社群字典。社群資料是簡體,沒有轉換表會把簡體字
-        // 直接送進字典 —— 那比少幾條翻譯更糟,而且完全無聲。
-        const s2tOk = !dictFailed.has('s2t.json');
-        const s2t = makeS2t(s2tMap);
-        dbg('[PTM] build:抓取官方雙服 API 與社群字典…');
-        const [usRes, twRes, commItemsRes, commUiRes] = await Promise.allSettled([
-          fetchAll(API_BASE.us),
-          fetchAll(API_BASE.tw),
-          s2tOk ? fetchCommunityDict(COMMUNITY.items, s2t) : Promise.resolve({}),
-          s2tOk ? fetchCommunityDict(COMMUNITY.ui, s2t) : Promise.resolve({}),
-        ]);
-        const communityItems = commItemsRes.status === 'fulfilled' ? commItemsRes.value : {};
-        const communityUI = commUiRes.status === 'fulfilled' ? commUiRes.value : {};
-        const degraded = [];
-
-        // 官方 API 連不上時改吃遠端快照。快照與 API 回應同形狀,所以換完之後
-        // 底下那一整段建置邏輯完全不必知道資料是哪來的。
-        // ⚠ 兩服分開退:台服拿不到只影響中文覆蓋率,不該讓它把英文基準一起拖下水。
-        const snapNote = (snap) =>
-          snap.generatedAt ? `遠端快照(${String(snap.generatedAt).slice(0, 10)})` : '遠端快照';
-        let us = usRes.status === 'fulfilled' ? usRes.value : null;
-        if (!us) {
-          const snap = await loadApiSnapshot(API_SNAPSHOT.us);
-          if (!snap) throw usRes.reason; // 快照也沒有 → 英文基準真的沒了,整段降級
-          us = snap;
-          degraded.push(`美服 API 連不上,改用${snapNote(snap)}`);
-        }
-        let tw = twRes.status === 'fulfilled' ? twRes.value : null;
-        if (!tw) {
-          const snap = await loadApiSnapshot(API_SNAPSHOT.tw);
-          if (snap) {
-            tw = snap;
-            degraded.push(`台服 API 連不上,改用${snapNote(snap)}`);
-          } else {
-            degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
-          }
-        }
-        if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
-        if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
-        if (!s2tOk) degraded.push('簡繁對照表(社群字典整層停用)');
-        for (const f of dictFailed) degraded.push(`字典 ${f}`);
-        if (degraded.length) dbg('[PTM] build:部分來源失敗,以遞補字典補中文:', degraded.join('、'));
-
-        // 英文基準語言健檢:stats 異常時只降級 stats 一項,items/static/filters
-        // 照常更新(與上方分項容錯同精神)
-        const statsUsable = looksEnglish(us.stats);
-        if (!statsUsable) degraded.push('官方英文詞綴資料異常(非英文)');
-        const prev =
-          statsUsable && !dictFailed.size
-            ? {}
-            : await chrome.storage.local.get([
-                'translation',
-                'statMap',
-                'statIdMap',
-                'itemMap',
-                'uiExtra',
-              ]);
-
-        // 字典降級時不得用縮水的結果蓋掉上一輪的完整資料;但如果從來沒有過舊值,
-        // 就照寫這一份(英文仍搜得到,比整個沒有好)。與上面 stats 的處理同一條規則。
-        const keep = (ok, fresh, old) => (ok || old === undefined ? fresh : old);
-        const itemsDictOk = !dictFailed.has('translate.json');
-        const uiDictOk = !dictFailed.has('translate.zh_TW.json');
-
-        const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
-        const officialItems = mergeOfficialItems(bundledItems, ggpk.items);
-        const translation = {
-          items: keep(
-            itemsDictOk,
-            translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items),
-            prev.translation?.items
-          ),
-          static: translateStatic(us.static, tw?.static),
-          filters: translateFilters(us.filters, tw?.filters),
-        };
-        // stats 不可用時沿用上次成功的快照;從未成功過就整個不寫,
-        // bootstrap 便不覆寫 lscache-tradestats,官網用自己的資料
-        const prevStats = prev.translation?.stats;
-        if (statsUsable) translation.stats = translateStats(us.stats, tw?.stats, ggpk.statMap);
-        else if (prevStats) translation.stats = prevStats;
-        // ggpk 種子墊底,官方 trade API 值(台服現行用語)同 key 覆蓋
-        const statMap = statsUsable
-          ? { ...ggpk.statMap, ...buildStatMap(us.stats, tw?.stats) }
-          : { ...ggpk.statMap, ...(prev.statMap ?? {}) };
-        // 結果列的主要查表(依官方 stat id);英文基準異常時沿用上次的,
-        // 絕不用汙染的英文重建 —— 那會讓 R2/R3 守門全數誤判
-        let statIdMap = prev.statIdMap ?? {};
-        let idRejected = null;
-        if (statsUsable) {
-          const built = buildStatIdMap(us.stats, tw?.stats, ggpk.statMap);
-          statIdMap = built.map;
-          idRejected = built.rejected;
-        }
-        const itemMap = keep(
-          itemsDictOk,
-          buildItemMap(us.items, tw?.items, fallbackItems),
-          prev.itemMap
-        );
-        // 內建繁中字典優先
-        const uiExtra = keep(uiDictOk, { ...communityUI, ...bundledUI }, prev.uiExtra);
-        const updated = Date.now();
-        const doneMsg =
-          `完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(uiExtra).length} 條` +
-          (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
-          (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
-        if (idRejected) {
-          dbg('[PTM] build:詞綴 id 對照表', Object.keys(statIdMap).length, '條;退回原因', idRejected);
-        }
-        await chrome.storage.local.set({
-          translation,
-          statMap,
-          statIdMap,
-          itemMap,
-          uiExtra,
-          updated,
-          buildStatus: { state: 'done', msg: doneMsg, at: updated },
-        });
-        dbg('[PTM] build:', doneMsg);
-        return { ok: true, updated, degraded: degraded.length ? degraded : undefined };
-      } catch (apiErr) {
-        // 如實揭露降級範圍:曾成功建置過 → 沿用舊官方資料;從未成功 → 詞綴暫不可用
-        const { translation: prevTranslation } = await chrome.storage.local.get('translation');
-        const scope = prevTranslation
-          ? '沿用上次成功的官方資料'
-          : Object.keys(ggpk.statMap).length
-            ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)'
-            : '詞綴與篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)';
-        // ⚠ 字典的降級也要在這條路徑講出來。第二階段失敗時原本只報「官方資料更新
-        // 失敗」,字典缺了哪幾份完全不見 —— 有 fallback 的地方,缺口本來就安靜,
-        // 再被另一個錯誤蓋掉就徹底查不到了。
-        const dictNote = dictFailed.size ? `;字典取得失敗:${[...dictFailed].join('、')}` : '';
-        // 原本這裡直接印 apiErr.message,使用者只看得到「Failed to fetch」,
-        // 既不知道發生什麼事也無從自救。改成可據以行動的說明。
-        const failMsg = `官方資料更新失敗,${scope}:${await diagnoseApiFailure(apiErr)}${dictNote}`;
-        dbg('[PTM] build:', failMsg);
-        await chrome.storage.local.set({
-          buildStatus: { state: 'done', msg: failMsg, at: Date.now() },
-        });
-        return { ok: true, partial: true };
-      }
-    } catch (err) {
-      await chrome.storage.local.set({
-        buildStatus: { state: 'error', msg: String(err?.message ?? err), at: Date.now() },
-      });
-      return { ok: false, error: String(err?.message ?? err) };
-    } finally {
-      building = null;
     }
-  })();
-  return building;
+    if (!existing[K.itemMap]) stageOne[K.itemMap] = itemMapBundled;
+    if (!existing[K.uiExtra]) stageOne[K.uiExtra] = bundledUI;
+    // ggpk 詞綴種子:讓詞綴翻譯離線即可用;第二階段成功時被官方值覆蓋
+    if (!existing[K.statMap] && Object.keys(ggpk.statMap).length) {
+      stageOne[K.statMap] = ggpk.statMap;
+    }
+    if (!existing[K.updated]) stageOne[K.updated] = Date.now();
+    await chrome.storage.local.set(stageOne);
+
+    // ── 第二階段:官方 API + 社群遞補(失敗不影響內建字典)──
+    // 分項容錯:美服(英文基準)必須成功,否則整段降級;台服/社群個別失敗
+    // 只影響中文覆蓋率 —— 新賽季物品仍以最新美服資料入庫(英文可搜),
+    // 不因台服尚未更新而整批沿用舊快照(否則新物品從官網下拉消失)。
+    try {
+      // s2t 轉換表拿不到就整個跳過社群字典。PoE1 的社群資料是簡體,沒有轉換表會把
+      // 簡體字直接送進字典 —— 那比少幾條翻譯更糟,而且完全無聲。
+      // ⚠ PoE2 那份(cswzhang/POE2-Trade-zh_tw)**本來就是繁中**,不靠 s2t 也正確,
+      //   所以 s2t 缺席時 PoE2 照常吃它,只是少了「順手修掉夾雜簡體字」這層防衛。
+      const s2tOk = !dictFailed.has('s2t.json');
+      const s2t = s2tOk ? makeS2t(s2tMap) : (x) => String(x);
+      const useCommunity = s2tOk || !CFG.communityNeedsS2t;
+      dbg(`[PTM/${tag}] build:抓取官方雙服 API 與社群字典…`);
+      const [usRes, twRes, commItemsRes, commUiRes] = await Promise.allSettled([
+        fetchAll(CFG.api.us),
+        fetchAll(CFG.api.tw),
+        useCommunity ? fetchCommunityDict(CFG.community.items, s2t) : Promise.resolve({}),
+        useCommunity ? fetchCommunityDict(CFG.community.ui, s2t) : Promise.resolve({}),
+      ]);
+      const communityItems = commItemsRes.status === 'fulfilled' ? commItemsRes.value : {};
+      const communityUI = commUiRes.status === 'fulfilled' ? commUiRes.value : {};
+      const degraded = [];
+
+      // 官方 API 連不上時改吃遠端快照。快照與 API 回應同形狀,所以換完之後
+      // 底下那一整段建置邏輯完全不必知道資料是哪來的。
+      // ⚠ 兩服分開退:台服拿不到只影響中文覆蓋率,不該讓它把英文基準一起拖下水。
+      const snapNote = (snap) =>
+        snap.generatedAt ? `遠端快照(${String(snap.generatedAt).slice(0, 10)})` : '遠端快照';
+      let us = usRes.status === 'fulfilled' ? usRes.value : null;
+      if (!us) {
+        const snap = await loadApiSnapshot(CFG.snapshot.us);
+        if (!snap) throw usRes.reason; // 快照也沒有 → 英文基準真的沒了,整段降級
+        us = snap;
+        degraded.push(`美服 API 連不上,改用${snapNote(snap)}`);
+      }
+      let tw = twRes.status === 'fulfilled' ? twRes.value : null;
+      if (!tw) {
+        const snap = await loadApiSnapshot(CFG.snapshot.tw);
+        if (snap) {
+          tw = snap;
+          degraded.push(`台服 API 連不上,改用${snapNote(snap)}`);
+        } else {
+          degraded.push(`台服 API(${String(twRes.reason?.message ?? twRes.reason)})`);
+        }
+      }
+      if (commItemsRes.status === 'rejected') degraded.push('社群物品字典');
+      if (commUiRes.status === 'rejected') degraded.push('社群 UI 字典');
+      if (!useCommunity) degraded.push('簡繁對照表(社群字典整層停用)');
+      for (const f of dictFailed) degraded.push(`字典 ${f}`);
+      if (degraded.length) {
+        dbg(`[PTM/${tag}] build:部分來源失敗,以遞補字典補中文:`, degraded.join('、'));
+      }
+
+      // 英文基準語言健檢:stats 異常時只降級 stats 一項,items/static/filters
+      // 照常更新(與上方分項容錯同精神)
+      const statsUsable = looksEnglish(us.stats);
+      if (!statsUsable) degraded.push('官方英文詞綴資料異常(非英文)');
+
+      // ── 跨群橋接(只有需要的遊戲才開,見 bridgeTwStats 的註解)──
+      let twStats = tw?.stats;
+      if (CFG.bridgeStats && statsUsable && twStats) {
+        const bridged = bridgeTwStats(us.stats, twStats);
+        twStats = bridged.stats;
+        dbg(
+          `[PTM/${tag}] build:跨群橋接 採用 ${bridged.counts.adopted}、` +
+            `英文不符退回 ${bridged.counts.rejectedEn}、無候選 ${bridged.counts.noCandidate}、` +
+            `選項型跳過 ${bridged.counts.skippedOption}`
+        );
+      }
+
+      const prev =
+        statsUsable && !dictFailed.size
+          ? {}
+          : await chrome.storage.local.get([
+              K.translation, K.statMap, K.statIdMap, K.itemMap, K.uniqueMap, K.uiExtra,
+            ]);
+
+      // 字典降級時不得用縮水的結果蓋掉上一輪的完整資料;但如果從來沒有過舊值,
+      // 就照寫這一份(英文仍搜得到,比整個沒有好)。與上面 stats 的處理同一條規則。
+      const keep = (ok, fresh, old) => (ok || old === undefined ? fresh : old);
+      // PoE1 的物品字典是 translate.json,PoE2 的是 ggpk2.json —— 各自看自己那份
+      const itemsDictOk = !dictFailed.has(CFG.passives ? 'translate.json' : CFG.ggpkDict);
+      const uiDictOk = !dictFailed.has('translate.zh_TW.json');
+
+      const fallbackItems = mergeFallbackItems(communityItems, bundledItems, ggpk.items);
+      const officialItems = mergeOfficialItems(bundledItems, ggpk.items);
+      const translation = {
+        items: keep(
+          itemsDictOk,
+          translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items, ggpk.uniques),
+          prev[K.translation]?.items
+        ),
+        static: translateStatic(us.static, tw?.static),
+        filters: translateFilters(us.filters, tw?.filters),
+      };
+      // stats 不可用時沿用上次成功的快照;從未成功過就整個不寫,
+      // bootstrap 便不覆寫官網的 stats 快取,官網用自己的資料
+      const prevStats = prev[K.translation]?.stats;
+      if (statsUsable) translation.stats = translateStats(us.stats, twStats, ggpk.statMap);
+      else if (prevStats) translation.stats = prevStats;
+      // ggpk 種子墊底,官方 trade API 值(台服現行用語)同 key 覆蓋
+      const statMap = statsUsable
+        ? { ...ggpk.statMap, ...buildStatMap(us.stats, twStats) }
+        : { ...ggpk.statMap, ...(prev[K.statMap] ?? {}) };
+      // 結果列的主要查表(依官方 stat id);英文基準異常時沿用上次的,
+      // 絕不用汙染的英文重建 —— 那會讓 R2/R3 守門全數誤判
+      let statIdMap = prev[K.statIdMap] ?? {};
+      let idRejected = null;
+      if (statsUsable) {
+        const built = buildStatIdMap(us.stats, twStats, ggpk.statMap);
+        statIdMap = built.map;
+        idRejected = built.rejected;
+      }
+      const itemMap = keep(
+        itemsDictOk,
+        buildItemMap(us.items, tw?.items, fallbackItems),
+        prev[K.itemMap]
+      );
+      const uniqueMap = keep(itemsDictOk, buildUniqueMap(ggpk.uniques), prev[K.uniqueMap]);
+      // 內建繁中字典優先。
+      // ⚠ PoE2 的順序是使用者裁定的「沿用 PoE1 + 社群字典補差」:PoE1 的
+      //   translate.zh_TW.json 排在後面(勝出),社群 PoE2 字典只補它沒有的鍵。
+      //   那份社群字典有明顯錯譯(Class→「角色」、Points→「黯幣」)。
+      const uiExtra = keep(uiDictOk, { ...communityUI, ...bundledUI }, prev[K.uiExtra]);
+      const updated = Date.now();
+      const doneMsg =
+        `${tag} 完成:詞綴 ${Object.keys(statMap).length} 條、物品 ${Object.keys(itemMap).length} 條、UI ${Object.keys(uiExtra).length} 條` +
+        (degraded.length ? `(部分來源失敗:${degraded.join('、')})` : '') +
+        (statsUsable ? '' : `;詞綴下拉${prevStats ? '沿用前次資料' : '暫用官網原文'}`);
+      if (idRejected) {
+        dbg(
+          `[PTM/${tag}] build:詞綴 id 對照表`,
+          Object.keys(statIdMap).length,
+          '條;退回原因',
+          idRejected
+        );
+      }
+      await chrome.storage.local.set({
+        [K.translation]: translation,
+        [K.statMap]: statMap,
+        [K.statIdMap]: statIdMap,
+        [K.itemMap]: itemMap,
+        [K.uniqueMap]: uniqueMap,
+        [K.uiExtra]: uiExtra,
+        [K.updated]: updated,
+        [K.buildStatus]: { state: 'done', msg: doneMsg, at: updated },
+      });
+      dbg(`[PTM/${tag}] build:`, doneMsg);
+      return { ok: true, game, updated, degraded: degraded.length ? degraded : undefined };
+    } catch (apiErr) {
+      // 如實揭露降級範圍:曾成功建置過 → 沿用舊官方資料;從未成功 → 詞綴暫不可用
+      const prevTranslation = (await chrome.storage.local.get(K.translation))[K.translation];
+      const scope = prevTranslation
+        ? '沿用上次成功的官方資料'
+        : Object.keys(ggpk.statMap).length
+          ? '詞綴改用本機遊戲檔字典,篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)'
+          : '詞綴與篩選器翻譯暫不可用(字典的物品/UI/天賦卡翻譯不受影響)';
+      // ⚠ 字典的降級也要在這條路徑講出來。第二階段失敗時原本只報「官方資料更新
+      // 失敗」,字典缺了哪幾份完全不見 —— 有 fallback 的地方,缺口本來就安靜,
+      // 再被另一個錯誤蓋掉就徹底查不到了。
+      const dictNote = dictFailed.size ? `;字典取得失敗:${[...dictFailed].join('、')}` : '';
+      // 原本這裡直接印 apiErr.message,使用者只看得到「Failed to fetch」,
+      // 既不知道發生什麼事也無從自救。改成可據以行動的說明。
+      const failMsg = `${tag} 官方資料更新失敗,${scope}:${await diagnoseApiFailure(apiErr)}${dictNote}`;
+      dbg(`[PTM/${tag}] build:`, failMsg);
+      await chrome.storage.local.set({
+        [K.buildStatus]: { state: 'done', msg: failMsg, at: Date.now() },
+      });
+      return { ok: true, game, partial: true };
+    }
+  } catch (err) {
+    await chrome.storage.local.set({
+      [K.buildStatus]: { state: 'error', msg: String(err?.message ?? err), at: Date.now() },
+    });
+    return { ok: false, game, error: String(err?.message ?? err) };
+  }
 }
 
 export async function ensureAlarm() {
@@ -830,29 +968,44 @@ export function isRebuildAlarm(alarm) {
 export async function handleTranslationMessage(msg) {
   switch (msg.t) {
     case 'translation:build':
-      return buildTranslation();
+      // 呼叫端(bootstrap.js / background.js / popup)一律帶 game;
+      // 沒帶就是舊訊息,當 PoE1
+      return buildTranslation(msg.game ?? 'poe1');
     case 'translation:status': {
-      const { buildStatus, updated, dictStatus } = await chrome.storage.local.get([
-        'buildStatus',
-        'updated',
-        'dictStatus',
-      ]);
+      // popup 顯示的是「這台裝置的整體狀態」,兩款都要看得到。
+      // ⚠ 舊欄位(buildStatus/updated)保持原樣回傳,既有版面不必動;
+      //   兩款的細節走 games 這個新欄位。
+      const keys = ['dictStatus', ...allStoreKeys().filter((k) => /buildStatus|updated/.test(k))];
+      const all = await chrome.storage.local.get(keys);
+      const games = {};
+      for (const id of GAME_IDS) {
+        const K = GAMES[id].store;
+        games[id] = {
+          label: GAMES[id].label,
+          buildStatus: all[K.buildStatus] ?? null,
+          updated: all[K.updated] ?? null,
+        };
+      }
       return {
-        buildStatus: buildStatus ?? null,
-        updated: updated ?? null,
-        dictStatus: dictStatus ?? null,
+        buildStatus: games.poe1.buildStatus,
+        updated: games.poe1.updated,
+        dictStatus: all.dictStatus ?? null,
+        games,
       };
     }
-    case 'translation:clear':
-      await chrome.storage.local.remove([
-        // statGroups 是 0.3.x 合併選單的產物,功能移除後一併清掉舊資料
-        'translation', 'statMap', 'statIdMap', 'itemMap', 'uiExtra', 'passives', 'statGroups',
-        'updated', 'buildStatus',
-      ]);
+    case 'translation:clear': {
+      // 沒指定 game 就是兩款一起清(popup 的「清除快取」)
+      const targets = msg.game ? [msg.game] : GAME_IDS;
+      const keys = targets.flatMap((id) => Object.values(GAMES[id].store));
+      // statGroups 是 0.3.x 合併選單的產物,功能移除後一併清掉舊資料;
+      // passives 是 PoE1 專屬的共用鍵
+      if (targets.includes('poe1')) keys.push('passives', 'statGroups');
+      await chrome.storage.local.remove(keys);
       // 字典快取一併清掉:使用者按「清除快取」就是要重新拉一份,留著下載好的
       // 舊字典等於清了一半
-      await clearDictCache();
+      if (!msg.game) await clearDictCache();
       return { ok: true };
+    }
     default:
       return null;
   }
