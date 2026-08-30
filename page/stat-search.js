@@ -207,6 +207,28 @@
     };
     ms[PATCHED] = true;
     dbg('[PTM] 下拉:已掛上 filteredOptions(多關鍵字 + 模糊比對)');
+    warmLabelCache(ms);
+  }
+
+  // label cache 預熱。
+  // segsOf 要呼叫官網自己的 customLabel,全量跑一次 17,727 條要 19–45 ms ——
+  // 以前那一次落在**使用者打第一個字的當下**,正好是最不該卡的時機。
+  // patch 是在 focusin 掛的(使用者才剛點進輸入框、還沒開始打),趁這個空檔
+  // 在閒置時把 cache 建起來,打字時就只剩比對成本。
+  // ⚠ 只是預熱,不改變任何行為:cache 沒建好也只是回到原本的當場計算。
+  function warmLabelCache(ms) {
+    const warm = () => {
+      try {
+        eachOption(ms, (o) => segsOf(ms, o));
+      } catch (_) { /* 預熱失敗不影響搜尋,當場算就是了 */ }
+    };
+    // ⚠ **排程本身也要包 try**:預熱純粹是優化,不該有任何機會影響 patch 的成敗。
+    //   (離線 fixture 的沙箱就沒有 setTimeout —— 那不是測試的問題,是這裡本來
+    //    就不該假設宿主環境提供什麼。)
+    try {
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 2000 });
+      else if (typeof setTimeout === 'function') setTimeout(warm, 0);
+    } catch (_) { /* 排不進去就當場算,行為不變 */ }
   }
 
   document.addEventListener(

@@ -26,6 +26,11 @@ const STORE_KEYS = {
     uiExtra: 'uiExtra',
     updated: 'updated',
     buildStatus: 'buildStatus',
+    // content script 寫、popup 讀:lscache 因 localStorage 配額爆掉而寫不進去
+    lscacheError: 'lscacheError',
+    // 詞綴群組名英→繁(結果卡右欄那一格)。只有 PoE1 的 ggpk.json 有這份資料,
+    // PoE2 走另一支管線 → 空表 → 那一格照原樣顯示英文
+    modNames: 'modNames',
   },
   poe2: {
     translation: 'translation2',
@@ -36,6 +41,8 @@ const STORE_KEYS = {
     uiExtra: 'uiExtra2',
     updated: 'updated2',
     buildStatus: 'buildStatus2',
+    lscacheError: 'lscacheError2',
+    modNames: 'modNames2',
   },
 };
 

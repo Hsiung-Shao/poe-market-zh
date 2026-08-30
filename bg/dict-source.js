@@ -58,7 +58,23 @@ export const REMOTE_ONLY_FILES = new Set([
 // 可由 _test.setTimeouts 調整,讓離線驗證不必真的等 30 秒。
 const TIMEOUTS = { index: 8000, file: 30000 };
 
-const CACHE_PREFIX = 'dict:'; // dict:<檔名> → { sha256, size, text, storedAt }
+const CACHE_PREFIX = 'dict:'; // dict:<檔名> → { sha256, size, text, storedAt, extVersion }
+// 目前的擴充版本。快取記錄要蓋這個章,才分得出「這份快取是不是比現在的內建新」。
+const EXT_VERSION = (() => {
+  try { return chrome.runtime.getManifest().version; } catch (_) { return ''; }
+})();
+
+// 內建字典(data/ 底下那幾份)的版本。**動到 data/ 裡的字典就要 +1。**
+//
+// ⚠⚠ 沒有這條的話,**遠端永遠壓過內建**:遠端字典機制的用意是「不發版也能更新
+//   字典」,但發版時內建字典也會一起更新,那一刻 dict 分支往往還沒跟上 ——
+//   於是新版擴充下載回一份舊字典,把自己剛出貨的資料蓋掉。
+//   2026-08-30 實際發生:新加進 ggpk.json 的詞綴群組名(modNames)整批消失,
+//   而 console 只印一行「字典 ggpk.json:遠端(3559815 bytes)」,看起來一切正常
+//   (3.39 MB 是舊檔,新的是 3.62 MB)。
+//   遠端索引宣告的 `version` 大於這個值時才代表「遠端真的比較新」。
+//   推新字典到 dict 分支時,索引的 version 要一併調高才會被採用。
+const BUNDLED_DICT_VERSION = 3;
 const INDEX_KEY = 'dictIndex'; // 最後一次成功取得的遠端索引(診斷用)
 const STATUS_KEY = 'dictStatus'; // 給 popup 顯示「這份字典是哪來的」
 // 索引宣告的大小若超過這個值就不下載 —— 六個字典最大的 ggpk.json 是 3.5MB,
@@ -195,6 +211,9 @@ async function writeCache(name, got) {
         size: got.size,
         text: got.text,
         storedAt: Date.now(),
+        // 下載當下的擴充版本。用來判斷「這份快取還算不算比內建新」——
+        // 見 loadDict 第二層的說明。舊快取沒有這個欄位,一律當成過期。
+        extVersion: EXT_VERSION,
       },
     });
   } catch (err) {
@@ -245,6 +264,21 @@ function record(name, src, meta) {
 export async function loadDict(name) {
   const s = ensureSession();
   const index = await getIndex();
+
+  // 遠端沒有比內建新 → 這一輪連碰都不碰遠端與快取,直接用內建。
+  // (見 BUNDLED_DICT_VERSION 的說明:少了這一步,發版一起更新的內建字典會被
+  //  dict 分支上的舊檔靜默蓋掉。)
+  // ⚠ api-*.json 只有遠端有,沒有內建可退,那幾個不適用這條。
+  // ⚠ 一定要先確認**索引真的拿到了**。索引拿不到(離線、GitHub 掛掉)時 index 是
+  //   null,若把它當成「版本 0、不比內建新」就會連快取那一層也一起跳過 ——
+  //   而離線時快取正是它存在的理由。拿不到索引就維持原本的三層降級。
+  if (index && (index.version ?? 0) <= BUNDLED_DICT_VERSION && !REMOTE_ONLY_FILES.has(name)) {
+    const json = await loadBundledDict(name);
+    record(name, 'bundled', { bundledNewer: true });
+    dbg(`[PTM] 字典 ${name}:用內建(遠端索引 v${index?.version ?? '?'} 未超過內建 v${BUNDLED_DICT_VERSION})`);
+    return json;
+  }
+
   const want = index?.files?.[name] ?? null;
   const cached = await readCache(name);
   let cacheTried = false; // 同一個壞掉的快取不要解析兩次、記兩筆 note
@@ -274,12 +308,24 @@ export async function loadDict(name) {
     }
   }
 
+  // 遠端這次沒宣告或拿不到,但先前下載過。
+  // ⚠⚠ 「快取一定比內建新」**只有在擴充版本沒變的前提下才成立**。發版時內建字典
+  //    會跟著更新,那一刻舊快取反而是舊的 —— 而這一層會安靜地把新的內建蓋掉,
+  //    使用者更新到新版卻拿到舊字典,console 只印一行「快取」不會有人看出問題。
+  //    2026-08-30 實際發生:新加進 ggpk.json 的詞綴群組名整批被舊快取吃掉,
+  //    結果卡的群組名全部維持英文。
+  //    擴充版本一變就不再信任快取「比較新」,改用內建;真的比較新的遠端版本會在
+  //    下一次索引宣告新雜湊時從第一層重新下載回來。
   if (cached && !cacheTried) {
+    // ⚠ 先解析再判版本,順序不能倒過來:版本檢查若擋在前面,「快取壞掉」這個
+    //   診斷訊號就永遠不會被記下來(verify-remote-dict 的 A5 會抓)。
     const parsed = parseCached(name, cached);
     if (parsed !== undefined) {
-      // 遠端這次沒宣告或拿不到,但先前下載過 —— 快取比內建新,優先用
-      record(name, 'cache', { sha256: cached.sha256, size: cached.size, upToDate: !!want && cached.sha256 === want.sha256 });
-      return parsed;
+      if (cached.extVersion === EXT_VERSION) {
+        record(name, 'cache', { sha256: cached.sha256, size: cached.size, upToDate: !!want && cached.sha256 === want.sha256 });
+        return parsed;
+      }
+      dbg(`[PTM] 字典 ${name}:快取來自舊版擴充(${cached.extVersion ?? '未記錄'} ≠ ${EXT_VERSION}),改用內建`);
     }
   }
 

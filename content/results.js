@@ -30,8 +30,15 @@
   const IS_POE2 = GAME.id === 'poe2';
   // storage 鍵:PoE2 一律 `2` 後綴(與 shared/games.js、bootstrap.js 同一組)
   const K = IS_POE2
-    ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2' }
-    : { statMap: 'statMap', statIdMap: 'statIdMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap' };
+    ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2', updated: 'updated2' }
+    : { statMap: 'statMap', statIdMap: 'statIdMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap', updated: 'updated' };
+  // ⚠ 這張表少一個鍵不會有任何人抗議:`K.漏掉的` 是 undefined,
+  //   `chrome.storage.local.get([… , undefined])` 在實機直接拋 TypeError,
+  //   init 的 catch 只印一行 warn —— **整支結果列翻譯靜默停擺**。
+  //   2026-08-30 加 `updated` 時就這樣炸過一次,所以下面立刻自檢。
+  for (const [name, key] of Object.entries(K)) {
+    if (typeof key !== 'string' || !key) throw new Error(`[PTM] storage 鍵表缺 ${name}`);
+  }
 
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
   const SELECTORS = {
@@ -82,6 +89,8 @@
   // 模板以 #% 表示、值域為負,查詢與回填需把負號一起吸進 #
   const SIGNED_NUM_RE = /-?\d+(?:\.\d+)?/g;
   const DEBOUNCE_MS = 100;
+  // 「譯文殘留英文原文」的取樣上限(見 translateModElement 的說明)
+  const DIRTY_SCAN_LIMIT = 40;
 
   const state = {
     statMap: null,
@@ -348,10 +357,17 @@
       setModText(el, zh);
       // 譯文寫回後若元素裡還殘留英文原文,代表官網把文字拆進了我們沒清到的
       // 結構(中英會黏成一行)。這是使用者回報過的症狀,留樣本供比對。
-      const after = modText(el);
-      if (after !== zh && stat.dirtySamples.length < 3) {
-        stat.dirty++;
-        stat.dirtySamples.push({ 期望: zh.slice(0, 50), 實際: after.slice(0, 80), html: el.innerHTML.slice(0, 200) });
+      // ⚠ 這個檢查會**再走一次 TreeWalker**,等於每條詞綴多付 1/3 的走訪成本。
+      //   它只是為了留診斷樣本 —— 症狀是結構性的,前幾十條看不到就不會有,
+      //   對整批全掃拿不到任何多的資訊。只對前 DIRTY_SCAN_LIMIT 條取樣。
+      if (stat.seen <= DIRTY_SCAN_LIMIT) {
+        const after = modText(el);
+        if (after !== zh) {
+          stat.dirty++;
+          if (stat.dirtySamples.length < 3) {
+            stat.dirtySamples.push({ 期望: zh.slice(0, 50), 實際: after.slice(0, 80), html: el.innerHTML.slice(0, 200) });
+          }
+        }
       }
       if (state.bilingualMods) {
         // 雙語模式:中文下方常駐英文原文小字(lite 版不掛 css,樣式 inline)
@@ -429,7 +445,7 @@
       if (!stat.seen && !stat.merc) return;
       if (stat.seen) {
         dbg(`[PTM/${TAG}] 結果列:詞綴 ${stat.seen} 條 → id 命中 ${stat.byId}、文字命中 ${stat.byText}、` +
-          `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條`);
+          `查無 ${stat.miss};譯文殘留原文 ${stat.dirty} 條(僅前 ${DIRTY_SCAN_LIMIT} 條取樣)`);
       }
       if (stat.merc || stat.mercMiss) {
         dbg(`[PTM/${TAG}] 結果列:傭兵技能/輔助 譯出 ${stat.merc} 條、查無 ${stat.mercMiss} 條`);
@@ -446,20 +462,65 @@
     }, 500);
   }
 
-  function processContainer(root) {
+  // ── 大表延後載入 ──
+  // 每張表只會真的 get 一次;重複呼叫拿到的是同一個 promise。
+  const loading = {};
+  function loadTable(name, key, assign) {
+    if (loading[name]) return loading[name];
+    loading[name] = chrome.storage.local
+      .get(key)
+      .then((got) => { assign(got[key] ?? null); })
+      .catch((err) => { console.warn(`[PTM] ${name} 載入失敗:`, err); });
+    return loading[name];
+  }
+
+  // 詞綴的兩張表。statMap 是 statIdMap 落空時的後備,兩條路徑都可能用到,
+  // 所以一起載 —— 分開載只是把同一批成本拆成兩次跨程序往返。
+  const ensureStatTables = () =>
+    Promise.all([
+      loadTable('statIdMap', K.statIdMap, (v) => { state.statIdMap = v; }),
+      loadTable('statMap', K.statMap, (v) => { state.statMap = v; }),
+    ]);
+
+  // 天賦卡(星團珠寶/塗油)只有 PoE1 有,而且只在搜那類東西時才會出現在結果列 ——
+  // 不預載,真的看到 .notableProperty 才付這 0.20 MB。
+  const ensurePassives = () =>
+    SELECTORS.notable
+      ? loadTable('passives', 'passives', (v) => { state.passives = v; })
+      : Promise.resolve();
+
+  // 搜尋結果從送出到回來要好幾秒(2026-08-30 活站實測第一筆 7.8 s),閒置時
+  // 預載綽綽有餘;真的比預載更早到,processContainer 會 await 一次。
+  function preloadBigTables() {
+    const go = () => { ensureStatTables(); };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 3000 });
+    else setTimeout(go, 1500);
+  }
+
+  async function processContainer(root) {
     // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
     // 物品名/天賦卡只需內建字典,各自獨立降級
-    if (state.statIdMap || state.statMap) {
-      root.querySelectorAll(SELECTORS.mod).forEach(translateModElement);
+    const mods = root.querySelectorAll(SELECTORS.mod);
+    if (mods.length) {
+      await ensureStatTables();
+      if (state.statIdMap || state.statMap) mods.forEach(translateModElement);
     }
     if (state.itemMap) {
       root.querySelectorAll(SELECTORS.itemName).forEach(translateNameElement);
     }
     // 天賦卡只有 PoE1 有(PoE2 結果列沒有 .notableProperty),選擇器為 null 就整段跳過
-    if (state.passives && SELECTORS.notable) {
-      root.querySelectorAll(SELECTORS.notable).forEach(translateNotable);
-      if (root.matches?.(SELECTORS.notable)) translateNotable(root);
+    if (SELECTORS.notable) {
+      const notables = [...root.querySelectorAll(SELECTORS.notable)];
+      if (root.matches?.(SELECTORS.notable)) notables.push(root);
+      if (notables.length) {
+        await ensurePassives();
+        if (state.passives) notables.forEach(translateNotable);
+      }
     }
+    // 詞綴群組名中文化 + 加入篩選按鈕(content/mod-row.js,同一個 isolated world)。
+    // 掛在這裡而不是另開一套 MutationObserver —— 結果列串流時每一列都會經過
+    // 這裡,多一套監聽只是多付一份成本。沒載入就自然跳過。
+    globalThis.__pmzModRow?.(root);
     reportStats();
   }
 
@@ -472,9 +533,15 @@
     if (debounceTimer) return;
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
-      const batch = [...pending];
+      // 串流時官網一列一列塞進來,同一批常常同時收到父節點與它底下的子節點。
+      // 子節點會被父節點那次 querySelectorAll 完整涵蓋,再跑一次純粹是白工 ——
+      // 只留批次中最上層的那些。走祖先鏈(DOM 深度個位數)比兩兩 contains 便宜。
+      const roots = [...pending].filter((n) => {
+        for (let p = n.parentElement; p; p = p.parentElement) if (pending.has(p)) return false;
+        return true;
+      });
       pending.clear();
-      batch.forEach((n) => processContainer(n));
+      roots.forEach((n) => { processContainer(n).catch((err) => console.warn('[PTM] 結果列處理失敗:', err)); });
     }, DEBOUNCE_MS);
   }
 
@@ -513,7 +580,7 @@
       }
     });
     containerObserver.observe(el, { childList: true, subtree: true });
-    processContainer(el);
+    processContainer(el).catch((err) => console.warn('[PTM] 結果列處理失敗:', err));
   }
 
   function waitForResults() {
@@ -534,28 +601,27 @@
   }
 
   async function init() {
+    // ── 只載小表 ──
+    // 詞綴表很大(2026-08-30 實測:statIdMap 2.45 MB + statMap 1.01 MB,
+    // 五張表一次 get 共 3.90 MB),而 `chrome.storage.local.get` 是跨程序搬運 ——
+    // 每開一個交易站分頁都在開頁的關鍵路徑上付這個代價,偏偏交易站首頁
+    // (還沒搜尋)一條詞綴都沒有。大表改成閒置時預載,見下方 preloadBigTables。
     const got = await chrome.storage.local.get([
       'language',
-      K.statMap,
-      K.statIdMap,
-      K.itemMap,
+      K.itemMap, // 0.24 MB,物品名一進頁面就可能要用
       K.uniqueMap,
-      'passives', // PoE1 專屬(天賦卡),鍵不分遊戲
+      K.updated, // 只用來判斷「這一款到底建置過沒有」
       'bilingualMods',
     ]);
     if (got.language !== 'zh_tw') return;
-    state.statMap = got[K.statMap] ?? null; // 官方 API 產物,可能尚未建置
-    state.statIdMap = got[K.statIdMap] ?? null; // 同上;舊版升級後首次重建才會有
     state.itemMap = got[K.itemMap] ?? null; // 內建字典即可提供
     state.uniqueMap = got[K.uniqueMap] ?? null;
-    state.passives = SELECTORS.notable ? (got.passives ?? null) : null;
     state.bilingualMods = got.bilingualMods === true;
-    // 無資料就不掛 observer
-    if (!state.statIdMap && !state.statMap && !state.itemMap && !state.passives) return;
-    dbg(`[PTM/${TAG}] 結果列:詞綴 id 表 ${Object.keys(state.statIdMap ?? {}).length} 條、` +
-      `詞綴文字表 ${Object.keys(state.statMap ?? {}).length} 條、` +
-      `物品表 ${Object.keys(state.itemMap ?? {}).length} 條、` +
-      `傳奇名表 ${Object.keys(state.uniqueMap ?? {}).length} 條、雙語顯示 ${state.bilingualMods ? '開' : '關'}`);
+    // 無資料就不掛 observer(建置過就會有 updated,詞綴表稍後才載得進來)
+    if (!got[K.updated] && !state.itemMap) return;
+    dbg(`[PTM/${TAG}] 結果列:物品表 ${Object.keys(state.itemMap ?? {}).length} 條、` +
+      `傳奇名表 ${Object.keys(state.uniqueMap ?? {}).length} 條、` +
+      `雙語顯示 ${state.bilingualMods ? '開' : '關'};詞綴表待閒置時載入`);
     // 手動診斷:在 console 打 __ptmResults() 看目前這批結果的命中狀況
     // 打包版 dbg 為 no-op,但在 console 直接呼叫仍看得到回傳值
     window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };
@@ -567,8 +633,10 @@
       newContainerIn,
       buildMercenaryNames,
       tierText,
+      loadTable,
     };
     waitForResults();
+    preloadBigTables();
   }
 
   init().catch((err) => console.warn('[PTM] results 初始化失敗:', err));

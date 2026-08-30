@@ -79,6 +79,16 @@ function formatGameStatus(games) {
     if (st.state === 'building') parts.push(`${info.label} 建置中… (${time})`);
     else if (st.state === 'done') parts.push(`✓ ${st.msg}\n更新於 ${time}`);
     else parts.push(`✗ ${info.label} 建置失敗:${st.msg}`);
+    // 資料建好了,但寫不進交易站頁面的 localStorage(5 MB 配額爆掉)——
+    // 對使用者的表現是「顯示已完成、下拉卻還是英文」,一定要講出來
+    const ls = info?.lscacheError;
+    if (ls?.failed?.length) {
+      parts.push(
+        `✗ ${info.label} 交易站頁面空間不足,${ls.failed.join('、')} 未套用` +
+          `${ls.usedKB ? `(已用 ${ls.usedKB} KB / 上限約 5120 KB)` : ''}\n` +
+          '請在交易站分頁關掉其他交易站擴充,或按上方「清除快取」後重新整理'
+      );
+    }
   }
   return parts;
 }

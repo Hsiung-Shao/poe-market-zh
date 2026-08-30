@@ -605,6 +605,9 @@ async function loadGgpk(failed, file = 'ggpk.json') {
     items: g?.items ?? {},
     // PoE2 的字典多一張傳奇名表(見 translateItems 的 uCombo 註解);PoE1 沒有,回空的
     uniques: g?.uniques ?? {},
+    // 詞綴群組名(Mods.Name)英→繁,結果卡右欄那一格用。目前只有 PoE1 的
+    // ggpk.json 有(PoE2 走另一支管線),PoE2 拿到的是空表 → 那一格顯示英文。
+    modNames: g?.modNames ?? {},
     meta: g?.meta ?? null,
   };
 }
@@ -920,6 +923,8 @@ async function buildOne(game) {
         [K.itemMap]: itemMap,
         [K.uniqueMap]: uniqueMap,
         [K.uiExtra]: uiExtra,
+        // 純內建字典,不受官方 API 成敗影響,所以不走 keep()
+        [K.modNames]: ggpk.modNames,
         [K.updated]: updated,
         [K.buildStatus]: { state: 'done', msg: doneMsg, at: updated },
       });
@@ -975,7 +980,10 @@ export async function handleTranslationMessage(msg) {
       // popup 顯示的是「這台裝置的整體狀態」,兩款都要看得到。
       // ⚠ 舊欄位(buildStatus/updated)保持原樣回傳,既有版面不必動;
       //   兩款的細節走 games 這個新欄位。
-      const keys = ['dictStatus', ...allStoreKeys().filter((k) => /buildStatus|updated/.test(k))];
+      const keys = [
+        'dictStatus',
+        ...allStoreKeys().filter((k) => /buildStatus|updated|lscacheError/.test(k)),
+      ];
       const all = await chrome.storage.local.get(keys);
       const games = {};
       for (const id of GAME_IDS) {
@@ -984,6 +992,10 @@ export async function handleTranslationMessage(msg) {
           label: GAMES[id].label,
           buildStatus: all[K.buildStatus] ?? null,
           updated: all[K.updated] ?? null,
+          // 建置成功但 lscache 寫不進頁面(localStorage 5 MB 配額爆掉)。
+          // 這種情況下「建置完成」是真的,下拉卻還是英文 —— 不講出來使用者
+          // 只會覺得擴充壞了。
+          lscacheError: all[K.lscacheError] ?? null,
         };
       }
       return {

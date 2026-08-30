@@ -197,10 +197,14 @@
     scheduleHistory();
     if (state.open && (state.tab === 'bookmarks' || state.tab === 'history')) render();
   }
+  // navigation API 有就用它,沒有才退回輪詢。
+  // ⚠ 以前是兩條無條件並行 —— 現代 Chrome 兩條都在跑,每秒醒來一次純粹是白費
+  //   (這支擴充的使用者全都在 Chrome 上,navigation API 一定有)。
   if (globalThis.navigation?.addEventListener) {
     globalThis.navigation.addEventListener('navigatesuccess', onUrlMaybeChanged);
+  } else {
+    setInterval(onUrlMaybeChanged, 1000);
   }
-  setInterval(onUrlMaybeChanged, 1000); // navigation API 之外的保險
 
   // ── 儲存 ──
   // 每個分頁一個實例 id,寫入時蓋章;onChanged 據此辨識「自己寫的」,
