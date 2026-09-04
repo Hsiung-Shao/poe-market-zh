@@ -154,6 +154,9 @@
       // ⚠ 判斷一律走 planSearchIdAdoption(純函式、有離線鎖)——
       //   這裡只負責把結果寫回去。不要把判斷搬回這一層。
       const plan = M.planSearchIdAdoption(bm, cur.searchId, pending.league);
+      // 官網還沒把網址換成新格式:**保留 pending**,等下一次網址變化。
+      // 這一行不能拿掉 —— init() 那一次常常就跑在 replaceState 之前。
+      if (plan?.kind === 'wait') return;
       if (plan?.kind === 'cache') {
         bm.cachedSearchId = plan.searchId;
         bm.cachedLeague = plan.league;
@@ -1891,7 +1894,7 @@
         'pmz-hint',
         `還有 ${legacy.length} 個書籤存的是舊的搜尋編號。官網已經不再產生那種編號,` +
           '新網址改把搜尋條件直接寫在裡面。舊書籤目前還開得起來,' +
-          '**開一次就會自動換成新網址**,不用重新存一遍。'
+          '開一次就會自動換成新網址,不用重新存一遍。'
       ));
     }
     body.appendChild(el('div', 'pmz-section-title', '清除資料'));

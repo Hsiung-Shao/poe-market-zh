@@ -602,33 +602,44 @@
   }
 
 
-  // 開啟書籤之後，官網把網址換成正式編號的那一刻，要對這筆書籤做什麼?
+  // 開啟書籤之後,官網把網址換成正式編號的那一刻,要對這筆書籤做什麼?
   //
-  // 抽成純函式的理由:這是**會改寫使用者資料**的判斷(舊編號一蓋掉就回不去)，
-  // 而 sidebar.js 那一層混著 DOM 與 chrome API，離線測不到。判斷放這裡，
+  // 抽成純函式的理由:這是**會改寫使用者資料**的判斷(舊編號一蓋掉就回不去),
+  // 而 sidebar.js 那一層混著 DOM 與 chrome API,離線測不到。判斷放這裡,
   // sidebar 只負責把結果寫回去。
   //
   // 回 null = 什麼都不做;否則回
   //   { kind: 'cache',   searchId, league }  帶條件的書籤:記下官網建好的編號
   //   { kind: 'upgrade', searchId, name   }  舊短編號:換成新格式網址
+  //   { kind: 'wait' }                        官網還沒把網址換成新格式,這一轪先別動
+  //
+  // ⚠⚠ `wait` 不是裝飾用的。呼叫端把 `null` 當成「處理完了」而把 pending 清掉,
+  //   而升級靠的就是 pending —— 在官網 replaceState **之前**跑的那一次如果回 null,
+  //   pending 就死在那裡,等網址真的換成新格式時已經沒東西可以對應,
+  //   升級永遠不會發生(329.5.1 就是這樣壞的)。
   function planSearchIdAdoption(bookmark, currentSearchId, pendingLeague) {
     const cur = String(currentSearchId ?? '').trim();
     if (!bookmark || !SEARCH_ID_RE.test(cur)) return null;
 
     if (!bookmark.searchId && bookmark.query) {
-      // 帶條件的書籤:把官網建好的編號記起來，省掉下次那一跋往返。
+      // 帶條件的書籤:把官網建好的編號記起來,省掉下次那一段往返。
       // 已經是同一個編號與同一個聯盟就不必再寫一次。
       if (bookmark.cachedSearchId === cur && bookmark.cachedLeague === pendingLeague) return null;
       return { kind: 'cache', searchId: cur, league: pendingLeague ?? '' };
     }
 
+    if (isLegacySearchId(bookmark.searchId) && isLegacySearchId(cur)) {
+      // 書籤是舊編號,而當下的網址也還是舊編號 = 官網還沒跑到 replaceState。
+      return { kind: 'wait' };
+    }
+
     if (isLegacySearchId(bookmark.searchId) && !isLegacySearchId(cur)) {
-      // 舊短編號:官網已經把網址換成新格式(查詢內容就寫在網址裡)，收下來。
-      // ⚠ 兩個方向都要守:舊→新才升級，新→舊絕不能反向寫回去。
+      // 舊短編號:官網已經把網址換成新格式(查詢內容就寫在網址裡),收下來。
+      // ⚠ 兩個方向都要守:舊→新才升級,新→舊絕不能反向寫回去。
       return {
         kind: 'upgrade',
         searchId: cur,
-        // 名字就是舊編號(沒取名字的書籤)的話，留著一串已經不存在的編號只會讓人困惑
+        // 名字就是舊編號(沒取名字的書籤)的話,留著一串已經不存在的編號只會讓人困惑
         name: bookmark.name === bookmark.searchId ? defaultName(cur) : bookmark.name,
       };
     }
