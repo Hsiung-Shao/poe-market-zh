@@ -151,20 +151,18 @@
     for (const folder of state.data.folders) {
       const bm = folder.bookmarks.find((b) => b.id === pending.id);
       if (!bm) continue;
-      if (!bm.searchId && bm.query) {
-        // 帶條件的書籤:把官網建好的編號記起來,省掉下次那一趟往返
-        if (bm.cachedSearchId === cur.searchId && bm.cachedLeague === pending.league) break;
-        bm.cachedSearchId = cur.searchId;
-        bm.cachedLeague = pending.league;
+      // ⚠ 判斷一律走 planSearchIdAdoption(純函式、有離線鎖)——
+      //   這裡只負責把結果寫回去。不要把判斷搬回這一層。
+      const plan = M.planSearchIdAdoption(bm, cur.searchId, pending.league);
+      if (plan?.kind === 'cache') {
+        bm.cachedSearchId = plan.searchId;
+        bm.cachedLeague = plan.league;
         persist();
-        dbg(`[PTM] 書籤「${bm.name}」記下搜尋編號 ${cur.searchId}(${pending.league}),下次直接開`);
-      } else if (M.isLegacySearchId(bm.searchId) && !M.isLegacySearchId(cur.searchId)) {
-        // 舊短編號:官網已經把網址換成新格式(查詢內容就寫在網址裡),收下來。
-        // 這一步零額外請求 —— 使用者只是開了一次書籤。
+        dbg(`[PTM] 書籤「${bm.name}」記下搜尋編號 ${plan.searchId}(${plan.league}),下次直接開`);
+      } else if (plan?.kind === 'upgrade') {
         const legacy = bm.searchId;
-        bm.searchId = cur.searchId;
-        // 名字就是舊編號(沒取名字的書籤)的話,留著一串已經不存在的編號只會讓人困惑
-        if (bm.name === legacy) bm.name = M.defaultName(cur.searchId);
+        bm.searchId = plan.searchId;
+        bm.name = plan.name;
         persist();
         dbg(`[PTM] 書籤「${bm.name}」的舊編號 ${legacy} 已升級成新格式網址`);
       }
@@ -1550,7 +1548,7 @@
   }
 
   // ── 還是舊短編號的書籤 ──
-  // 開過一次就會自己升級(見 adoptSearchId)；這裡只把「還有幾個沒開過」
+  // 開過一次就會自己升級(見 adoptSearchId);這裡只把「還有幾個沒開過」
   // 數出來,在設定分頁講一聲。
   //
   // ⚠⚠ **不要改成用 fetch 抓 HTML 來批次轉換。** 2026-09-05 實測:

@@ -26,10 +26,10 @@
   // 新格式的碼一眼可辨:gzip 的 magic(1f 8b 08)加上空 mtime,
   // 讓 base64 的前四碼固定是 `H4sI`。
   const MODERN_ID_RE = /^H4sI/;
-  // 主機版 realm 會在網址的聯盟之前多一段(PC 省略)；PoE2 用的是 `poe2` 那一段。
+  // 主機版 realm 會在網址的聯盟之前多一段(PC 省略);PoE2 用的是 `poe2` 那一段。
   const PC_REALMS = new Set(['xbox', 'sony']);
 
-  // 舊短編號只有 10 碼,拿來當書籤預設名稱還說得過去；新格式是整個查詢的
+  // 舊短編號只有 10 碼,拿來當書籤預設名稱還說得過去;新格式是整個查詢的
   // gzip,動輄一百多個字元 —— 直接當名字會把書籤列撠成一堆亂碼。
   function defaultName(searchId) {
     if (!searchId) return '自訂搜尋';
@@ -602,11 +602,44 @@
   }
 
 
+  // 開啟書籤之後，官網把網址換成正式編號的那一刻，要對這筆書籤做什麼?
+  //
+  // 抽成純函式的理由:這是**會改寫使用者資料**的判斷(舊編號一蓋掉就回不去)，
+  // 而 sidebar.js 那一層混著 DOM 與 chrome API，離線測不到。判斷放這裡，
+  // sidebar 只負責把結果寫回去。
+  //
+  // 回 null = 什麼都不做;否則回
+  //   { kind: 'cache',   searchId, league }  帶條件的書籤:記下官網建好的編號
+  //   { kind: 'upgrade', searchId, name   }  舊短編號:換成新格式網址
+  function planSearchIdAdoption(bookmark, currentSearchId, pendingLeague) {
+    const cur = String(currentSearchId ?? '').trim();
+    if (!bookmark || !SEARCH_ID_RE.test(cur)) return null;
+
+    if (!bookmark.searchId && bookmark.query) {
+      // 帶條件的書籤:把官網建好的編號記起來，省掉下次那一跋往返。
+      // 已經是同一個編號與同一個聯盟就不必再寫一次。
+      if (bookmark.cachedSearchId === cur && bookmark.cachedLeague === pendingLeague) return null;
+      return { kind: 'cache', searchId: cur, league: pendingLeague ?? '' };
+    }
+
+    if (isLegacySearchId(bookmark.searchId) && !isLegacySearchId(cur)) {
+      // 舊短編號:官網已經把網址換成新格式(查詢內容就寫在網址裡)，收下來。
+      // ⚠ 兩個方向都要守:舊→新才升級，新→舊絕不能反向寫回去。
+      return {
+        kind: 'upgrade',
+        searchId: cur,
+        // 名字就是舊編號(沒取名字的書籤)的話，留著一串已經不存在的編號只會讓人困惑
+        name: bookmark.name === bookmark.searchId ? defaultName(cur) : bookmark.name,
+      };
+    }
+
+    return null;
+  }
   // ── 舊短編號 → 新格式(3.29.3b)──
   // 3.29.3b 之後的網址把整個查詢 gzip 後寫在網址裡,不再依賴官方的短編號。
   // 舊書籤還開得起來(server 還認舊編號),但那份查詢只存在官方主機上:
   // 沒有任何 API 能從編號反查查詢(`GET /api/trade/search/<league>/<id>` 回 404),
-  // GGG 哪天清掉舊資料就是**不可逆的資料遺失**。所以要趡還讀得到的時候
+  // GGG 哪天清掉舊資料就是**不可逆的資料遺失**。所以要趁還讀得到的時候
   // 把查詢內容搬回使用者自己手上。
 
   // 交易站的 HTML 裡,server 會把解好的搜尋條件以 `"state":{…}` 注入 inline script。
@@ -703,6 +736,7 @@
     leagueFromHref,
     parseSearchUrl,
     isLegacySearchId,
+    planSearchIdAdoption,
     extractSearchState,
     encodeSearchQuery,
     defaultName,
