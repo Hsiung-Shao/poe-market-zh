@@ -36,7 +36,7 @@
         "https://www.pathofexile.com/trade2/*",
         "https://pathofexile.com/trade2/*"
       ],
-      "js": ["page/ui-strings.js", "page/stat-search.js", "page/mod-filter.js"],
+      "js": ["page/trade-data.js", "page/ui-strings.js", "page/stat-search.js", "page/mod-filter.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },
