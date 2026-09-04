@@ -124,7 +124,11 @@
 
   function openBookmark(bm) {
     const league = leagueFor(bm);
-    if (!bm.searchId && bm.query) {
+    // 兩種情況要記下「我正在開哪一個書籤」:
+    //   ① 帶條件的書籤 —— 官網會把 `?q=` 換成正式編號,記下來下次直接開
+    //   ② 舊短編號的書籤 —— 官網載完會 replaceState 成新格式,那一刻就是
+    //     把查詢內容搬回使用者手上的機會(見 bookmarks-model 的 isLegacySearchId)
+    if ((!bm.searchId && bm.query) || M.isLegacySearchId(bm.searchId)) {
       try {
         sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: bm.id, league, at: Date.now() }));
       } catch (_) { /* 無痕或配額問題:頂多下次還是慢一點 */ }
@@ -146,12 +150,24 @@
     if (!cur?.searchId) return; // 官網還在把 ?q= 換成編號,等下一次網址變化
     for (const folder of state.data.folders) {
       const bm = folder.bookmarks.find((b) => b.id === pending.id);
-      if (!bm || bm.searchId) continue;
-      if (bm.cachedSearchId === cur.searchId && bm.cachedLeague === pending.league) break;
-      bm.cachedSearchId = cur.searchId;
-      bm.cachedLeague = pending.league;
-      persist();
-      dbg(`[PTM] 書籤「${bm.name}」記下搜尋編號 ${cur.searchId}(${pending.league}),下次直接開`);
+      if (!bm) continue;
+      if (!bm.searchId && bm.query) {
+        // 帶條件的書籤:把官網建好的編號記起來,省掉下次那一趟往返
+        if (bm.cachedSearchId === cur.searchId && bm.cachedLeague === pending.league) break;
+        bm.cachedSearchId = cur.searchId;
+        bm.cachedLeague = pending.league;
+        persist();
+        dbg(`[PTM] 書籤「${bm.name}」記下搜尋編號 ${cur.searchId}(${pending.league}),下次直接開`);
+      } else if (M.isLegacySearchId(bm.searchId) && !M.isLegacySearchId(cur.searchId)) {
+        // 舊短編號:官網已經把網址換成新格式(查詢內容就寫在網址裡),收下來。
+        // 這一步零額外請求 —— 使用者只是開了一次書籤。
+        const legacy = bm.searchId;
+        bm.searchId = cur.searchId;
+        // 名字就是舊編號(沒取名字的書籤)的話,留著一串已經不存在的編號只會讓人困惑
+        if (bm.name === legacy) bm.name = M.defaultName(cur.searchId);
+        persist();
+        dbg(`[PTM] 書籤「${bm.name}」的舊編號 ${legacy} 已升級成新格式網址`);
+      }
       break;
     }
     try { sessionStorage.removeItem(PENDING_KEY); } catch (_) {}
@@ -1533,6 +1549,28 @@
     }
   }
 
+  // ── 還是舊短編號的書籤 ──
+  // 開過一次就會自己升級(見 adoptSearchId)；這裡只把「還有幾個沒開過」
+  // 數出來,在設定分頁講一聲。
+  //
+  // ⚠⚠ **不要改成用 fetch 抓 HTML 來批次轉換。** 2026-09-05 實測:
+  //   Cloudflare 對 `Sec-Fetch-Dest: empty` 的 HTML 文件請求一律回
+  //   `cf-mitigated: challenge`(403 + 6 KB 的 challenge 頁,裡面沒有 state)——
+  //   `fetch` 與 `sandbox="allow-same-origin"` 的 iframe **兩種都被擋**
+  //   (sandbox 不執行 JS,過不了 challenge),而且被標記之後不會馬上恢復。
+  //   最危險的是它**看起來像「這個編號失效了」** —— 拿 challenge 頁去判定
+  //   就會把還好好的舊書籤蓋掉,而舊編號一蓋掉就回不去了。
+  //   API 那條路也不通:`GET /api/trade/search/<league>/<id>` 對舊短碼與
+  //   新編碼一律 404(端點已移除),沒有任何 API 可以從編號反查查詢。
+  //   要批次轉換只剩「真正的頂層導覽」一條路。
+  function legacyBookmarks() {
+    const out = [];
+    for (const folder of state.data.folders) {
+      for (const bm of folder.bookmarks) if (M.isLegacySearchId(bm.searchId)) out.push(bm);
+    }
+    return out;
+  }
+
   // 只清書籤樹:搜尋紀錄與設定刻意不動(使用者裁定)。想連設定一起歸零的人
   // 走「還原備份」,那條路本來就是取代式的。
   function clearAllBookmarks() {
@@ -1846,6 +1884,18 @@
 
     // ── 清除資料 ──
     // 匯入三條路都是「附加」,沒有一鍵歸零的入口;匯入錯一次就得手動刪十幾個資料夾。
+    // ── 舊網址(只在真的有舊書籤時才出現)──
+    const legacy = legacyBookmarks();
+    if (legacy.length) {
+      body.appendChild(el('div', 'pmz-section-title', '舊網址'));
+      body.appendChild(el(
+        'div',
+        'pmz-hint',
+        `還有 ${legacy.length} 個書籤存的是舊的搜尋編號。官網已經不再產生那種編號,` +
+          '新網址改把搜尋條件直接寫在裡面。舊書籤目前還開得起來,' +
+          '**開一次就會自動換成新網址**,不用重新存一遍。'
+      ));
+    }
     body.appendChild(el('div', 'pmz-section-title', '清除資料'));
     body.appendChild(el('div', 'pmz-hint', '想留底請先按上面的「匯出備份」。搜尋紀錄與設定不受影響。'));
     const clearBtn = el('button', 'pmz-secondary pmz-danger', `清除所有書籤(${M.countBookmarks(state.data.folders)})`);

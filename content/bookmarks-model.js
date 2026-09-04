@@ -15,7 +15,33 @@
 
   const VERSION = 3;
   const DEFAULT_ICON = '📁';
-  const SEARCH_ID_RE = /^[a-zA-Z0-9]+$/; // 官方 search id 的字元集(與官網路由一致)
+  // 官方 search id 的字元集。3.29.3b 起官網**不再產生 10 碼短編號**,改成把整個查詢
+  // gzip 之後以 **base64url** 編碼塞進網址(`H4sI…`,長度隨查詢複雜度變動),
+  // 所以字元集必須含 `-` 與 `_`。
+  // ⚠ 這一條沒放寬之前,含 `-`/`_` 的新網址存書籤、記歷史會**靜默失敗**,
+  //   而且是間歇性的 —— 不含那兩個字元的碼照樣過得去。
+  // ⚠ 舊的短編號**仍然開得起來**(官方 server 還認),所以放寬字元集就夠,
+  //   不需要、也不可以把舊書籤判成不合法。
+  const SEARCH_ID_RE = /^[A-Za-z0-9_-]+$/;
+  // 新格式的碼一眼可辨:gzip 的 magic(1f 8b 08)加上空 mtime,
+  // 讓 base64 的前四碼固定是 `H4sI`。
+  const MODERN_ID_RE = /^H4sI/;
+  // 主機版 realm 會在網址的聯盟之前多一段(PC 省略)；PoE2 用的是 `poe2` 那一段。
+  const PC_REALMS = new Set(['xbox', 'sony']);
+
+  // 舊短編號只有 10 碼,拿來當書籤預設名稱還說得過去；新格式是整個查詢的
+  // gzip,動輄一百多個字元 —— 直接當名字會把書籤列撠成一堆亂碼。
+  function defaultName(searchId) {
+    if (!searchId) return '自訂搜尋';
+    return searchId.length <= 24 ? searchId : '搜尋條件';
+  }
+
+  // 舊格式(官方短編號):還開得起來,但它的查詢內容只存在官方 server 上,
+  // 一旦 GGG 清掉舊資料就**不可逆地遺失**(沒有任何 API 可以從編號反查查詢)。
+  // 所以開過一次就把網址升級成新格式,把查詢內容搬到使用者自己手上。
+  function isLegacySearchId(searchId) {
+    return typeof searchId === 'string' && searchId !== '' && !MODERN_ID_RE.test(searchId);
+  }
   const TYPES = new Set(['search', 'exchange']);
   const GAME_VERSIONS = new Set(['Poe1', 'Poe2']);
   // PoE Trade Extension 的 icon 欄位是列舉字串(不是圖檔位址)。這幾個列舉值指的是
@@ -76,9 +102,10 @@
     const league = typeof raw.league === 'string' && raw.league && raw.league !== 'Auto' ? raw.league : null;
     return {
       id: typeof raw.id === 'string' && raw.id ? raw.id : newId('bm'),
-      name: String(raw.name ?? '').trim() || searchId,
+      name: String(raw.name ?? '').trim() || defaultName(searchId),
       searchId,
       league, // null = 開啟時才決定(Extension 的 "Auto")
+      realm: PC_REALMS.has(raw.realm) ? raw.realm : '',
       type: TYPES.has(raw.type) ? raw.type : 'search',
       poeVersion: GAME_VERSIONS.has(raw.poeVersion) ? raw.poeVersion : 'Poe1',
       pinned: raw.pinned === true,
@@ -508,7 +535,11 @@
   }
 
   // ── 網址 ──
-  const TRADE_PATH_RE = /^\/trade(2)?\/(search|exchange)(\/poe2)?\/([^/]+)(?:\/([^/]+))?/;
+  // `/trade[2]/{search|exchange}[/{realm}]/{league}[/{code}][/live]`
+  // ⚠ realm 段只在**非 PC** 時出現(官網:`"pc" !== realm ? "/" + realm : ""`)。
+  //   以前這裡只認 `poe2`,Xbox / Sony 的網址會把 realm 當成聯盟、
+  //   聯盟當成 search id,整組錯位 —— 書籤開出來是別的聯盟的空搜尋。
+  const TRADE_PATH_RE = /^\/trade(2)?\/(search|exchange)(?:\/(poe2|xbox|sony))?\/([^/]+)(?:\/([^/]+))?/;
 
   function leagueFromHref(href) {
     try {
@@ -530,11 +561,14 @@
     if (!m || !m[5]) return null;
     const searchId = decodeURIComponent(m[5]);
     if (!SEARCH_ID_RE.test(searchId)) return null; // 例如 /live 之類的尾段
+    const realmSeg = m[3] ?? '';
     return {
       league: decodeURIComponent(m[4]),
       searchId,
       type: m[2],
-      poeVersion: m[1] || m[3] ? 'Poe2' : 'Poe1',
+      // ⚠ `m[3]` 現在也可能是 xbox / sony(PoE1 的主機版),不可以再當成 PoE2 的訊號
+      poeVersion: m[1] || realmSeg === 'poe2' ? 'Poe2' : 'Poe1',
+      realm: PC_REALMS.has(realmSeg) ? realmSeg : '',
     };
   }
 
@@ -551,9 +585,11 @@
   function buildTradeUrl(origin, bookmark, league) {
     const type = TYPES.has(bookmark?.type) ? bookmark.type : 'search';
     const lg = encodeURIComponent(league || 'Standard');
+    // 主機版 realm 要原樣還原,否則 Xbox / Sony 的書籤會開到 PC 的市場。
+    const realm = PC_REALMS.has(bookmark?.realm) ? `/${bookmark.realm}` : '';
     const base = bookmark?.poeVersion === 'Poe2'
       ? `${origin}/trade2/${type}/poe2/${lg}`
-      : `${origin}/trade/${type}/${lg}`;
+      : `${origin}/trade/${type}${realm}/${lg}`;
     // 存查詢條件的書籤:官網吃 ?q=<url-encoded JSON>,會自己建立搜尋並換上 search id
     if (!bookmark?.searchId && bookmark?.query) {
       // 上次開過而且還是同一個聯盟 → 直接用記下來的編號,省掉「重建搜尋」那一趟
@@ -565,6 +601,77 @@
     return `${base}/${encodeURIComponent(String(bookmark?.searchId ?? ''))}`;
   }
 
+
+  // ── 舊短編號 → 新格式(3.29.3b)──
+  // 3.29.3b 之後的網址把整個查詢 gzip 後寫在網址裡,不再依賴官方的短編號。
+  // 舊書籤還開得起來(server 還認舊編號),但那份查詢只存在官方主機上:
+  // 沒有任何 API 能從編號反查查詢(`GET /api/trade/search/<league>/<id>` 回 404),
+  // GGG 哪天清掉舊資料就是**不可逆的資料遺失**。所以要趡還讀得到的時候
+  // 把查詢內容搬回使用者自己手上。
+
+  // 交易站的 HTML 裡,server 會把解好的搜尋條件以 `"state":{…}` 注入 inline script。
+  // 這裡只做字串層的括號平衡掃描(不用 DOMParser),才能在 node 裡離線驗證。
+  // 拿不到就回 null —— 寧可不轉,絕不能拿一個猜的條件去蓋掉使用者的書籤。
+  function extractSearchState(html) {
+    const s = typeof html === 'string' ? html : '';
+    const re = /"state"\s*:\s*\{/g;
+    let m;
+    while ((m = re.exec(s))) {
+      const start = s.indexOf('{', m.index);
+      let depth = 0;
+      let inStr = null;
+      let esc = false;
+      for (let i = start; i < s.length; i++) {
+        const c = s[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (c === '\\') esc = true;
+          else if (c === inStr) inStr = null;
+          continue;
+        }
+        if (c === '"' || c === "'") { inStr = c; continue; }
+        if (c === '{') depth++;
+        else if (c === '}') {
+          depth--;
+          if (depth > 0) continue;
+          try {
+            const parsed = JSON.parse(s.slice(start, i + 1));
+            if (parsed && typeof parsed === 'object') return parsed;
+          } catch (_) { /* 這一段不是我們要的,換下一個 */ }
+          break;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 搜尋條件 → 新格式的編碼。與官網 `stateUrl()` **逐字同一套做法**:
+  //   gzip → base64 → `+`→`-`、`/`→`_`、拆掉 `=`。
+  // 差一個字元就是一個開不起來的網址,不要自己發明寫法。
+  async function encodeSearchQuery(query) {
+    const bytes = new TextEncoder().encode(JSON.stringify(query));
+    const cs = new CompressionStream('gzip');
+    const writer = cs.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const chunks = [];
+    const reader = cs.readable.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let at = 0;
+    for (const c of chunks) { all.set(c, at); at += c.length; }
+    // ⚠ 不用 `String.fromCharCode(...all)`:展開幾萬個引數會爆掉呼叫堆疊。
+    let bin = '';
+    for (const b of all) bin += String.fromCharCode(b);
+    return btoa(bin)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+  }
   const api = {
     VERSION,
     DEFAULT_ICON,
@@ -595,6 +702,10 @@
     mapExtensionIcon,
     leagueFromHref,
     parseSearchUrl,
+    isLegacySearchId,
+    extractSearchState,
+    encodeSearchQuery,
+    defaultName,
     resolveLeague,
     buildTradeUrl,
   };
