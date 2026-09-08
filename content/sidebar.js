@@ -127,19 +127,21 @@
   // 不出現會像是建失敗);子資料夾留下時父也要留。計數只算這一款。
   // ⚠ 回傳的是 state.data.folders 裡的**同一批物件**(不是複本)——改名、拖曳、刪除
   //   都直接改這些物件,給複本會讓操作寫到空氣裡。
-  function gameCountOf(folder) {
-    return (folder?.bookmarks ?? []).filter(inCurrentGame).length;
+  // game 預設是書籤分頁目前選的那款;「加入書籤」的資料夾下拉要用**書籤本身**那款
+  // (目前頁面 POE_VER、歷史紀錄的 poeVersion),與分頁無關。
+  function gameCountOf(folder, game = state.gameTab) {
+    return (folder?.bookmarks ?? []).filter((b) => (b?.poeVersion ?? 'Poe1') === game).length;
   }
-  function folderGameTotal(folder) {
-    let n = gameCountOf(folder);
-    if (!folder?.parentId) for (const c of M.childFolders(state.data.folders, folder.id)) n += gameCountOf(c);
+  function folderGameTotal(folder, game = state.gameTab) {
+    let n = gameCountOf(folder, game);
+    if (!folder?.parentId) for (const c of M.childFolders(state.data.folders, folder.id)) n += gameCountOf(c, game);
     return n;
   }
-  function visibleFolders() {
+  function visibleFolders(game = state.gameTab) {
     const all = state.data.folders;
     const keep = new Set();
     for (const f of all) {
-      if (gameCountOf(f) > 0 || M.folderTotal(all, f) === 0) keep.add(f.id);
+      if (gameCountOf(f, game) > 0 || M.folderTotal(all, f) === 0) keep.add(f.id);
     }
     for (const f of all) if (f.parentId && keep.has(f.id)) keep.add(f.parentId);
     return all.filter((f) => keep.has(f.id));
@@ -923,8 +925,11 @@
     nameInput.value = guessSearchName() ?? cur.searchId;
     form.appendChild(nameInput);
 
+    // 下拉只列這一款(目前頁面那款)的資料夾與空資料夾 —— 使用者 2026-09-08 回報
+    // PoE2 頁面的下拉整排是 PoE1 資料夾
+    const folderChoices = visibleFolders(POE_VER);
     const folderSelect = el('select', 'pmz-select');
-    for (const { folder, depth } of M.orderedFolders(state.data.folders)) {
+    for (const { folder, depth } of M.orderedFolders(folderChoices)) {
       const opt = el('option', null, `${depth ? '　└ ' : ''}${isImageIcon(folder.icon) ? '📁' : folder.icon} ${folder.name}`);
       opt.value = folder.id;
       folderSelect.appendChild(opt);
@@ -935,8 +940,8 @@
     form.appendChild(folderSelect);
 
     const newFolderArea = el('div', 'pmz-form-sub');
-    newFolderArea.hidden = state.data.folders.length > 0;
-    if (state.data.folders.length === 0) folderSelect.value = '__new__';
+    newFolderArea.hidden = folderChoices.length > 0;
+    if (folderChoices.length === 0) folderSelect.value = '__new__';
     const folderNameInput = el('input', 'pmz-input');
     folderNameInput.placeholder = '資料夾名稱';
     let pickedIcon = iconSectionsForGame()[0]?.icons[0]?.url ?? FOLDER_ICONS[0];
@@ -1286,7 +1291,8 @@
       if (state.historyPickId === h.searchId) {
         const form = el('div', 'pmz-form');
         const sel = el('select', 'pmz-select');
-        for (const { folder, depth } of M.orderedFolders(state.data.folders)) {
+        // 只列這筆紀錄那一款的資料夾(與加入書籤的下拉同一條規則)
+        for (const { folder, depth } of M.orderedFolders(visibleFolders(h.poeVersion ?? 'Poe1'))) {
           const opt = el('option', null, `${depth ? '　└ ' : ''}${folder.name}`);
           opt.value = folder.id;
           sel.appendChild(opt);
