@@ -122,6 +122,29 @@
     return (entry?.poeVersion ?? 'Poe1') === state.gameTab;
   }
 
+  // ── 資料夾也依分頁過濾(使用者 2026-09-08 回報:PoE2 分頁看得到整排 PoE1 資料夾)──
+  // 規則:有這一款的書籤才出現;**完全空的資料夾照樣出現**(剛按「新資料夾」建的,
+  // 不出現會像是建失敗);子資料夾留下時父也要留。計數只算這一款。
+  // ⚠ 回傳的是 state.data.folders 裡的**同一批物件**(不是複本)——改名、拖曳、刪除
+  //   都直接改這些物件,給複本會讓操作寫到空氣裡。
+  function gameCountOf(folder) {
+    return (folder?.bookmarks ?? []).filter(inCurrentGame).length;
+  }
+  function folderGameTotal(folder) {
+    let n = gameCountOf(folder);
+    if (!folder?.parentId) for (const c of M.childFolders(state.data.folders, folder.id)) n += gameCountOf(c);
+    return n;
+  }
+  function visibleFolders() {
+    const all = state.data.folders;
+    const keep = new Set();
+    for (const f of all) {
+      if (gameCountOf(f) > 0 || M.folderTotal(all, f) === 0) keep.add(f.id);
+    }
+    for (const f of all) if (f.parentId && keep.has(f.id)) keep.add(f.parentId);
+    return all.filter((f) => keep.has(f.id));
+  }
+
   // ── 帶條件的書籤:開過一次就把官方搜尋編號記起來 ──
   // 這種書籤存的是查詢條件,每次開都要讓官網重新建立一次搜尋(所以「點下去很慢」)。
   // 開啟前先把「我正在開哪一個書籤」寫進 sessionStorage(點下去會整頁重載,記憶體留不住),
@@ -1054,7 +1077,7 @@
     } else {
       head.appendChild(fname);
     }
-    head.appendChild(el('span', 'pmz-folder-count', String(M.folderTotal(state.data.folders, folder))));
+    head.appendChild(el('span', 'pmz-folder-count', String(folderGameTotal(folder)))); // 只算目前分頁那一款
     if (!depth) {
       head.appendChild(iconBtn('plus', '在這個資料夾底下新增子資料夾', () => addFolder(folder.id)));
     }
@@ -1148,8 +1171,13 @@
       return;
     }
 
-    // 走訪序:第一層照順序,子資料夾緊跟在父後面(父收合時整包收起)
-    for (const entry of M.orderedFolders(state.data.folders, { skipCollapsed: true })) {
+    // 走訪序:第一層照順序,子資料夾緊跟在父後面(父收合時整包收起);只列目前分頁那一款
+    const shown = visibleFolders();
+    if (!shown.length) {
+      body.appendChild(el('div', 'pmz-empty', `${state.gameTab === 'Poe2' ? 'PoE2' : 'PoE1'} 目前沒有書籤`));
+      return;
+    }
+    for (const entry of M.orderedFolders(shown, { skipCollapsed: true })) {
       renderFolder(entry, cur, body);
     }
   }
