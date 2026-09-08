@@ -47,13 +47,22 @@ function handlePermissionMessage(msg) {
       .then((granted) => ({ ok: true, granted }))
       .catch(() => ({ ok: true, granted: false }));
   }
-  // 開授權頁:content script 不能呼叫 permissions.request(需要擴充頁面的使用者手勢),
-  // 所以側邊欄的開關是把 popup 開成分頁,讓使用者在那裡按下允許。
+  // 直接跳 Chrome 的權限對話框(使用者 2026-09-08 要求「點了就出現允許/拒絕」):
+  // content script 本身不能呼叫 permissions.request,但它在**點擊當下**送來的
+  // runtime.sendMessage 會把使用者手勢帶進這個 onMessage 處理器,所以這裡可以直接要。
+  // ⚠ 側邊欄那端的 sendMessage 必須是點擊處理器裡的第一個非同步動作(前面不能 await),
+  //   否則手勢就過期了。手勢真的沒帶到(拋「must be called during a user gesture」)才退回
+  //   舊做法:把 popup 開成分頁讓使用者在那裡按。
   if (msg.t === 'perm:ninja-ask') {
-    return chrome.tabs
-      .create({ url: chrome.runtime.getURL(NINJA_ASK_URL) })
-      .then(() => ({ ok: true }))
-      .catch((err) => ({ ok: false, error: String(err?.message ?? err) }));
+    return chrome.permissions
+      .request({ origins: [NINJA_ORIGIN] })
+      .then((granted) => ({ ok: true, granted, direct: true }))
+      .catch(() =>
+        chrome.tabs
+          .create({ url: chrome.runtime.getURL(NINJA_ASK_URL) })
+          .then(() => ({ ok: true, direct: false }))
+          .catch((err) => ({ ok: false, error: String(err?.message ?? err) }))
+      );
   }
   // 收回權限不需要使用者手勢,背景直接做得到
   if (msg.t === 'perm:ninja-remove') {

@@ -99,6 +99,7 @@
 .pmz-mod-btns{position:absolute;right:22px;top:50%;transform:translateY(-50%);
  display:inline-flex;gap:3px;z-index:3;opacity:.9;transition:opacity .12s}
 .item-mod:hover .pmz-mod-btns{opacity:1}
+.pmz-hide-mod-btns .pmz-mod-btns{display:none}
 .pmz-mod-btn{cursor:pointer;border:1px solid;background:#12100c;
  font:bold 13px/14px system-ui,sans-serif;width:17px;height:17px;padding:0;border-radius:3px;
  text-align:center;display:flex;align-items:center;justify-content:center;
@@ -111,6 +112,19 @@
 .pmz-mod-btn.pmz-ex:hover{background:#e87f7f;color:#1a0d0d;border-color:#f59a9a}`;
     (document.head ?? document.documentElement).appendChild(s);
   }
+
+  // ── 使用者開關:設定分頁「結果列的詞綴篩選按鈕(＋/−)」(settings.modFilterButtons)──
+  // 關掉時按鈕照畫但用 CSS 藏起來(切換不必重畫結果列),storage 一變就即時生效。
+  function applyButtonsSetting(settings) {
+    const hide = settings?.modFilterButtons === false;
+    document.documentElement.classList.toggle('pmz-hide-mod-btns', hide);
+  }
+  try {
+    chrome.storage.local.get('settings').then((got) => applyButtonsSetting(got?.settings)).catch(() => {});
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.settings) applyButtonsSetting(changes.settings.newValue);
+    });
+  } catch (_) { /* 沒有 chrome.storage(離線驗證殼)就維持顯示 */ }
 
   // MAIN world 那邊確認官網篩選群組真的找得到,才畫按鈕。
   // ⚠ 即時判定,不記憶上次結果 —— 閘門用快取旗標會讓修好之後還要多重整一次

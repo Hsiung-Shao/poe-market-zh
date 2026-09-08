@@ -50,6 +50,7 @@
   const DEFAULT_SETTINGS = {
     autoInstantBuyout: false, // 開頁自動把狀態設為「即刻購買」
     highlightPseudo: true, // 結果列的偽屬性(合計)詞綴高亮
+    modFilterButtons: true, // 結果列每條詞綴右側的 ＋/− 篩選按鈕(content/mod-row.js 讀同一個鍵)
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
     //   —— 共用一個欄位會讓 PoE2 書籤套上 PoE1 的聯盟,開出空搜尋而且完全無聲。
     //   `league` / `lastLeague` **維持是 PoE1 的**(不做 migration,現有設定原封不動),
@@ -1460,8 +1461,9 @@
     body.appendChild(el('div', 'pmz-hint', '物價分頁要讀 poe.ninja 的公開匯率,預設沒有開啟。'));
     const ask = el('button', 'pmz-primary', '開啟物價查詢(需要授權 poe.ninja)');
     ask.addEventListener('click', async () => {
-      await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => {});
-      state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「我已開啟,重新檢查」' };
+      // ⚠ sendMessage 必須是點擊後的第一個非同步動作:background 靠這個手勢直接跳權限對話框
+      const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => null);
+      applyNinjaAskResult(res);
       render();
     });
     body.appendChild(ask);
@@ -1472,6 +1474,20 @@
     });
     body.appendChild(retry);
     if (state.dataMsg) body.appendChild(el('div', state.dataMsg.ok ? 'pmz-ok' : 'pmz-error', state.dataMsg.text));
+  }
+
+  // perm:ninja-ask 的回應:direct=true 代表 Chrome 已當場跳出對話框(granted 就是結果);
+  // direct=false 代表手勢沒帶到,background 改開授權頁。
+  function applyNinjaAskResult(res) {
+    if (res?.direct) {
+      state.ninjaPerm = res.granted === true;
+      state.dataMsg = res.granted
+        ? { ok: true, text: '已開啟物價查詢' }
+        : { ok: false, text: '你在對話框按了拒絕,物價查詢維持關閉' };
+      if (res.granted) state.prices = { ...state.prices, list: [], at: 0, error: null };
+    } else {
+      state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「重新檢查」' };
+    }
   }
 
   function renderPrices(body) {
@@ -1888,6 +1904,8 @@
         render();
       });
     settingToggle(body, 'highlightPseudo', '結果列的偽屬性(合計)詞綴高亮', applyPseudoHighlight); // 即時生效,不必重整
+    // 詞綴 ＋/− 按鈕的顯示由 mod-row.js 監聽 storage 的 settings 即時切換,這裡只負責存
+    settingToggle(body, 'modFilterButtons', '結果列的詞綴篩選按鈕(＋/−)');
 
     // ── 3. 資料來源 ──
     body.appendChild(el('div', 'pmz-section-title', '資料來源'));
@@ -1946,8 +1964,9 @@
         async (val) => {
           if (val === state.ninjaPerm) return;
           if (val) {
-            await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => {});
-            state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「重新檢查」' };
+            // ⚠ 必須是點擊後第一個非同步動作(見 background.js 的 perm:ninja-ask)
+            const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => null);
+            applyNinjaAskResult(res);
           } else {
             const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-remove' }).catch(() => null);
             state.ninjaPerm = res?.granted === true;
