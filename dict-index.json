@@ -1,0 +1,46 @@
+{
+  "version": 6,
+  "generatedAt": "2026-09-08T08:33:39.023Z",
+  "files": {
+    "translate.zh_TW.json": {
+      "sha256": "97daf23e4660d6fd514175c93fefddc7513d5865910e06bc2643c74422a1a28a",
+      "size": 81953
+    },
+    "clusterJewel.json": {
+      "sha256": "1368c48f521525bdc6f99bdf81f271302396e67f045cdb22de0ae76161a6cf34",
+      "size": 83215
+    },
+    "passivesNotable.json": {
+      "sha256": "1c5807c39865b4b949803c5a6a61e973084675f6e74a432d2c9465c27e91aedd",
+      "size": 122484
+    },
+    "ggpk.json": {
+      "sha256": "66655b16c9818487443a6b0f056d2d75533563cb734298806d164169dc611f75",
+      "size": 3889412
+    },
+    "ggpk2.json": {
+      "sha256": "6f50fa7712fdeacca4f7dfefed99184bd1ec97fd536656c13c6315b2c91c9567",
+      "size": 3378550
+    },
+    "api-us.json": {
+      "sha256": "6c6f1662a2acc50d591b27b0fd49b5b015a06999eb870f8e8dee1f79485959fd",
+      "size": 2656444,
+      "entries": 25718
+    },
+    "api-tw.json": {
+      "sha256": "9faf7c0ed43b1f37bbcfcad59e1a691561f6032937e7da90333c36e770eaf83a",
+      "size": 2468293,
+      "entries": 25541
+    },
+    "api2-us.json": {
+      "sha256": "c54419de48b1570b83ec270922c7c6fb5054db17d3da3f392569a7509be8905f",
+      "size": 1229657,
+      "entries": 13050
+    },
+    "api2-tw.json": {
+      "sha256": "4eaa42160e3c25c5287088d6e76cc234c50f0f44c96a857370bd90447a1cd5a6",
+      "size": 970758,
+      "entries": 10720
+    }
+  }
+}
