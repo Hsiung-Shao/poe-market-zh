@@ -19,6 +19,11 @@
   }
 
   const FOLDER_ICONS = ['📁', '⚔️', '🛡️', '💍', '💎', '🧪', '📜', '🗺️', '🔥', '❄️', '⚡', '💰'];
+  // 側邊 rail 上的兩個外部連結(贊助 / Discord)。以前住在設定分頁底部,2026-09-08 搬上 rail。
+  const RAIL_LINKS = {
+    coffee: 'https://buymeacoffee.com/hsiung',
+    discord: 'https://discord.gg/6VamPQb8nC',
+  };
   // ── 官網 DOM 耦合點:書籤預設名稱來源(改版時優先檢查)──
   // ⚠ 只認物品搜尋框(.search-select)。2026-08-14 實測:PoE Trade Mate 原本用的
   //   `.search-bar .multiselect__single` 在現行版面抓到的是 **realm 選單**,
@@ -245,7 +250,10 @@
   }
 
   // ── UI 基礎 ──
-  let panel, toggleBtn;
+  // rail = 面板同側邊緣的直立圖示欄(書籤 / 設定 / 贊助 / Discord),取代原本單顆 ☰ 開關鈕。
+  // railBtns 只放「會隨面板狀態高亮」的兩顆(書籤、設定),外部連結不需要。
+  let panel, rail;
+  const railBtns = {};
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -256,32 +264,75 @@
 
   function applySide() {
     const left = state.settings.sidebarSide === 'left';
-    toggleBtn.classList.toggle('pmz-left', left);
+    rail.classList.toggle('pmz-left', left);
     panel.classList.toggle('pmz-left', left);
+    applyPageSqueeze();
   }
 
-  // 面板開啟時隱藏 ☰ 開關鈕(面板標頭已有 ✕ 可關),避免疊在面板內容上
+  // 面板開啟時把官網內容縮窄讓開,而不是蓋在頁面上(PoE Trade Extension 的做法:
+  // 對 `.container-fluid .content` 設 float + width,收合時把兩個 inline 屬性拿掉)。
+  // 面板本身仍是 position:fixed,這裡只動官網那一格。
+  // ⚠ 464 = 面板 420 + 全高 rail 44,與 sidebar.css 的 .pmz-panel width / .pmz-open 偏移同步。
+  // 找不到 .content(官網改版或還沒渲染)就靜靜略過,不可拋 —— 側邊欄其他功能不該因此掛掉。
+  const PAGE_SQUEEZE_PX = 464;
+  function applyPageSqueeze() {
+    const content = document.querySelector('.container-fluid .content');
+    if (!content) return;
+    if (state.open) {
+      content.style.float = state.settings.sidebarSide === 'left' ? 'right' : 'left';
+      content.style.width = `calc(100% - ${PAGE_SQUEEZE_PX}px)`;
+    } else {
+      content.style.removeProperty('float');
+      content.style.removeProperty('width');
+    }
+  }
+
+  // rail 常駐不隱藏。兩種型態(PoE Trade Extension 的擺法):
+  //   收合:小塊、停在 sidebarTop、可拖曳;只有 書籤/設定/贊助/Discord。
+  //   開啟:貼螢幕邊的全高直立欄(.pmz-rail-full),面板停靠在它內側不重疊;
+  //         多出 收合✕/歷史/物價,分頁鈕依 state.tab 高亮,不可拖曳。
+  // 按鈕一次建好,這裡只切 class 與 hidden(⚠ .pmz-rail-btn 是 display:flex,
+  // CSS 要有 [hidden]{display:none} 才真的藏得住)。
+  const RAIL_OPEN_ONLY = ['close', 'history', 'prices'];
+  function updateRail() {
+    const open = !!state.open;
+    rail.classList.toggle('pmz-rail-full', open);
+    rail.title = open ? '' : '可拖曳調整位置';
+    for (const k of RAIL_OPEN_ONLY) if (railBtns[k]) railBtns[k].hidden = !open;
+    for (const tab of ['bookmarks', 'history', 'prices', 'settings']) {
+      railBtns[tab]?.classList.toggle('pmz-rail-active', open && state.tab === tab);
+    }
+    applyTop();
+  }
+
   function setOpen(open) {
     state.open = open;
     panel.classList.toggle('pmz-open', open);
-    toggleBtn.classList.toggle('pmz-hidden', open);
+    updateRail();
+    applyPageSqueeze();
     if (open) render();
   }
 
   function applyTop() {
+    if (state.open) { rail.style.top = ''; return; } // 開啟時 rail 全高(top/bottom 由 CSS 定),不吃 sidebarTop
     const pct = Math.min(88, Math.max(3, Number(state.settings.sidebarTop) || 45));
-    toggleBtn.style.top = `${pct}%`; // 面板為全高固定,只有開關鈕跟著拖曳
+    rail.style.top = `${pct}%`; // 面板為全高固定,只有 rail 跟著拖曳
   }
 
-  // 開關鈕可垂直拖曳(位移超過門檻視為拖曳,放開後不觸發開合)
+  // 整條 rail 可垂直拖曳(位移超過門檻視為拖曳,放開後不觸發子按鈕的 click)。
+  // 只在收合狀態有效:開啟時 rail 是全高欄,沒有「位置」可拖。
+  // ⚠ pointer capture 要設在 e.target(被按到的那顆按鈕)而不是 rail 本身:
+  //   Chrome 會把 click 派給「持有 capture 的元素」,設在 rail 上子按鈕就永遠收不到 click。
+  //   設在按鈕上,pointermove/up 仍會冒泡到 rail,這裡的監聽照常收得到。
   function enableDrag() {
     let drag = null;
     let suppressClick = false;
-    toggleBtn.addEventListener('pointerdown', (e) => {
+    rail.addEventListener('pointerdown', (e) => {
+      if (state.open) return;
       drag = { startY: e.clientY, startPct: Number(state.settings.sidebarTop) || 45, moved: false };
-      toggleBtn.setPointerCapture(e.pointerId);
+      try { e.target.setPointerCapture(e.pointerId); } catch (_) { /* 非 Element 目標:不 capture 也能拖 */ }
     });
-    toggleBtn.addEventListener('pointermove', (e) => {
+    rail.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const dy = e.clientY - drag.startY;
       if (Math.abs(dy) > 5) drag.moved = true;
@@ -289,14 +340,15 @@
       state.settings.sidebarTop = drag.startPct + (dy / window.innerHeight) * 100;
       applyTop();
     });
-    toggleBtn.addEventListener('pointerup', () => {
+    rail.addEventListener('pointerup', () => {
       if (drag?.moved) {
         suppressClick = true;
         persistSettings();
       }
       drag = null;
     });
-    toggleBtn.addEventListener('click', (e) => {
+    // capture 階段掛在 rail:子按鈕的 click 監聽是 target 階段,這裡先攔就能整顆吞掉
+    rail.addEventListener('click', (e) => {
       if (suppressClick) {
         suppressClick = false;
         e.stopImmediatePropagation();
@@ -304,10 +356,105 @@
     }, true);
   }
 
+  // ── rail 圖示:全部自繪(24×24 viewBox,線條風格,顏色跟 currentColor)──
+  // 不用 emoji(跨系統長相不一)、不抄任何第三方擴充的圖;每個圖示是一組 path d。
+  const RAIL_ICON_PATHS = {
+    // 收合 ✕:兩條斜線
+    close: ['M6 6l12 12M18 6L6 18'],
+    // 歷史:時鐘(圓 + 指針)
+    history: ['M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18z', 'M12 7v5l3 2'],
+    // 物價:三枚疊起的錢幣
+    prices: [
+      'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3z',
+      'M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6',
+      'M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6',
+    ],
+    // 書籤旗標
+    bookmark: ['M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'],
+    // 八齒齒輪 + 中心圓
+    gear: [
+      'M19.45 10.49L21.92 10.7L21.92 13.3L19.45 13.51L18.33 16.2L19.93 18.09L18.09 19.93L16.2 18.33L13.51 19.45L13.3 21.92L10.7 21.92L10.49 19.45L7.8 18.33L5.91 19.93L4.07 18.09L5.67 16.2L4.55 13.51L2.08 13.3L2.08 10.7L4.55 10.49L5.67 7.8L4.07 5.91L5.91 4.07L7.8 5.67L10.49 4.55L10.7 2.08L13.3 2.08L13.51 4.55L16.2 5.67L18.09 4.07L19.93 5.91L18.33 7.8z',
+      'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+    ],
+    // 咖啡杯:杯身、把手、兩縷蒸氣、杯墊
+    coffee: [
+      'M4 9h12v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z',
+      'M16 11h1.5a2.5 2.5 0 0 1 0 5H16',
+      'M7.5 3.5c0 1.2 1 1.3 1 2.5s-1 1-1 2.5M10.5 3.5c0 1.2 1 1.3 1 2.5s-1 1-1 2.5',
+      'M3 21h14',
+    ],
+    // Discord:對話泡狀的手把 + 兩顆眼睛
+    discord: [
+      'M8 5.5A16 16 0 0 1 12 5a16 16 0 0 1 4 .5l1 2.5a12 12 0 0 1 3 8l-3.5 2.5-1-2a10 10 0 0 1-7 0l-1 2L4 16a12 12 0 0 1 3-8z',
+      'M9.5 12.5h.01M14.5 12.5h.01',
+    ],
+  };
+
+  function railIcon(name) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'pmz-rail-svg');
+    for (const d of RAIL_ICON_PATHS[name] ?? []) {
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    }
+    return svg;
+  }
+
+  function railBtn(icon, title, onClick) {
+    const btn = el('button', 'pmz-rail-btn');
+    btn.type = 'button';
+    btn.title = title;
+    btn.appendChild(railIcon(icon));
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  // 面板開/關與分頁切換的共用入口(rail 的書籤/設定鈕都走這裡)
+  function showTab(tab) {
+    state.tab = tab;
+    state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
+    state.historyPickId = null;
+    if (state.open) render();
+    else setOpen(true);
+  }
+
+  function buildRail() {
+    rail = el('div', 'pmz-rail');
+    rail.title = '可拖曳調整位置';
+    // 收合 ✕(只在開啟時顯示;對應標頭那顆 ✕,開啟時標頭的會被 CSS 藏起來)
+    railBtns.close = railBtn('close', '收合側邊欄', () => setOpen(false));
+    // 書籤:關著 → 開到書籤;開著且在書籤 → 收合;開著在別頁 → 切到書籤
+    railBtns.bookmarks = railBtn('bookmark', '書籤', () => {
+      if (state.open && state.tab === 'bookmarks') setOpen(false);
+      else showTab('bookmarks');
+    });
+    railBtns.history = railBtn('history', '歷史', () => showTab('history'));
+    // ⚠ 物價只有 PoE1(bg/ninja.js 打的是 poe.ninja/poe1),與面板內的分頁列同一條判斷
+    if (!IS_POE2) railBtns.prices = railBtn('prices', '物價', () => showTab('prices'));
+    // 設定:開到設定;已在設定 → 收合
+    railBtns.settings = railBtn('gear', '設定', () => {
+      if (state.open && state.tab === 'settings') setOpen(false);
+      else showTab('settings');
+    });
+    rail.append(railBtns.close, railBtns.bookmarks, railBtns.history);
+    if (railBtns.prices) rail.appendChild(railBtns.prices);
+    // 分隔線只在收合時看得到;開啟(全高)時改由 spacer 把贊助/Discord 推到底部
+    rail.append(railBtns.settings, el('div', 'pmz-rail-sep'), el('div', 'pmz-rail-spacer'));
+    for (const [icon, title, href] of [
+      ['coffee', '請我喝杯咖啡', RAIL_LINKS.coffee],
+      ['discord', 'Discord 社群', RAIL_LINKS.discord],
+    ]) {
+      // 開新分頁一律帶 noopener,不讓對方拿到 window.opener
+      rail.appendChild(railBtn(icon, title, () => window.open(href, '_blank', 'noopener')));
+    }
+    return rail;
+  }
+
   function buildShell() {
-    toggleBtn = el('button', 'pmz-toggle', '☰');
-    toggleBtn.title = 'Poe Market Zh(可拖曳調整位置)';
-    toggleBtn.addEventListener('click', () => setOpen(!state.open));
+    buildRail();
 
     panel = el('div', 'pmz-panel');
     const header = el('div', 'pmz-header');
@@ -340,10 +487,11 @@
     }
     panel.appendChild(tabs);
     panel.appendChild(el('div', 'pmz-body'));
-    document.body.append(toggleBtn, panel);
+    document.body.append(rail, panel);
     applySide();
     applyTop();
     enableDrag();
+    updateRail();
   }
 
   // ── 確認對話框 ──
@@ -429,15 +577,35 @@
     return btn;
   }
 
-  // 圖示可以是 emoji 或遊戲圖像 URL(poecdn / poewiki)
+  // 圖示可以是 emoji、遊戲圖像 URL(poecdn / poewiki)或擴充包內的相對路徑
+  // (`icons/folder/poe2-xxx.png`,經 web_accessible_resources 出貨)。
+  // ⚠ 書籤資料裡存的仍是相對路徑:未封裝與商店版的擴充 id 不同,
+  //   把 chrome-extension://<id>/ 寫進 storage 會在換版後全部失效。轉成可載入的
+  //   位址只在塞進 img.src 那一刻做(iconSrc)。
+  const RELATIVE_ICON_RE = /^(?!https?:\/\/)(?!data:)[^\s]*\/[^\s]*\.(?:png|webp|svg)$/i;
+  function isImageIcon(icon) {
+    return typeof icon === 'string' && (/^https?:\/\//.test(icon) || icon.startsWith('data:') || RELATIVE_ICON_RE.test(icon));
+  }
+  function iconSrc(icon) {
+    if (typeof icon !== 'string') return '';
+    if (/^https?:\/\//.test(icon) || icon.startsWith('data:')) return icon;
+    if (RELATIVE_ICON_RE.test(icon)) return chrome.runtime.getURL(icon);
+    return icon;
+  }
   function renderIcon(icon, className) {
-    if (typeof icon === 'string' && icon.startsWith('https://')) {
+    if (isImageIcon(icon)) {
       const img = el('img', className);
-      img.src = icon;
+      img.src = iconSrc(icon);
       img.alt = '';
       return img;
     }
     return el('span', className, icon || M.DEFAULT_ICON);
+  }
+
+  // 圖示分區依目前頁面的遊戲過濾(使用者 2026-09-08 裁定):PoE2 頁只給「PoE2」分區,
+  // PoE1 頁只給其餘分區。分區 id 是語言無關鍵('PoE2'),不看 label。
+  function iconSectionsForGame() {
+    return (state.iconList ?? []).filter((s) => (s?.id === 'PoE2') === IS_POE2);
   }
 
   // 圖示選擇器:遊戲圖像分區(通貨/碎片/精髓…)+ emoji 備援列
@@ -462,7 +630,7 @@
       });
       row.appendChild(btn);
     };
-    for (const section of state.iconList) {
+    for (const section of iconSectionsForGame()) {
       wrap.appendChild(el('div', 'pmz-icon-section', section.label));
       const row = el('div', 'pmz-icon-row');
       for (const { name, url } of section.icons) addBtn(row, url, name);
@@ -733,7 +901,7 @@
 
     const folderSelect = el('select', 'pmz-select');
     for (const { folder, depth } of M.orderedFolders(state.data.folders)) {
-      const opt = el('option', null, `${depth ? '　└ ' : ''}${typeof folder.icon === 'string' && folder.icon.startsWith('https://') ? '📁' : folder.icon} ${folder.name}`);
+      const opt = el('option', null, `${depth ? '　└ ' : ''}${isImageIcon(folder.icon) ? '📁' : folder.icon} ${folder.name}`);
       opt.value = folder.id;
       folderSelect.appendChild(opt);
     }
@@ -747,7 +915,7 @@
     if (state.data.folders.length === 0) folderSelect.value = '__new__';
     const folderNameInput = el('input', 'pmz-input');
     folderNameInput.placeholder = '資料夾名稱';
-    let pickedIcon = state.iconList[0]?.icons[0]?.url ?? FOLDER_ICONS[0];
+    let pickedIcon = iconSectionsForGame()[0]?.icons[0]?.url ?? FOLDER_ICONS[0];
     newFolderArea.appendChild(folderNameInput);
     newFolderArea.appendChild(iconPicker(pickedIcon, (i) => { pickedIcon = i; }));
     form.appendChild(newFolderArea);
@@ -1216,7 +1384,7 @@
     row.style.cursor = 'default';
     if (item.image) {
       const img = el('img', 'pmz-price-icon');
-      img.src = item.image;
+      img.src = iconSrc(item.image);
       img.alt = '';
       row.appendChild(img);
     }
@@ -1463,8 +1631,31 @@
   // ⚠ 舊做法是「匯入前先選範圍」,那不直觀 —— 開檔之前根本不知道檔案裡有什麼,
   //   只能瞎猜。現在是看著「PoE1 12 個、PoE2 5 個」再決定。
   async function importBackupFile(file) {
+    const text = await file.text();
+    // Better PathOfExile Trading 的備份是純文字(每行一個資料夾),不是 JSON:
+    // 認得出來就走它的解析,一樣進「先攤開再選要加入哪一款」的流程(附加,不取代)
+    if (M.looksLikeBetterTrading(text)) {
+      try {
+        const bt = M.parseBetterTradingBackup(text, { iconIndex: state.iconIndex });
+        state.pendingImport = {
+          folders: bt.folders,
+          report: bt.report,
+          isBackup: false,
+          exportedAt: '',
+          history: [],
+          settings: {},
+          counts: M.countByGame(bt.folders),
+          name: `${file.name}(Better PathOfExile Trading)`,
+        };
+        state.dataMsg = null;
+      } catch (err) {
+        state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      }
+      render();
+      return;
+    }
     try {
-      const result = M.parseBackupFile(await file.text(), {
+      const result = M.parseBackupFile(text, {
         iconIndex: state.iconIndex,
         settingsTemplate: DEFAULT_SETTINGS,
         historyMax: HISTORY_MAX,
@@ -1541,9 +1732,33 @@
   }
 
   function importExtensionCode(text) {
+    // 貼錯框也沒關係:Better PathOfExile Trading 的碼一眼可辨(每行 3:/2: 前綴 + base64),
+    // 認得出來就直接改走它的解析
+    if (M.looksLikeBetterTrading(text)) return importBetterTradingCode(text);
     try {
       applyImport(M.parseExtensionCode(text, { iconIndex: state.iconIndex }), 'PoE Trade Extension');
       state.codeBoxOpen = false;
+    } catch (err) {
+      state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      render();
+    }
+  }
+
+  // ── 從 Better PathOfExile Trading 匯入 ──
+  // 沒有獨立入口(使用者 2026-09-08 裁定:多餘):它的備份走「選擇備份 / 書籤檔」選 .txt,
+  // 或貼進 PoE Trade Extension 那個框由 importExtensionCode 自動辨認後轉進來。
+  // 格式與對應規則全在 bookmarks-model.js 的 parseBetterTradingBackup。它的書籤沒有聯盟
+  // (開啟時用當前聯盟),封存段的資料夾會加「(封存)」並收合。
+  function importBetterTradingCode(text) {
+    try {
+      const result = M.parseBetterTradingBackup(text, { iconIndex: state.iconIndex });
+      applyImport(result, 'Better PathOfExile Trading');
+      const extra = [];
+      if (result.report.archivedFolders) extra.push(`含封存資料夾 ${result.report.archivedFolders} 個(已收合)`);
+      if (result.report.badLines.length) extra.push(`略過 ${result.report.badLines.length} 行解不開的內容`);
+      if (extra.length && state.dataMsg?.ok) state.dataMsg.text += `\n${extra.join(';')}`;
+      state.codeBoxOpen = false;
+      render();
     } catch (err) {
       state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
       render();
@@ -1603,79 +1818,79 @@
   }
 
   // ── 設定分頁 ──
-  // [設定鍵, 說明, 是否需要重新整理頁面]
-  const SETTING_ITEMS = [
-    ['highlightPseudo', '結果列的偽屬性(合計)詞綴高亮', false],
-    ['autoInstantBuyout', '開啟頁面自動將狀態設為「即刻購買」', true],
-  ];
+  // 五組(側邊欄 / 顯示 / 資料來源 / 備份與匯入 / 進階),每一列都是「標籤 + 兩段鈕」同款,
+  // 不再混用 checkbox(2026-09-08 使用者核准的版面)。
+  // 一列兩段鈕:isActive(val) 決定哪一段亮,onPick(val) 負責寫回與副作用。
+  // 回傳 seg 容器,讓呼叫端可以在後面再塞按鈕(poe.ninja 的「重新檢查」)。
+  function segRow(body, label, options, isActive, onPick) {
+    const row = el('div', 'pmz-setting-row');
+    row.appendChild(el('span', null, label));
+    const seg = el('div', 'pmz-seg');
+    for (const [val, text] of options) {
+      const btn = el('button', 'pmz-seg-btn', text);
+      if (isActive(val)) btn.classList.add('pmz-seg-active');
+      btn.addEventListener('click', () => onPick(val));
+      seg.appendChild(btn);
+    }
+    row.appendChild(seg);
+    body.appendChild(row);
+    return seg;
+  }
+  const ON_OFF = [[true, '開'], [false, '關']];
+
+  // settings 裡的布林鍵:state.settings 已與 DEFAULT_SETTINGS 合併,必有值;
+  // 寫回同一個鍵、同樣 persist,after 是即時生效的副作用(可省)。
+  function settingToggle(body, key, label, after) {
+    segRow(body, label, ON_OFF,
+      (val) => (state.settings[key] !== false) === val,
+      (val) => {
+        state.settings[key] = val;
+        persistSettings();
+        after?.();
+        render();
+      });
+  }
 
   function renderSettings(body) {
     body.appendChild(el('div', 'pmz-hint', '標示 ↻ 的項目需重新整理頁面後生效'));
 
-    for (const [key, label, needReload] of SETTING_ITEMS) {
-      const row = el('label', 'pmz-setting-row');
-      const cb = el('input');
-      cb.type = 'checkbox';
-      cb.checked = state.settings[key] !== false; // state.settings 已與 DEFAULT_SETTINGS 合併,必有值
-      cb.addEventListener('change', () => {
-        state.settings[key] = cb.checked;
-        persistSettings();
-        if (key === 'highlightPseudo') applyPseudoHighlight(); // 即時生效,不必重整
-      });
-      row.appendChild(cb);
-      row.appendChild(el('span', null, `${label}${needReload ? ' ↻' : ''}`));
-      body.appendChild(row);
-    }
-
-    // 側邊欄位置
-    const sideRow = el('div', 'pmz-setting-row');
-    sideRow.appendChild(el('span', null, '側邊欄位置'));
-    const sideSeg = el('div', 'pmz-seg');
-    for (const [val, label] of [['left', '左'], ['right', '右']]) {
-      const btn = el('button', 'pmz-seg-btn', label);
-      if (state.settings.sidebarSide === val) btn.classList.add('pmz-seg-active');
-      btn.addEventListener('click', () => {
+    // ── 1. 側邊欄 ──
+    body.appendChild(el('div', 'pmz-section-title', '側邊欄'));
+    segRow(body, '位置', [['left', '左'], ['right', '右']],
+      (val) => state.settings.sidebarSide === val,
+      (val) => {
         state.settings.sidebarSide = val;
         persistSettings();
         applySide();
         render();
       });
-      sideSeg.appendChild(btn);
-    }
-    sideRow.appendChild(sideSeg);
-    body.appendChild(sideRow);
+    settingToggle(body, 'autoInstantBuyout', '開啟頁面自動將狀態設為「即刻購買」 ↻');
 
-    // 物價查詢(poe.ninja 選用權限):開 = 已授權。授權必須在擴充頁面按下(見 background.js),
-    // 所以這裡點「開」是去開授權頁;點「關」則由 background 直接收回。
-    const ninjaRow = el('div', 'pmz-setting-row');
-    ninjaRow.appendChild(el('span', null, '物價查詢(poe.ninja)'));
-    const ninjaSeg = el('div', 'pmz-seg');
-    for (const [val, label] of [[true, '開'], [false, '關']]) {
-      const btn = el('button', 'pmz-seg-btn', label);
-      if (state.ninjaPerm === val) btn.classList.add('pmz-seg-active');
-      btn.addEventListener('click', async () => {
-        if (val === state.ninjaPerm) return;
-        if (val) {
-          await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => {});
-          state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「重新檢查」' };
-        } else {
-          const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-remove' }).catch(() => null);
-          state.ninjaPerm = res?.granted === true;
-          state.prices = { ...state.prices, list: [], at: 0, error: null };
-        }
+    // ── 2. 顯示 ──
+    // 中文化與雙語詞綴:與 popup 共用同一組 storage 鍵,兩邊改都算數。
+    // ⚠ 一律從 state 畫,不要在這裡 `chrome.storage.local.get().then(…)` 再 append ——
+    //   render 是「清空 body 再重畫」,非同步 append 會在兩次 render 交錯時畫出兩份
+    //   (切一次中文化就會多一組「中文化 + 備份與匯入」;2026-08-16 使用者截圖回報)。
+    body.appendChild(el('div', 'pmz-section-title', '顯示'));
+    segRow(body, '介面與詞綴中文化 ↻', [['zh_tw', '開'], ['us', '關']],
+      (val) => state.language === val,
+      (val) => {
+        state.language = val;
+        chrome.storage.local.set({ language: val });
+        if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
         render();
       });
-      ninjaSeg.appendChild(btn);
-    }
-    const recheck = el('button', 'pmz-act', '重新檢查');
-    recheck.addEventListener('click', async () => {
-      await checkNinjaPermission();
-      render();
-    });
-    ninjaSeg.appendChild(recheck);
-    ninjaRow.appendChild(ninjaSeg);
-    body.appendChild(ninjaRow);
-    if (state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
+    segRow(body, '結果列附英文原文', ON_OFF,
+      (val) => state.bilingualMods === val,
+      (val) => {
+        state.bilingualMods = val;
+        chrome.storage.local.set({ bilingualMods: val });
+        render();
+      });
+    settingToggle(body, 'highlightPseudo', '結果列的偽屬性(合計)詞綴高亮', applyPseudoHighlight); // 即時生效,不必重整
+
+    // ── 3. 資料來源 ──
+    body.appendChild(el('div', 'pmz-section-title', '資料來源'));
 
     // ⚠ 書籤/歷史的遊戲切換已改成**分頁頂部的 PoE1/PoE2 標籤**(依網址自動切),
     //   這裡不再有那個設定 —— 同一件事有兩個入口只會讓人不知道哪個說了算。
@@ -1722,45 +1937,34 @@
     leagueRow.appendChild(leagueSel);
     body.appendChild(leagueRow);
 
-    // 中文化與雙語詞綴:與 popup 共用同一組 storage 鍵,兩邊改都算數。
-    // ⚠ 一律從 state 畫,不要在這裡 `chrome.storage.local.get().then(…)` 再 append ——
-    //   render 是「清空 body 再重畫」,非同步 append 會在兩次 render 交錯時畫出兩份
-    //   (切一次中文化就會多一組「中文化 + 備份與匯入」;2026-08-16 使用者截圖回報)。
-    body.appendChild(el('div', 'pmz-section-title', '中文化 ↻'));
-    const langRow = el('div', 'pmz-setting-row');
-    langRow.appendChild(el('span', null, '介面與詞綴中文化'));
-    const langSeg = el('div', 'pmz-seg');
-    for (const [val, label] of [['zh_tw', '開'], ['us', '關']]) {
-      const btn = el('button', 'pmz-seg-btn', label);
-      if (state.language === val) btn.classList.add('pmz-seg-active');
-      btn.addEventListener('click', () => {
-        state.language = val;
-        chrome.storage.local.set({ language: val });
-        if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
+    // 物價查詢(poe.ninja 選用權限):開 = 已授權。授權必須在擴充頁面按下(見 background.js),
+    // 所以這裡點「開」是去開授權頁;點「關」則由 background 直接收回。
+    // ⚠ 只有 PoE1:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`,PoE2 頁面連物價分頁都沒有。
+    if (!IS_POE2) {
+      const ninjaSeg = segRow(body, '物價查詢(poe.ninja)', ON_OFF,
+        (val) => state.ninjaPerm === val,
+        async (val) => {
+          if (val === state.ninjaPerm) return;
+          if (val) {
+            await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => {});
+            state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「重新檢查」' };
+          } else {
+            const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-remove' }).catch(() => null);
+            state.ninjaPerm = res?.granted === true;
+            state.prices = { ...state.prices, list: [], at: 0, error: null };
+          }
+          render();
+        });
+      const recheck = el('button', 'pmz-act', '重新檢查');
+      recheck.addEventListener('click', async () => {
+        await checkNinjaPermission();
         render();
       });
-      langSeg.appendChild(btn);
+      ninjaSeg.appendChild(recheck);
+      if (state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
     }
-    langRow.appendChild(langSeg);
-    body.appendChild(langRow);
 
-    const modeRow = el('div', 'pmz-setting-row');
-    modeRow.appendChild(el('span', null, '結果列附英文原文'));
-    const modeSeg = el('div', 'pmz-seg');
-    for (const [val, label] of [[true, '開'], [false, '關']]) {
-      const btn = el('button', 'pmz-seg-btn', label);
-      if (state.bilingualMods === val) btn.classList.add('pmz-seg-active');
-      btn.addEventListener('click', () => {
-        state.bilingualMods = val;
-        chrome.storage.local.set({ bilingualMods: val });
-        render();
-      });
-      modeSeg.appendChild(btn);
-    }
-    modeRow.appendChild(modeSeg);
-    body.appendChild(modeRow);
-
-    // ── 書籤資料 ──
+    // ── 4. 備份與匯入 ──
     // ⚠ 直觀優先:匯出是**三顆各自寫清楚做什麼的鈕**(不必先選再按);
     //   匯入是**先開檔、把裡面有什麼攤出來**,再按對應的鈕(開檔前根本不知道有什麼)。
     body.appendChild(el('div', 'pmz-section-title', '備份與匯入'));
@@ -1828,7 +2032,7 @@
       const importBtn = el('button', 'pmz-primary', '選擇備份 / 書籤檔…');
       const importInput = el('input');
       importInput.type = 'file';
-      importInput.accept = 'application/json';
+      importInput.accept = 'application/json,.json,.txt'; // .txt = Better PathOfExile Trading 的備份
       importInput.style.display = 'none'; // 行內樣式,避免官網 CSS 蓋掉 hidden 屬性
       importInput.addEventListener('change', (e) => {
         const file = e.target.files?.[0];
@@ -1883,12 +2087,11 @@
       body.appendChild(form);
     }
 
-    // ── 清除資料 ──
-    // 匯入三條路都是「附加」,沒有一鍵歸零的入口;匯入錯一次就得手動刪十幾個資料夾。
-    // ── 舊網址(只在真的有舊書籤時才出現)──
+    // ── 5. 進階 ──
+    body.appendChild(el('div', 'pmz-section-title', '進階'));
+    // 舊網址(只在真的有舊書籤時才出現)
     const legacy = legacyBookmarks();
     if (legacy.length) {
-      body.appendChild(el('div', 'pmz-section-title', '舊網址'));
       body.appendChild(el(
         'div',
         'pmz-hint',
@@ -1897,7 +2100,7 @@
           '開一次就會自動換成新網址,不用重新存一遍。'
       ));
     }
-    body.appendChild(el('div', 'pmz-section-title', '清除資料'));
+    // 清除資料:匯入三條路都是「附加」,沒有一鍵歸零的入口;匯入錯一次就得手動刪十幾個資料夾。
     body.appendChild(el('div', 'pmz-hint', '想留底請先按上面的「匯出備份」。搜尋紀錄與設定不受影響。'));
     const clearBtn = el('button', 'pmz-secondary pmz-danger', `清除所有書籤(${M.countBookmarks(state.data.folders)})`);
     clearBtn.disabled = !state.data.folders.length;
@@ -1908,27 +2111,15 @@
       body.appendChild(el('div', state.dataMsg.ok ? 'pmz-ok' : 'pmz-error', state.dataMsg.text));
     }
 
-    body.appendChild(el('div', 'pmz-credit', '資料來源:GGG 官方 API、poe.ninja、cswzhang/Poe-trade-zh (Apache-2.0)、OpenCC (Apache-2.0)、poewiki.net'));
-
-    // 低調的外部連結:與「資料來源」同一級的小字,刻意不做成按鈕
-    const links = el('div', 'pmz-links');
-    for (const [label, href] of [
-      ['請我喝杯咖啡', 'https://buymeacoffee.com/hsiung'],
-      ['Discord 社群', 'https://discord.gg/6VamPQb8nC'],
-    ]) {
-      const a = el('a', 'pmz-link', `${label} ↗`);
-      a.href = href;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer'; // 開新分頁一律帶,不讓對方拿到 window.opener
-      links.appendChild(a);
-    }
-    body.appendChild(links);
+    // 頁尾只留資料來源;贊助 / Discord 連結已搬到 rail 上(2026-09-08)
+    body.appendChild(el('div', 'pmz-credit', '資料來源:GGG 官方 API 與遊戲檔、poe.ninja、poewiki.net'));
   }
 
   function render() {
     panel.querySelectorAll('.pmz-tab').forEach((t) => {
       t.classList.toggle('pmz-tab-active', t.dataset.tab === state.tab);
     });
+    updateRail(); // 面板內切分頁時 rail 的高亮也要跟著走
     const body = panel.querySelector('.pmz-body');
     body.textContent = '';
     if (state.tab === 'bookmarks') renderBookmarks(body);
@@ -2011,6 +2202,12 @@
     }
 
     buildShell();
+    // 面板一開始就是開的話,官網內容也要先讓開;document_end 時官網的 .content
+    // 可能還沒渲染(Vue 掛載晚於 DOM 解析),仿 PTE 在 window load 再套一次。
+    if (state.open) applyPageSqueeze();
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', () => applyPageSqueeze(), { once: true });
+    }
     rememberLeague();
     adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去
     scheduleHistory();

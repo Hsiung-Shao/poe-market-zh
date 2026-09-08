@@ -245,7 +245,7 @@ const __ = (() => {
     const isPoe2 = /^\/trade2(\/|$)/.test(location.pathname)
       || /^\/trade\/[^/]+\/poe2(\/|$)/.test(location.pathname);
     const base = isPoe2 ? { ...dict, ...poe2Overrides } : dict;
-    // 主字典(background 建置時整合的內建繁中字典 + 社群遞補,
+    // 主字典(background 建置時整合的內建繁中字典,
     // 由 bootstrap.js 同步到 localStorage);實站驗證過的主字典優先,
     // 上方自寫字典僅填其缺口
     const extra = JSON.parse(localStorage.getItem(isPoe2 ? 'ptm-ui-extra2' : 'ptm-ui-extra') ?? '{}');

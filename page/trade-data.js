@@ -53,10 +53,17 @@
   // ⚠ 刻意**不 parse**:stats 那份光是 PoE1 就 2.4 MB,parse 再 stringify 是
   //   純浪費,而且發生在開頁的關鍵路徑上。存進去的是端點回應的 `result` 陣列,
   //   外面補一層 `{"result": …}` 就是官網要的形狀,字串拼接即可。
+  // 端點名 → 官網 lscache 鍵的後綴。四份裡只有 static 不同名:官網把
+  // `/data/static` 的回應存成 `lscache-tradedata`(content/bootstrap.js 的
+  // PMZ_TABLE.lscache 寫的就是這個)。2026-09-08 之前這裡直接拿 kind 組鍵,
+  // static 讀的是根本沒人寫的 `lscache-tradestatic` → 通貨下拉自 329.5.1 起
+  // 一直是英文,而離線驗證的 fixture 用了同樣錯的鍵名所以沒抓到。
+  const LS_SUFFIX = { items: 'items', stats: 'stats', static: 'data', filters: 'filters' };
+
   function localizedBody(base, kind) {
     let raw;
     try {
-      raw = localStorage.getItem(`lscache-${base}${kind}`);
+      raw = localStorage.getItem(`lscache-${base}${LS_SUFFIX[kind]}`);
     } catch (_) {
       return null; // 隱私模式等情境讀不到 localStorage
     }

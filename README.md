@@ -7,7 +7,7 @@ Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)�
   書籤與歷史最上方有 PoE1 / PoE2 分頁,開哪一款就自動切到哪一邊。
   PoE2 目前**不含** PoB code 匯入(沒有現成的詞綴對照表)與物價(poe.ninja 端點是 PoE1 專用)
 - **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯
-- **書籤**:側邊欄以**兩層資料夾**收藏常用搜尋,**整塊點下去就是搜尋、按住 0.35 秒才是拖曳**(拖到別的資料夾上變成它的子、拖到上下緣則是同層排序);標題列內聯改名、釘選;可從 **PoE Trade Extension 的匯出碼**與 **Path of Building code** 匯入;書籤存的是與聯盟無關的搜尋編號,**換季後照樣打得開**;設定分頁可**一鍵清除所有書籤**(會先確認,搜尋紀錄與設定不受影響)
+- **書籤**:側邊欄以**兩層資料夾**收藏常用搜尋,**整塊點下去就是搜尋、按住 0.35 秒才是拖曳**(拖到別的資料夾上變成它的子、拖到上下緣則是同層排序);標題列內聯改名、釘選;可從 **PoE Trade Extension 的匯出碼**、**Better PathOfExile Trading 的備份檔**與 **Path of Building code** 匯入;書籤存的是與聯盟無關的搜尋編號,**換季後照樣打得開**;設定分頁可**一鍵清除所有書籤**(會先確認,搜尋紀錄與設定不受影響)
 - **PoB 匯入**:貼一份 PoB code,自動照部位建資料夾(武器/防具/飾品/珠寶/藥水),每件裝備一個交易搜尋 —— 傳奇用「傳奇名 + 基底」、稀有用「基底 + 全部詞綴」,等於把 poe.ninja 上看到的流派整套存成書籤
 - **歷史**:開過的搜尋自動記在「歷史」分頁(**只記搜尋框有填東西的**,同一個搜尋重複進去只更新時間,上限 20 筆),可一鍵加進任一資料夾
 - **物價**:側邊欄「物價」分頁快查 poe.ninja 經濟 API,分類抽屜呈現、中英即打即搜、15 分鐘快取(**選用功能**,需自行開啟,見下)
@@ -44,6 +44,10 @@ background 直接做。未授權時物價分頁只顯示指引,不會發出任�
 只留兩區共 23 個:**職業(昇華)19 個** + **常用 4 個**(混沌石、神聖石、Nightmare Map、
 Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.json`(完整版
 196 個)產生,指定的圖示找不到就直接失敗,不會靜靜少一個。
+
+### 從 Better PathOfExile Trading 匯入書籤
+
+設定分頁「選擇備份 / 書籤檔…」直接選它的「匯出備份」文字檔(.txt)即可,會先攤開內容再選要加入哪一款;把單一資料夾的匯出碼貼進 PoE Trade Extension 那個框也會自動辨認。它的書籤沒有聯盟,開啟時用當前聯盟;封存段的資料夾會加「(封存)」並收合;圖示:PoE2 的 35 張(通貨與昇華職業)原樣對上,PoE1 只對得到通貨,其餘用預設。
 
 ### 從 PoE Trade Extension 匯入書籤
 
@@ -113,7 +117,7 @@ PoE1 `3.29`→329、`3.30`→330、`4.0`→400;PoE2 仍在搶先體驗,取玩家
 
 ```
 manifest.json
-background.js            SW 入口:translation / ninja / perm 訊息路由、每日重建 alarm(無狀態)
+background.js            SW 入口:translation / ninja / perm 訊息路由(無狀態)
 bg/translation.js        抓官方雙服 API → 依 id 對接 → 產出中文化資料 + statMap/itemMap
 bg/ninja.js              poe.ninja 匯率代理(storage.session TTL 15min)
 content/  (isolated world)
@@ -126,7 +130,7 @@ page/  (MAIN world)
   ui-strings.js          document_start:全域 __ UI 字典(純中文直接替換/純英)
   stat-search.js         下拉多關鍵字 + 模糊比對
 popup/                   語言切換、側邊欄開關、清除快取、物價授權(?ask=ninja)
-data/                    內建字典(見下)+ s2t.json 簡→繁字表 + icons.json 書籤圖示
+data/                    內建字典(見下)+ icons.json 書籤圖示
 tools/                   開發用:gen-ggpk-data(ggpk 離線層)、verify-*(驗證腳本)
 icons/                   16/32/48/128
 ```
@@ -153,10 +157,10 @@ icons/                   16/32/48/128
 
 ## 資料來源與智財
 
-翻譯建置分兩階段(安裝/套用中文化時觸發,之後每 24 小時自動重建;開交易頁時若快照逾 6 小時亦背景重建 — 賽季開版官方新增物品時,舊快照會讓新物品從官網下拉消失,連英文都搜不到),與完整版一致:
+翻譯建置分兩階段(安裝/套用中文化時觸發;之後開交易頁時若快照逾 6 小時就背景重建 — 賽季開版官方新增物品時,舊快照會讓新物品從官網下拉消失,連英文都搜不到。沒有每日排程,不開網站就不更新):
 
-- **第一階段:內建字典(不需網路、必定成功)** —— `data/` 內 translate.json(物品名)、translate.zh_TW.json(UI 字串)、clusterJewel.json / passivesNotable.json(天賦卡),源自 POE Trade zh;另有 ggpk.json 離線層(解析本機 `Content.ggpk` 的官方繁中,由 `tools/gen-ggpk-data.mjs` 產生,檔案不存在時自動略過)。
-- **第二階段:官方 API + 社群遞補(best-effort,失敗只降級)** —— 美服 + 台服 `api/trade/data/*` 依官方 id 對接;[cswzhang/Poe-trade-zh](https://github.com/cswzhang/Poe-trade-zh)(Apache-2.0)經 OpenCC 字表(`data/s2t.json`)簡轉繁填缺口。
+- **第一階段:內建字典(不需網路、必定成功)** —— `data/` 內 translate.zh_TW.json(UI 字串)、clusterJewel.json / passivesNotable.json(天賦卡),源自 POE Trade zh;ggpk.json(解析本機 `Content.ggpk` 的官方繁中,由 `tools/gen-ggpk-data.mjs` 產生)負責詞綴種子、物品名與詞綴群組名,其中 `legacyItems` 區塊是原 translate.json(POE Trade zh)裡遊戲檔沒有的物品名(傳奇+基底組合名、贗品、野獸名),獨立區塊以保留來源標記。PoE2 的 ggpk2.json 同形(由 `tools/gen-ggpk2-data.mjs` 產生):statMap **全量收錄不修剪**(結果頁文字與 API 模板不完全相同,修剪會讓部分詞綴顯示英文)、items / uniques 對交易站條目修剪、另帶 `modNames`(詞綴群組名)。
+- **第二階段:官方 API(best-effort,失敗只降級)** —— 美服 + 台服 `api/trade/data/*` 依官方 id 對接,台服沒翻的由遊戲檔字典遞補。2026-09-08 起不再使用社群翻譯字典(單一未驗證來源,官方資料已涵蓋)。
 
 ### 譯名的取捨標準
 
@@ -187,11 +191,11 @@ icons/                   16/32/48/128
 `Dragonbone/Wyrmbone Rapier` 都叫「龍骨細劍」),任何資料源都無法區分,維持原樣;
 英文原文仍在括號內可辨。
 
-**致謝**:POE Trade zh(原作者 Baconrad,翻譯資料與中文化機制設計來源)、cswzhang/Poe-trade-zh(Apache-2.0)、[OpenCC](https://github.com/BYVoid/OpenCC)(Apache-2.0)、[repoe-fork](https://repoe-fork.github.io/)(遊戲資料匯出)、[poedb.tw](https://poedb.tw/tw/)(譯名查證)。
+**致謝**:POE Trade zh(原作者 Baconrad,翻譯資料與中文化機制設計來源)、[repoe-fork](https://repoe-fork.github.io/)(遊戲資料匯出)、[poedb.tw](https://poedb.tw/tw/)(譯名查證)。
 
 ## 授權
 
-本專案程式碼以 [MIT License](LICENSE) 授權。`data/` 目錄內的翻譯資料檔為第三方內容,**不在 MIT 授權範圍**,各依其來源授權:POE Trade zh 內建字典(原作者 Baconrad)、Path of Exile 遊戲文本(Grinding Gear Games 智財)、cswzhang/Poe-trade-zh 與 OpenCC 衍生資料(Apache-2.0)。Path of Exile 為 Grinding Gear Games 的商標;本專案為玩家社群工具,與 GGG 無關。
+本專案程式碼以 [MIT License](LICENSE) 授權。`data/` 目錄內的翻譯資料檔為第三方內容,**不在 MIT 授權範圍**,各依其來源授權:POE Trade zh 內建字典(原作者 Baconrad)、Path of Exile 遊戲文本(Grinding Gear Games 智財)。Path of Exile 為 Grinding Gear Games 的商標;本專案為玩家社群工具,與 GGG 無關。
 
 ## 開發驗證
 
@@ -207,9 +211,8 @@ node tools/verify-remote-dict.mjs    # 遠端字典三層降級(74 項,全離線
 node tools/verify-bookmarks.mjs      # 書籤格式、Extension 匯出碼解析、聯盟與網址組法
 node tools/verify-sidebar.mjs        # 側邊欄安裝面:manifest、權限模式、前綴、dbg 衝突
 node tools/verify-pob-import.mjs     # PoB code 解碼、部位分類、詞綴 → 官方代碼命中率
-python tools/gen-beast-names.py      # 野獸譯名盤點(加 --write 才寫入 data/translate.json)
+python tools/gen-beast-names.py      # 野獸譯名盤點(加 --write 才寫入 tools/translate-legacy.json,再重跑 gen-ggpk-data)
 node tools/verify-build.mjs          # 官方 API 對接與翻譯產出(需網路)
-node tools/verify-fallback.mjs       # 社群遞補層與 s2t 轉換(需網路)
 ```
 
 `verify-bookmarks.mjs` 另接 `--real <檔>`,可拿真實的 PoE Trade Extension 匯出碼跑一次
@@ -227,3 +230,7 @@ node tools/verify-fallback.mjs       # 社群遞補層與 s2t 轉換(需網路)
 問題回報與建議請開 [Issue](https://github.com/Hsiung-Shao/poe-market-zh/issues),或到 [Discord 社群](https://discord.gg/6VamPQb8nC) 聊聊。
 
 (擴充內的側邊欄 ⚙ 設定分頁最下方也有這兩個連結。)
+
+## 圖示來源
+
+`icons/folder/poe2-*.png`(35 張 PoE2 通貨與昇華職業圖示)取自 [Better PathOfExile Trading](https://github.com/exile-center/better-trading)(MIT);圖像本身為 Grinding Gear Games 所有,依 fan content 慣例使用。名稱依本機 PoE2 遊戲檔的官方繁中(`Witchhunter`=女巫獵人 等),`符文`/`精髓` 兩個類別名以物品名中的共同字尾為準。

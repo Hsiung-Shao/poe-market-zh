@@ -103,7 +103,9 @@ const UI_EXTRA_KEY = PMZ_GAME.page.uiExtra;
 const LEGACY_PAGE_KEYS = ['ptm-stat-groups', 'ptm-grouping-ready', 'ptm2-ui-extra'];
 // 翻譯快照逾時門檻:開交易頁時資料舊於此即觸發背景重建(本頁先用現有資料,
 // 下次重新整理生效)。賽季開版官方 items 會加新物品,舊快照會讓新物品從官網
-// 下拉消失(連英文都搜不到),不能只靠每日 alarm。
+// 下拉消失(連英文都搜不到)。
+// ⚠ 這是**唯一**的更新觸發點(2026-09-08 起沒有每日 alarm):攔截 fetch 餵給官網的
+//   是我們的快照,快照新不新全靠這裡。改門檻前先想清楚。
 const STALE_MS = 6 * 60 * 60 * 1000;
 // 「這款遊戲的交易站被實際開過」一天最多記一次,避免每次開頁都動 storage。
 const SEEN_REFRESH_MS = 24 * 60 * 60 * 1000;

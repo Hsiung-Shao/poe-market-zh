@@ -23,7 +23,7 @@
 本擴充僅為**取得公開資料**發出網路請求,對象限於:
 
 - `pathofexile.com` / `pathofexile.tw`:Grinding Gear Games 官方公開 trade data API(取得英文與繁體中文的介面資料)
-- `raw.githubusercontent.com`:開源社群翻譯字典(Apache-2.0 授權)與本擴充線上更新的翻譯資料
+- `raw.githubusercontent.com`:本擴充線上更新的翻譯資料(本專案自己的 dict 分支)
 - `poe.ninja`:**選用功能**。僅在使用者明確授權並開啟側邊欄的「物價查詢」後,讀取其公開的通貨價格資料;未授權時完全不會對其發出任何請求。價格資料來源於畫面上另有標示。
 
 上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
@@ -57,7 +57,7 @@ Bookmarks and search history can be cleared from the sidebar at any time, or exp
 The Extension makes network requests solely to **fetch publicly available data** from:
 
 - `pathofexile.com` / `pathofexile.tw` — official public trade data APIs by Grinding Gear Games
-- `raw.githubusercontent.com` — open-source community translation dictionaries (Apache-2.0) and the Extension's own online translation updates
+- `raw.githubusercontent.com` — the Extension's own online translation updates (this project's dict branch)
 - `poe.ninja` — **optional**. Requested only after the user explicitly grants permission and enables the sidebar's price lookup; with no permission granted, no request is ever made to it. The price data source is also credited in the UI.
 
 These requests carry no user-identifying information and use no cookies.

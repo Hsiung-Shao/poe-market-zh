@@ -56,12 +56,6 @@ export const GAMES = {
     api: { us: `${API_ORIGIN}/api/trade/data/`, tw: `${TW_ORIGIN}/api/trade/data/` },
     snapshot: { us: 'api-us.json', tw: 'api-tw.json' },
     store: STORE_KEYS.poe1,
-    // 遞補層:cswzhang/Poe-trade-zh(Apache-2.0,**簡體**,經 s2t 轉繁)
-    community: {
-      items: 'https://raw.githubusercontent.com/cswzhang/Poe-trade-zh/master/json/item.json',
-      ui: 'https://raw.githubusercontent.com/cswzhang/Poe-trade-zh/master/json/interface.json',
-    },
-    communityNeedsS2t: true, // 沒有 s2t 就整層停用,否則簡體字會直接進字典
     ggpkDict: 'ggpk.json',
     passives: true, // 天賦卡(星團珠寶/塗油)只有 PoE1 有
     // 台服已有 97.4% 的 stat id,開跨群橋接只多 357 條卻會動到已驗證的行為,
@@ -74,13 +68,6 @@ export const GAMES = {
     api: { us: `${API_ORIGIN}/api/trade2/data/`, tw: `${TW_ORIGIN}/api/trade2/data/` },
     snapshot: { us: 'api2-us.json', tw: 'api2-tw.json' },
     store: STORE_KEYS.poe2,
-    // 遞補層:cswzhang/POE2-Trade-zh_tw(Apache-2.0,**本來就是繁中**)。
-    // ⚠ 有明顯錯譯(`Class`→「角色」、`Points`→「黯幣」),只當最後一層。
-    community: {
-      items: 'https://raw.githubusercontent.com/cswzhang/POE2-Trade-zh_tw/master/json/items2.json',
-      ui: 'https://raw.githubusercontent.com/cswzhang/POE2-Trade-zh_tw/master/json/interface2.json',
-    },
-    communityNeedsS2t: false, // 已是繁中,s2t 只是順手修掉夾雜簡體的防衛層
     ggpkDict: 'ggpk2.json',
     passives: false,
     // 台服 trade2 只有 71.6% 的 stat id 有譯文,缺口幾乎全在 crafted/fractured,

@@ -1,6 +1,6 @@
 // 翻譯字典的三層來源:遠端 → chrome.storage.local 快取 → 擴充內建 data/*.json。
 //
-// 為什麼要遠端:六個字典本來完全鎖在擴充包裡,改一個譯名就得重發一版擴充、
+// 為什麼要遠端:內建字典本來完全鎖在擴充包裡,改一個譯名就得重發一版擴充、
 // 等商店審核。遠端化之後譯名可以獨立更新,內建那份退居**最後一道後路**。
 //
 // 遠端佈局是本 repo 的 **`dict` 孤兒分支**,經 raw.githubusercontent.com 取用,
@@ -29,11 +29,10 @@ const INDEX_NAME = 'dict-index.json';
 // 字典檔名(順序即 popup 顯示順序)。tools/gen-dict-index.mjs 產生索引時
 // 用的是同一份清單,兩邊要一起改。
 export const DICT_FILES = [
-  'translate.json',
+  // translate.json 已於 2026-09-08 併入 ggpk.json 的 legacyItems 區塊,不再是獨立檔
   'translate.zh_TW.json',
   'clusterJewel.json',
   'passivesNotable.json',
-  's2t.json',
   'ggpk.json',
   // PoE2 的遊戲檔字典(詞綴種子 + 物品錨定 + 傳奇名),由 tools/gen-ggpk2-data.mjs
   // 從 PoE2 GGPK 的 `data/balance/traditional chinese/` 產生。與 ggpk.json 同形,
@@ -74,10 +73,10 @@ const EXT_VERSION = (() => {
 //   (3.39 MB 是舊檔,新的是 3.62 MB)。
 //   遠端索引宣告的 `version` 大於這個值時才代表「遠端真的比較新」。
 //   推新字典到 dict 分支時,索引的 version 要一併調高才會被採用。
-const BUNDLED_DICT_VERSION = 3;
+const BUNDLED_DICT_VERSION = 6;
 const INDEX_KEY = 'dictIndex'; // 最後一次成功取得的遠端索引(診斷用)
 const STATUS_KEY = 'dictStatus'; // 給 popup 顯示「這份字典是哪來的」
-// 索引宣告的大小若超過這個值就不下載 —— 六個字典最大的 ggpk.json 是 3.5MB,
+// 索引宣告的大小若超過這個值就不下載 —— 四個字典最大的 ggpk.json 約 3.9MB,
 // 32MB 是「遠端顯然壞掉」的分界,不是效能調校。
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -115,8 +114,8 @@ function decodeText(buf) {
 //     release asset(CDN)   → `application/octet-stream`   ← 曾評估過的來源
 // ⚠ 最後這點是 08-09 那輪沒測出來的:當時以為 octet-stream 只會出現在 release asset,
 // 所以「順便接受它」像是多餘的相容性。實際上**現行來源自己就會回 octet-stream** ——
-// raw 依檔案大小決定,只接受 text/plain 的話 ggpk.json(六個字典裡最大、詞綴全靠它)
-// 會被判失敗而靜默退回內建,其餘五個檔卻正常,是最難察覺的那種半壞。
+// raw 依檔案大小決定,只接受 text/plain 的話 ggpk.json(四個字典裡最大、詞綴與物品名全靠它)
+// 會被判失敗而靜默退回內建,其餘三個檔卻正常,是最難察覺的那種半壞。
 // 硬性要求 json 會把正常的遠端全部判成失敗,而三層降級會安靜地退回內建,
 // 表面上完全看不出遠端從來沒被用過。
 // 判準因此是「**明確是 HTML 就失敗**」+「**內容形狀必須像 JSON**」,並把 body
@@ -155,7 +154,7 @@ async function fetchRemote(name, timeoutMs, init = {}) {
 }
 
 // ── 遠端索引 ──
-// { version: 12, generatedAt: "...", files: { "translate.json": { sha256, size }, … } }
+// { version: 12, generatedAt: "...", files: { "ggpk.json": { sha256, size }, … } }
 async function getIndex() {
   const s = ensureSession();
   if (s.indexPromise) return s.indexPromise;

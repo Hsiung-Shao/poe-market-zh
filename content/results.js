@@ -143,6 +143,62 @@
     return { en: enTpl, zh: zhTpl };
   }
 
+  // ── 寬鬆比對(2026-09-08):官方 API 的模板與遊戲實際印出來的字有三種固定差異 ──
+  //   1. 空白:模板「Adds Ritual Altars to a Map \n# use remaining」換行前多一個空白,
+  //      畫面沒有(modText 逐行 trim 過)。模板每行也 trim,空白一律當 \s+。
+  //   2. 單複數:模板寫 # 後面的計數名詞單數(# use / # second / # Charge),畫面依數值
+  //      印 uses / seconds / Charges。只放寬**緊接在 # 後面那個詞**,其餘一字不差。
+  //   3. 括號尾綴:模板「#% increased Gold found in Map (Gold Piles)」的括號是交易站
+  //      的消歧義註記,畫面只印前半;中文模板的「（金幣堆）」同樣要拿掉。先試原樣,
+  //      原樣比不中才剝尾綴(與 (Local) 同一套處理,見 lookupById)。
+  //   這三種都是**同一條模板的形態變化**,不是拿相似句子猜翻譯;數值仍由模板界定。
+  const TAIL_PAREN_EN = /\s*\([^()]*\)\s*$/;
+  const TAIL_PAREN_ZH = /\s*[(（][^()（）]*[)）]\s*$/;
+  const lineTrim = (s) => String(s ?? '').split('\n').map((l) => l.trim()).join('\n');
+
+  // # 後面緊接的那個英文詞:允許 word / words / wordes 三態(模板本身是哪一態都行)
+  function pluralAlternatives(word) {
+    const forms = new Set([word]);
+    if (/s$/i.test(word)) {
+      forms.add(word.replace(/s$/i, ''));
+      if (/es$/i.test(word)) forms.add(word.replace(/es$/i, ''));
+    } else {
+      forms.add(`${word}s`);
+      forms.add(`${word}es`);
+    }
+    return [...forms];
+  }
+
+  function buildPattern(enTpl) {
+    // 先切成「# / 其他」兩種片段,對非 # 片段轉義,# 變捕獲群組
+    const parts = lineTrim(enTpl).split('#');
+    let out = '';
+    for (let i = 0; i < parts.length; i++) {
+      let seg = parts[i].replace(REGEX_ESCAPE, '\\$&');
+      // 緊接在 # 後面的第一個英文詞放寬單複數(只有 i > 0 的片段才在 # 後面)
+      if (i > 0) {
+        seg = seg.replace(/^(\s+)([A-Za-z]+)\b/, (_m, sp, word) =>
+          `${sp}(?:${pluralAlternatives(word).map((w) => w.replace(REGEX_ESCAPE, '\\$&')).join('|')})`);
+      }
+      // 空白一律 \s+;換行兩側允許空白
+      seg = seg.replace(/\n/g, '\\s*\\n\\s*').replace(/ +/g, '\\s+');
+      out += (i > 0 ? '(\\S+)' : '') + seg;
+    }
+    return out;
+  }
+
+  function renderWith(text, en, zh) {
+    let m;
+    try {
+      m = new RegExp(`^${buildPattern(en)}$`).exec(text);
+    } catch (_) {
+      return null; // 模板轉不成合法正則就放棄,交給後備路徑
+    }
+    if (!m) return null;
+    let i = 1;
+    return zh.replace(/#/g, () => m[i++] ?? '#');
+  }
+
   // 用美服模板當擷取正則:轉義正則特殊字元後,把 # 換成捕獲群組。
   // 比「數值→#」穩健 —— 正負號與字面數字(如 per 100 maximum Mana 的
   // 100)都由模板自己界定,不會被誤當成待填的數值。
@@ -150,16 +206,13 @@
   function renderStat(text, enTpl, zhTpl) {
     const sym = applySymmetry(text, enTpl, zhTpl);
     if (!sym) return null;
-    const pattern = sym.en.replace(REGEX_ESCAPE, '\\$&').replace(/#/g, '(\\S+)');
-    let m;
-    try {
-      m = new RegExp(`^${pattern}$`).exec(text);
-    } catch (_) {
-      return null; // 模板轉不成合法正則就放棄,交給後備路徑
+    const direct = renderWith(text, sym.en, sym.zh);
+    if (direct) return direct;
+    // 括號尾綴:英文模板有、畫面沒有 → 兩邊一起剝掉再比(中文沒有對應括號就不剝)
+    if (TAIL_PAREN_EN.test(sym.en) && !TAIL_PAREN_EN.test(text) && TAIL_PAREN_ZH.test(sym.zh)) {
+      return renderWith(text, sym.en.replace(TAIL_PAREN_EN, ''), sym.zh.replace(TAIL_PAREN_ZH, ''));
     }
-    if (!m) return null;
-    let i = 1;
-    return sym.zh.replace(/#/g, () => m[i++] ?? '#');
+    return null;
   }
 
   function lookupById(mod, text) {
@@ -206,6 +259,13 @@
     const signedKey = text.replace(SIGNED_NUM_RE, '#');
     tpl = state.statMap[signedKey] ?? state.statMap[`${signedKey} (Local)`];
     if (tpl) return { tpl, numRe: SIGNED_NUM_RE };
+    // 多行模板的鍵可能帶「換行前空白」(字典側 bg/translation.js 建置時已補 lineTrim 別名,
+    // 這裡再從畫面側試一次:畫面文字 trim 過,鍵可能沒有)
+    if (key.includes('\n')) {
+      const t = lineTrim(key);
+      tpl = state.statMap[t] ?? state.statMap[`${t} (Local)`];
+      if (tpl) return { tpl: lineTrim(tpl), numRe: NUM_RE };
+    }
     return null;
   }
 

@@ -601,7 +601,6 @@
     return `${base}/${encodeURIComponent(String(bookmark?.searchId ?? ''))}`;
   }
 
-
   // 開啟書籤之後,官網把網址換成正式編號的那一刻,要對這筆書籤做什麼?
   //
   // 抽成純函式的理由:這是**會改寫使用者資料**的判斷(舊編號一蓋掉就回不去),
@@ -716,6 +715,164 @@
       .replace(/\//g, '_')
       .replace(/=/g, '');
   }
+  // ── Better PathOfExile Trading(fhlinfpmdlijegjlpgedcmglkakaghnk,1.9.2)的備份 / 資料夾匯出碼 ──
+  // 格式從該擴充原始碼 services/bookmarks/{export,backup} 逐字確認(2026-09-08):
+  //   備份檔 = active 資料夾各一行 + "\n--------------------\n" + archived 資料夾各一行(可空)
+  //   資料夾字串:v3 "3:" + base64(UTF-8 JSON);v2 "2:" + base64;v1 無前綴、btoa(Latin1)
+  //   JSON { icn: 圖示 slug, tit: 資料夾名, ver: '1'|'2'(v3 才有), trs: [{ tit, loc }] }
+  //   loc:v3 "version:type:slug";v1/v2 "type:slug"(version 取資料夾 ver,缺省 '1')
+  //   version '1' = PoE1、'2' = PoE2(它組網址時 trade2);type = search / exchange;
+  //   slug = 官方搜尋碼(舊短碼或新 gzip 碼,與官網網址那一段一致)。**沒有聯盟、沒有 realm**。
+  // 對到本擴充:league null(Auto)、realm ''、poeVersion 由 version 決定。
+  const BT_SECTION = '--------------------';
+  const BT_LINE_RE = /^(?:[23]:)?[A-Za-z0-9+/=]+$/;
+  // 它的圖示 slug → data/icons.json 的英文鍵(iconIndex 的鍵)。PoE2 那 35 張圖直接取自
+  // Better Trading(MIT,github.com/exile-center/better-trading)放在 icons/folder/,
+  // icons.json 的 PoE2 分區以「中文 (PoE2 · English)」命名,鍵就是「PoE2 · English」。
+  // PoE1 的 exalt / mirror / essence / 職業等本擴充沒有對應圖,落預設並列在 unknownIcons,不猜。
+  const BT_ICON_MAP = {
+    chaos: 'Chaos Orb', divine: 'Divine Orb', map: 'Map (Tier 16)',
+    'poe2-acolyte-of-chayula': 'PoE2 · Acolyte of Chayula', 'poe2-amazon': 'PoE2 · Amazon',
+    'poe2-blood-mage': 'PoE2 · Blood Mage', 'poe2-chronomancer': 'PoE2 · Chronomancer',
+    'poe2-deadeye': 'PoE2 · Deadeye', 'poe2-gemling-legionnaire': 'PoE2 · Gemling Legionnaire',
+    'poe2-infernalist': 'PoE2 · Infernalist', 'poe2-invoker': 'PoE2 · Invoker', 'poe2-lich': 'PoE2 · Lich',
+    'poe2-pathfinder': 'PoE2 · Pathfinder', 'poe2-ritualist': 'PoE2 · Ritualist',
+    'poe2-smith-of-kitava': 'PoE2 · Smith of Kitava', 'poe2-stormweaver': 'PoE2 · Stormweaver',
+    'poe2-tactician': 'PoE2 · Tactician', 'poe2-titan': 'PoE2 · Titan', 'poe2-warbringer': 'PoE2 · Warbringer',
+    'poe2-witch-hunter': 'PoE2 · Witchhunter',
+    'poe2-alchemy': 'PoE2 · Orb of Alchemy', 'poe2-annul': 'PoE2 · Orb of Annulment',
+    'poe2-artificer': "PoE2 · Artificer's Orb", 'poe2-augment': 'PoE2 · Orb of Augmentation',
+    'poe2-chance': 'PoE2 · Orb of Chance', 'poe2-chaos': 'PoE2 · Chaos Orb', 'poe2-divine': 'PoE2 · Divine Orb',
+    'poe2-essence': 'PoE2 · Essence', 'poe2-exalt': 'PoE2 · Exalted Orb', 'poe2-gemcutter': "PoE2 · Gemcutter's Prism",
+    'poe2-glassblower': "PoE2 · Glassblower's Bauble", 'poe2-mirror': 'PoE2 · Mirror of Kalandra',
+    'poe2-regal': 'PoE2 · Regal Orb', 'poe2-rune': 'PoE2 · Rune', 'poe2-transmute': 'PoE2 · Orb of Transmutation',
+    'poe2-vaal': 'PoE2 · Vaal Orb', 'poe2-waystone': 'PoE2 · Waystone', 'poe2-wisdom': 'PoE2 · Scroll of Wisdom',
+  };
+
+  // ⚠ 不走 mapExtensionIcon:它把「非純英數」的名稱原樣當成 emoji 圖示回傳,
+  //   而 BT 的 slug 帶連字號(poe2-ritualist)、對照後的鍵帶空白(Chaos Orb),
+  //   都會被原樣塞進 icon 欄位變成一串文字。這裡只認 iconIndex 查得到的圖檔位址。
+  function mapBetterTradingIcon(slug, iconIndex) {
+    const s = String(slug ?? '').trim().toLowerCase();
+    if (!s) return null;
+    const key = BT_ICON_MAP[s] ?? (/^[a-z]+$/.test(s) ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+    const url = iconIndex?.get?.(key);
+    return typeof url === 'string' && url ? url : null;
+  }
+
+  function decodeBetterTradingFolder(line) {
+    const text = String(line ?? '').trim();
+    const m = /^([23]):(.*)$/.exec(text);
+    const version = m ? Number(m[1]) : 1;
+    const body = m ? m[2] : text;
+    let json;
+    try {
+      json = decodeBase64Utf8(body);
+    } catch (err) {
+      if (version !== 1 || typeof root.atob !== 'function') throw err;
+      json = root.atob(body.replace(/\s+/g, '')); // v1 是 btoa(Latin1)
+    }
+    let data;
+    try {
+      data = JSON.parse(json);
+    } catch (_) {
+      throw new Error('不是 Better PathOfExile Trading 的資料夾匯出碼(內容不是 JSON)');
+    }
+    if (!data || typeof data !== 'object' || !Array.isArray(data.trs)) {
+      throw new Error('不是 Better PathOfExile Trading 的資料夾匯出碼(沒有 trs)');
+    }
+    return { version, data };
+  }
+
+  // 只看形狀不看內容:任一非空行是「可選 2:/3: 前綴 + base64」且解得出帶 trs 的 JSON。
+  function looksLikeBetterTrading(text) {
+    const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return false;
+    const cand = lines.find((l) => l !== BT_SECTION && BT_LINE_RE.test(l));
+    if (!cand) return false;
+    try {
+      decodeBetterTradingFolder(cand);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function betterTradingFolderToRaw({ version, data }, archived, iconIndex, report) {
+    const folderVer = String(data.ver ?? '1');
+    const bookmarks = [];
+    for (const t of data.trs) {
+      const loc = String(t?.loc ?? '');
+      const parts = loc.split(':');
+      let ver, type, slug;
+      if (version >= 3 && parts.length >= 3) [ver, type, slug] = [parts[0], parts[1], parts.slice(2).join(':')];
+      else [ver, type, slug] = [folderVer, parts[0], parts.slice(1).join(':')];
+      bookmarks.push({
+        name: String(t?.tit ?? '').trim(),
+        searchId: String(slug ?? '').trim(),
+        league: null,
+        realm: '',
+        type: TYPES.has(type) ? type : 'search',
+        poeVersion: String(ver) === '2' ? 'Poe2' : 'Poe1',
+      });
+    }
+    const name = String(data.tit ?? '').trim() || '未命名';
+    const rawIcon = String(data.icn ?? '').trim();
+    const raw = {
+      name: archived ? `${name}(封存)` : name,
+      icon: '',
+      collapsed: archived,
+      bookmarks,
+    };
+    if (rawIcon) {
+      const mapped = mapBetterTradingIcon(rawIcon, iconIndex);
+      if (mapped) raw.icon = mapped;
+      else if (!report.unknownIcons.includes(rawIcon)) report.unknownIcons.push(rawIcon);
+    }
+    return raw;
+  }
+
+  /**
+   * 解析 Better PathOfExile Trading 的整份備份或單一資料夾匯出碼。
+   * 壞掉的行記進 report.badLines 不中止;archived 段的資料夾名加「(封存)」並收合。
+   */
+  function parseBetterTradingBackup(text, opts) {
+    const iconIndex = opts?.iconIndex ?? null;
+    const src = String(text ?? '').replace(/\r\n/g, '\n');
+    if (!src.trim()) throw new Error('沒有內容');
+    const [activePart, ...rest] = src.split(`\n${BT_SECTION}\n`);
+    const archivedPart = rest.join(`\n${BT_SECTION}\n`);
+    const pre = { unknownIcons: [] };
+    const rawFolders = [];
+    const badLines = [];
+    let archivedFolders = 0;
+    const eat = (part, archived) => {
+      part.split('\n').forEach((line, i) => {
+        const l = line.trim();
+        if (!l || l === BT_SECTION) return;
+        try {
+          rawFolders.push(betterTradingFolderToRaw(decodeBetterTradingFolder(l), archived, iconIndex, pre));
+          if (archived) archivedFolders++;
+        } catch (err) {
+          badLines.push({ line: i + 1, archived, error: String(err?.message ?? err) });
+        }
+      });
+    };
+    eat(activePart, false);
+    eat(archivedPart, true);
+    if (!rawFolders.length) {
+      throw new Error(badLines.length
+        ? `這段文字不是 Better PathOfExile Trading 的匯出(${badLines[0].error})`
+        : '這份匯出裡沒有書籤資料');
+    }
+    // 圖示已經在上面對照成圖檔位址(或留空),importFolders 對空字串不再處理
+    const { folders, report } = importFolders(rawFolders, { iconIndex });
+    report.unknownIcons = [...new Set([...pre.unknownIcons, ...report.unknownIcons])];
+    report.archivedFolders = archivedFolders;
+    report.badLines = badLines;
+    return { folders, report };
+  }
+
   const api = {
     VERSION,
     DEFAULT_ICON,
@@ -736,6 +893,8 @@
     folderTotal,
     importFolders,
     parseExtensionCode,
+    parseBetterTradingBackup,
+    looksLikeBetterTrading,
     parseBookmarkFile,
     parseBackupFile,
     makeBackup,

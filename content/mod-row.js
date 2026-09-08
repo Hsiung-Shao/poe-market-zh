@@ -24,8 +24,8 @@
   const GAME =
     globalThis.PMZ_GAME ??
     (/^\/trade2(\/|$)/.test(location.pathname) ? { id: 'poe2', label: 'PoE2' } : { id: 'poe1', label: 'PoE1' });
-  // 詞綴群組名字典目前只有 PoE1 有(PoE2 的 ggpk2.json 走另一支管線,沒有 Mods.Name)。
-  // PoE2 拿到的是空表 → 群組名照原樣顯示英文,按鈕不受影響照畫。
+  // 詞綴群組名字典兩款都有(PoE1 ggpk.json / PoE2 ggpk2.json 的 modNames,2026-09-08 起
+  // PoE2 也產出)。拿到空表 → 群組名照原樣顯示英文,按鈕不受影響照畫。
   const K = GAME.id === 'poe2' ? 'modNames2' : 'modNames';
 
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
@@ -227,8 +227,9 @@
       // 字典整個是空的:代表 storage 裡沒有 modNames(擴充更新後尚未重建),
       // 不是「這些詞綴剛好都查不到」。這兩件事的處置完全不同,要講清楚。
       if (stat.nameMiss && !Object.keys(state.modNames ?? {}).length) {
-        console.warn('[PTM] 詞綴群組名字典是空的,群組名全部顯示英文。' +
-          '請在擴充選單按「繁體中文化(ZH_TW)」重建一次翻譯資料。');
+        console.warn(`[PTM/${GAME.label}] 詞綴群組名字典是空的,群組名全部顯示英文。` +
+          '請在擴充選單按「清除快取」再按「繁體中文化(ZH_TW)」重建一次翻譯資料;' +
+          '若重建後仍是空的,代表手上的字典檔沒有這款遊戲的群組名(等遠端字典更新)。');
       }
     }, 500);
   }
