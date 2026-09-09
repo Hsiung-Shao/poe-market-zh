@@ -1,6 +1,6 @@
 # Poe Market Zh
 
-Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)與 PoE2(`pathofexile.com/trade2`)都支援**,依網址自動判斷;另附書籤、歷史與物價。與 poe-trade-mate(內部完整版)擴充 id 不同,可同時載入 Chrome(建議只啟用其中一個,避免互搶官網 lscache 快取;兩者的 CSS class 與設定鍵已分別使用 `pmz-` / `ptm-` 前綴,不會互相覆寫)。
+Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)與 PoE2(`pathofexile.com/trade2`)都支援**,依網址自動判斷;另附書籤、歷史與物價。與 poe-trade-mate(內部完整版)擴充 id 不同,可同時載入(建議只啟用其中一個,避免互搶官網 lscache 快取;兩者的 CSS class 與設定鍵已分別使用 `pmz-` / `ptm-` 前綴,不會互相覆寫)。
 
 - **PoE1 / PoE2 雙站**:同一支擴充依網址判斷(`/trade2/…` 或 `/trade/<聯盟>/poe2/…` 就是 PoE2),
   兩款的翻譯資料、官網 lscache 鍵與聯盟設定**各自獨立**(PoE1 既有的鍵一個都沒動);
@@ -81,7 +81,9 @@ PoB 匯入產生的書籤存的是**查詢條件**而不是搜尋編號,官網�
 官方編號記回書籤(`cachedSearchId`),**下次點就直接開那個編號**,跟一般書籤一樣快。
 換聯盟時自動退回 `?q=` 重建,不會開到上一季的舊搜尋。
 
-技術:Manifest V3 + Vanilla JS,**零建置** —— `chrome://extensions` 開「開發人員模式」→「載入未封裝項目」選本資料夾即可。
+技術:Manifest V3 + Vanilla JS,**零建置**,Chrome 與 Firefox 共用同一份程式碼。
+- Chrome:`chrome://extensions` 開「開發人員模式」→「載入未封裝項目」選本資料夾。
+- Firefox(140+):`about:debugging#/runtime/this-firefox` →「載入暫時附加元件」選本資料夾的 `manifest.json`;正式安裝請從 [Firefox 附加元件站](https://addons.mozilla.org/)(Firefox 不支援 `background.service_worker`,上架的 Firefox 版只在打包時把它換成 `background.scripts`,程式碼一字不差)。
 
 ## 版號規則(雙賽季編碼)
 
