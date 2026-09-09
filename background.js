@@ -53,6 +53,9 @@ function handlePermissionMessage(msg) {
   // ⚠ 側邊欄那端的 sendMessage 必須是點擊處理器裡的第一個非同步動作(前面不能 await),
   //   否則手勢就過期了。手勢真的沒帶到(拋「must be called during a user gesture」)才退回
   //   舊做法:把 popup 開成分頁讓使用者在那裡按。
+  // ⚠ Firefox 不把 onMessage 當使用者輸入處理器,request 在這裡**一定**被拒
+  //   (「may only be called from a user input handler」),所以 Firefox 永遠走下面的
+  //   .catch 開授權頁 —— 這是預期行為,不是 bug,不要為了 Firefox 把 request 拿掉。
   if (msg.t === 'perm:ninja-ask') {
     return chrome.permissions
       .request({ origins: [NINJA_ORIGIN] })

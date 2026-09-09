@@ -246,8 +246,8 @@
     if (state.open && (state.tab === 'bookmarks' || state.tab === 'history')) render();
   }
   // navigation API 有就用它,沒有才退回輪詢。
-  // ⚠ 以前是兩條無條件並行 —— 現代 Chrome 兩條都在跑,每秒醒來一次純粹是白費
-  //   (這支擴充的使用者全都在 Chrome 上,navigation API 一定有)。
+  // ⚠ 以前是兩條無條件並行 —— 現代 Chrome 兩條都在跑,每秒醒來一次純粹是白費。
+  //   輪詢那條不能刪:Firefox 147 才有 navigation API,而 Firefox 版最低支援 140。
   if (globalThis.navigation?.addEventListener) {
     globalThis.navigation.addEventListener('navigatesuccess', onUrlMaybeChanged);
   } else {

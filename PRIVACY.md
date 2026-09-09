@@ -10,7 +10,7 @@
 本擴充**不會將任何使用者資料傳送給開發者或第三方**,包括但不限於:瀏覽紀錄、搜尋內容、帳號資訊、遊戲資料、裝置識別碼。本擴充不含任何分析、追蹤或廣告元件。
 
 ### 本機儲存
-以下資料只存在使用者瀏覽器的本機儲存空間(`chrome.storage.local`),不會離開使用者的裝置:
+以下資料只存在使用者瀏覽器的本機儲存空間(瀏覽器提供給擴充的 storage 區域),不會離開使用者的裝置:
 
 - 翻譯資料(詞綴/物品名對照表)與語言偏好設定
 - 使用者自行建立或匯入的搜尋書籤與資料夾
@@ -44,7 +44,7 @@
 The Extension does **not send any user data to the developer or to third parties**, including but not limited to browsing history, search queries, account information, game data, or device identifiers. It contains no analytics, tracking, or advertising components.
 
 ### Local Storage
-The following data is kept only in the browser's local storage (`chrome.storage.local`) and never leaves the user's device:
+The following data is kept only in the browser's local storage (the browser's extension storage area) and never leaves the user's device:
 
 - Translation data (stat/item mapping tables) and the language preference
 - Search bookmarks and folders the user creates or imports

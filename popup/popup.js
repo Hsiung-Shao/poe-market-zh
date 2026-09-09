@@ -123,7 +123,9 @@ function renderBilingual(on) {
 // ── poe.ninja 選用權限 ──
 // 放進 manifest 的 host_permissions 會讓 Chrome 在擴充更新後停用它、等使用者手動
 // 重新授權(所有現有使用者都會被打斷),所以物價功能改成使用者自己開。
-// chrome.permissions.request 只能從這裡呼叫(需要使用者手勢),content script 不行。
+// chrome.permissions.request 只能從這裡呼叫(需要使用者手勢),content script 不行;
+// Firefox 更嚴:background 的 onMessage 也不算手勢,所以 Firefox 上側邊欄那條路
+// 一律退回開這一頁(?ask=ninja)。
 const NINJA_ORIGIN = 'https://poe.ninja/*';
 
 function renderSidebar(on) {
@@ -139,9 +141,16 @@ $('#sidebarToggle').addEventListener('click', async () => {
   showStatus(`已${next ? '開啟' : '關閉'}側邊欄,重新整理交易頁生效`);
 });
 
+// 目前授權狀態的快取:click handler 要靠它決定「要 request 還是 remove」,
+// 不能在 permissions.request 之前先 await permissions.contains —— Firefox 只承認
+// 使用者輸入處理器裡**第一個**呼叫的手勢,await 過後 request 會被拒
+// (「may only be called from a user input handler」);Chrome 兩種寫法都能跑。
+let ninjaOn = false;
+
 function renderNinja(on) {
-  $('#ninjaToggle').classList.toggle('on', on);
-  $('#ninjaState').textContent = on ? '開' : '關';
+  ninjaOn = on === true;
+  $('#ninjaToggle').classList.toggle('on', ninjaOn);
+  $('#ninjaState').textContent = ninjaOn ? '開' : '關';
 }
 
 // init 裡任何一步丟例外都會讓 popup 停在半成品狀態(語系、字典狀態全都不顯示),
@@ -175,8 +184,8 @@ async function init() {
 }
 
 $('#ninjaToggle').addEventListener('click', async () => {
-  const on = await chrome.permissions.contains({ origins: [NINJA_ORIGIN] });
-  const next = on
+  // ⚠ permissions.request 必須是這個 handler 的第一個呼叫(見 ninjaOn 的說明)
+  const next = ninjaOn
     ? !(await chrome.permissions.remove({ origins: [NINJA_ORIGIN] }))
     : await chrome.permissions.request({ origins: [NINJA_ORIGIN] });
   renderNinja(next);
