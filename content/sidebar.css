@@ -257,6 +257,44 @@
 }
 [data-pmz-drop] { touch-action: pan-y; } /* 長按拖曳時不要被瀏覽器的手勢搶走 */
 
+/* 拖曳把手:每列左側兩排三點。平時低調(與 ghost 圖示同色,對卡片底色約 4.3:1),
+   滑過該列轉金、滑過把手本身再亮一階;touch-action:none 讓觸控從把手按下就能拖 */
+.pmz-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 18px;
+  margin-left: -4px;
+  color: #8a7f68;
+  cursor: grab;
+  touch-action: none;
+}
+.pmz-grip .pmz-svg { width: 14px; height: 14px; stroke-width: 3.5; }
+.pmz-item:hover .pmz-grip, .pmz-folder-head:hover .pmz-grip { color: #c9a66b; }
+.pmz-grip:hover { color: #ffe8b8; }
+
+/* 書籤樹頂部的操作提示(按「知道了」後不再出現) */
+.pmz-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 4px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid #4a3f2f;
+  border-radius: 5px;
+  background: #211b14;
+  color: #a99a7c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* ⚠ 兩個 class 的權重:.pmz-svg 定義在更後面,單一 class 會被它蓋回 14px / 線寬 2 */
+.pmz-tip .pmz-tip-icon { width: 16px; height: 16px; margin-top: 2px; color: #c9a66b; stroke-width: 3.5; flex: none; }
+.pmz-tip-text { flex: 1; min-width: 0; }
+.pmz-tip-title { color: #ffe8b8; font-size: 13px; margin-bottom: 2px; }
+.pmz-tip .pmz-act { flex: none; align-self: center; }
+
 /* 通用列 */
 /* 書籤列:兩行(上=名稱、下=操作鈕)。側邊欄只有 420px,名稱不該和按鈕搶寬度 */
 .pmz-item {

@@ -59,6 +59,8 @@
     league2: '', // PoE2 聯盟
     sidebarSide: 'right',
     sidebarTop: 45, // 開關鈕垂直位置(vh 百分比,可拖曳調整)
+    keepPanelOpen: true, // 常駐維持展開:換頁後照上次的開/關與分頁還原(狀態本身存在 sidebarUi)
+    dragHintDismissed: false, // 書籤分頁頂部「怎麼拖曳」提示條按過「知道了」
     lastLeague: '', // PoE1 最後看到的聯盟,設定為「自動」時當退路
     lastLeague2: '', // PoE2 同上
   };
@@ -583,6 +585,8 @@
     check: 'M20 6 9 17l-5-5',
     star: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z',
     x: 'M18 6 6 18M6 6l12 12',
+    // 拖曳把手:兩排三點(點的粗細由 .pmz-grip 的 stroke-width 決定)
+    grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
   };
 
   function svgIcon(name, extraClass) {
@@ -607,6 +611,16 @@
       onClick();
     });
     return btn;
+  }
+
+  // 拖曳把手:讓人一眼看出「這一列可以拖」。整列本來就能拖,把手是看得見的入口;
+  // 觸控從把手按下去不必長按(見 makeDraggable 的 fromHandle),點把手也不會觸發整列的點擊。
+  // ⚠ 不可加進 INTERACTIVE:那份清單裡的元素連 pointerdown 都會被略過,把手就拖不動了。
+  function gripHandle(title) {
+    const grip = el('span', 'pmz-grip');
+    grip.title = title;
+    grip.appendChild(svgIcon('grip'));
+    return grip;
   }
 
   function actionBtn(label, title, onClick) {
@@ -809,7 +823,9 @@
       if (e.button !== 0 || e.target.closest(INTERACTIVE)) return;
       const startX = e.clientX;
       const startY = e.clientY;
-      const byTouch = e.pointerType === 'touch';
+      // 從把手按下去就是明確要拖(把手是 touch-action:none,不會變成捲動),觸控也不必長按
+      const fromHandle = !!e.target.closest('.pmz-grip');
+      const byTouch = e.pointerType === 'touch' && !fromHandle;
       const beginDrag = () => {
         timer = null;
         // 按下去那一刻若有輸入框失焦,render() 會把這一列換掉;舊節點不在畫面上就不拖
@@ -887,11 +903,12 @@
     });
   }
 
-  // 整塊可點:點在自己有動作的子元素上不算,剛拖完的那一下也不算
+  // 整塊可點:點在自己有動作的子元素上不算,剛拖完的那一下也不算;
+  // 點把手也不算(想拖卻沒拖動就放開,不該打開書籤或收合資料夾)
   function onActivate(node, handler) {
     node.addEventListener('click', (e) => {
       if (Date.now() - dragEndedAt < CLICK_GUARD_MS) return;
-      if (e.target.closest(INTERACTIVE)) return;
+      if (e.target.closest(INTERACTIVE) || e.target.closest('.pmz-grip')) return;
       handler(e);
     });
   }
@@ -1044,6 +1061,7 @@
     onActivate(item, () => openBookmark(bm));
     // 兩行:上面整行給名稱(側邊欄窄,名稱不該和按鈕搶寬度),下面一行放操作鈕
     const nameRow = el('div', 'pmz-item-top');
+    nameRow.appendChild(gripHandle('拖曳調整順序;拖到資料夾標題上可移進該資料夾'));
     if (bm.pinned) nameRow.appendChild(svgIcon('pin', 'pmz-pinned-mark'));
     const name = el('span', 'pmz-item-name', (bm.type === 'exchange' ? '⇄ ' : '') + bm.name);
     name.title = `${bm.searchId ? bm.searchId : '自訂搜尋條件'} / ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'}`;
@@ -1089,6 +1107,7 @@
       const targetId = node.dataset.pmzId;
       if (targetId) dropFolderOn(ctx, targetId, pos);
     }, ['folder'], 'folder');
+    head.appendChild(gripHandle('拖曳調整順序;拖到其他資料夾標題的中間可變成它的子資料夾'));
     head.appendChild(el('span', 'pmz-caret', folder.collapsed ? '▸' : '▾'));
     // 圖示平時只是圖示:點下去跟點標題一樣是展開/收合。要換圖示請按 ✎(見下方)
     const iconWrap = el('span', 'pmz-folder-iconbtn');
@@ -1227,9 +1246,31 @@
       body.appendChild(el('div', 'pmz-empty', `${state.gameTab === 'Poe2' ? 'PoE2' : 'PoE1'} 目前沒有書籤`));
       return;
     }
+    if (state.settings.dragHintDismissed !== true) body.appendChild(buildDragHint());
     for (const entry of M.orderedFolders(shown, { skipCollapsed: true })) {
       renderFolder(entry, cur, body);
     }
+  }
+
+  // 書籤樹頂部的操作提示(2026-09-14 使用者要求「UI 上要有明顯的地方讓使用者知道怎麼調整」)。
+  // 按「知道了」之後不再出現;每一列左側的把手與它的 title 常駐,關掉提示也還看得出能拖。
+  // 只在有資料夾可拖時出現(空狀態有自己的說明)。
+  function buildDragHint() {
+    const tip = el('div', 'pmz-tip');
+    tip.appendChild(svgIcon('grip', 'pmz-tip-icon'));
+    const text = el('div', 'pmz-tip-text');
+    text.appendChild(el('div', 'pmz-tip-title', '拖曳左側把手即可調整順序'));
+    text.appendChild(el('div', null, '書籤拖到資料夾標題上會移進去;資料夾拖到另一個資料夾標題的中間會變成子資料夾'));
+    tip.appendChild(text);
+    const ok = el('button', 'pmz-act', '知道了');
+    ok.type = 'button';
+    ok.addEventListener('click', () => {
+      state.settings.dragHintDismissed = true;
+      persistSettings();
+      render();
+    });
+    tip.appendChild(ok);
+    return tip;
   }
 
   // ── 歷史分頁 ──
@@ -1959,6 +2000,9 @@
         applySide();
         render();
       });
+    // 關掉 = 回到舊行為:每次開頁面板都是收合的。開關本身存 settings(偏好),
+    // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
+    settingToggle(body, 'keepPanelOpen', '常駐維持展開(換頁後不自動收合)');
     settingToggle(body, 'autoInstantBuyout', '開啟頁面自動將狀態設為「即刻購買」 ↻');
 
     // ── 2. 顯示 ──
@@ -2301,10 +2345,12 @@
     }
 
     buildShell();
-    state.tab = restoredTab(savedUi);
+    // 「常駐維持展開」關掉時完全照舊:收合、書籤分頁
+    const keepOpen = state.settings.keepPanelOpen !== false;
+    if (keepOpen) state.tab = restoredTab(savedUi);
     rememberLeague();
     adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去(要在第一次 render 之前)
-    if (savedUi?.open === true) {
+    if (keepOpen && savedUi?.open === true) {
       // 上一頁離開時面板是開的:直接出現在開啟位置,不要每換一頁就滑進來一次。
       // 讀回來的狀態不必再寫回去(save: false),每次開頁都寫一次 storage 是白費。
       panel.classList.add('pmz-no-anim');
