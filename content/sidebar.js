@@ -331,11 +331,31 @@
     applyTop();
   }
 
-  function setOpen(open) {
+  // ── 面板開/關與所在分頁:跨頁面保留 ──
+  // 點書籤、換搜尋都是整頁重載,以前每換一頁面板就收起來(2026-09-14 使用者要求維持)。
+  // ⚠ 不放進 settings:settings 會進備份檔,而且 mod-row.js 監聽 settings 的每一次變動;
+  //   開關面板是很頻繁的動作,另立一個鍵。其他分頁改了**不即時同步**,下次載入才套用
+  //   —— 同時開兩個交易站分頁時,一邊收合不該把另一邊也收起來。
+  const UI_KEY = 'sidebarUi';
+  const PANEL_TABS = IS_POE2
+    ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
+    : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
+
+  function persistUi() {
+    chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab } });
+  }
+
+  // 存下來的狀態可能來自另一款遊戲的頁面(PoE1 的「物價」在 PoE2 沒有)或舊資料,不合法就退回書籤
+  function restoredTab(saved) {
+    return PANEL_TABS.some(([id]) => id === saved?.tab) ? saved.tab : 'bookmarks';
+  }
+
+  function setOpen(open, { save = true } = {}) {
     state.open = open;
     panel.classList.toggle('pmz-open', open);
     updateRail();
     applyPageSqueeze();
+    if (save) persistUi();
     if (open) render();
   }
 
@@ -443,8 +463,12 @@
     state.tab = tab;
     state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
     state.historyPickId = null;
-    if (state.open) render();
-    else setOpen(true);
+    if (state.open) {
+      persistUi();
+      render();
+    } else {
+      setOpen(true);
+    }
   }
 
   function buildRail() {
@@ -494,21 +518,13 @@
     header.appendChild(closeBtn);
     panel.appendChild(header);
     const tabs = el('div', 'pmz-tabs');
-    // ⚠ 物價只有 PoE1:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
+    // ⚠ 物價只有 PoE1(PANEL_TABS):bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
     //   在 PoE2 頁面顯示一個永遠載不出東西的分頁,比沒有這個分頁更糟。
-    const TABS = IS_POE2
-      ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
-      : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
-    for (const [id, label] of TABS) {
+    for (const [id, label] of PANEL_TABS) {
       const tab = el('button', 'pmz-tab', label);
       tab.dataset.tab = id;
       tab.title = id === 'settings' ? '設定' : label;
-      tab.addEventListener('click', () => {
-        state.tab = id;
-        state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
-        state.historyPickId = null;
-        render();
-      });
+      tab.addEventListener('click', () => showTab(id)); // 分頁列只在面板開著時看得到
       tabs.appendChild(tab);
     }
     panel.appendChild(tabs);
@@ -737,12 +753,17 @@
     panel.querySelectorAll(`.${DROP_CLASSES.join(', .')}`).forEach((n) => n.classList.remove(...DROP_CLASSES));
   }
 
-  // ── 長按才拖曳 ──
+  // ── 拖曳 ──
   // 用 pointer 事件自己做,不用 HTML5 的 draggable:draggable 一開就是「按住就拖」,
-  // 整塊沒辦法同時當按鈕用。改成按住 350ms 才進拖曳模式,在那之前手指/滑鼠移開
-  // 或放開都算單純點擊 —— 這樣書籤整塊都能點開搜尋。
+  // 整塊沒辦法同時當按鈕用。什麼時候算開始拖,依輸入裝置分開:
+  //   滑鼠/觸控筆:按住後移動超過 DRAG_START_PX 就開始拖,不必長按。滑鼠按著移動不會
+  //     捲動頁面,沒有要讓給誰。⚠ 以前滑鼠也要長按 350ms,直接按住拖會被當成取消,
+  //     看起來就是「資料夾拖不動」(2026-09-14 使用者回報)。按住不動 350ms 照樣進入。
+  //   觸控:維持長按 350ms,在那之前移動超過 MOVE_CANCEL_PX 就當成捲動,取消長按。
+  // 沒移動就放開都算單純點擊 —— 書籤整塊照樣能點開搜尋。
   const LONG_PRESS_MS = 350;
   const MOVE_CANCEL_PX = 8;
+  const DRAG_START_PX = 5;
   // 這些子元素自己有動作,不該吃掉點擊或觸發拖曳
   const INTERACTIVE = '.pmz-iconact, .pmz-act, button, input, select, textarea, a';
   let drag = null; // { ctx, ghost, source }
@@ -781,12 +802,21 @@
 
   function makeDraggable(node, ctx, onDrop, accepts, kind) {
     node.dataset.pmzDrop = kind;
+    // 瀏覽器原生的拖曳(資料夾圖示是 <img>、或按在已選取的文字上)一啟動就會發
+    // pointercancel,把我們的拖曳整個取消掉 —— 一律擋掉,拖曳只走下面這套。
+    node.addEventListener('dragstart', (e) => e.preventDefault());
     node.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest(INTERACTIVE)) return;
       const startX = e.clientX;
       const startY = e.clientY;
-      let timer = setTimeout(() => {
+      const byTouch = e.pointerType === 'touch';
+      const beginDrag = () => {
         timer = null;
+        // 按下去那一刻若有輸入框失焦,render() 會把這一列換掉;舊節點不在畫面上就不拖
+        if (!node.isConnected) {
+          cleanup();
+          return;
+        }
         // 進入拖曳:做一個半透明複本跟著游標走
         const rect = node.getBoundingClientRect();
         const ghost = node.cloneNode(true);
@@ -797,18 +827,27 @@
         document.body.appendChild(ghost);
         node.classList.add('pmz-dragging');
         document.body.style.userSelect = 'none';
+        window.getSelection()?.removeAllRanges(); // 滑鼠按著移動的那幾 px 可能已經選到字
         drag = { ctx, ghost, source: node, onDrop, accepts, offsetX: startX - rect.left, offsetY: startY - rect.top, hit: null };
-      }, LONG_PRESS_MS);
+      };
+      let timer = setTimeout(beginDrag, LONG_PRESS_MS);
 
       const onMove = (ev) => {
         if (timer) {
-          // 還沒進拖曳模式:移動超過門檻就當使用者要捲動/選字,取消長按
-          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > MOVE_CANCEL_PX) {
-            clearTimeout(timer);
-            timer = null;
-            cleanup();
+          const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+          if (byTouch) {
+            // 觸控還沒長按到:移動超過門檻就當使用者要捲動,取消長按
+            if (dist > MOVE_CANCEL_PX) {
+              clearTimeout(timer);
+              timer = null;
+              cleanup();
+            }
+            return;
           }
-          return;
+          // 滑鼠:移動超過門檻就直接開始拖,接著照常更新位置與落點
+          if (dist <= DRAG_START_PX) return;
+          clearTimeout(timer);
+          beginDrag();
         }
         if (!drag) return;
         drag.ghost.style.left = `${ev.clientX - drag.offsetX}px`;
@@ -981,8 +1020,13 @@
     const item = el('div', 'pmz-item');
     item.dataset.pmzId = bm.id;
     item.dataset.pmzFolder = folder.id;
-    // 長按才拖曳:放到另一個書籤上 = 插到它前面;放到資料夾標題 = 移到該資料夾
+    // 拖曳:放到另一個書籤上 = 插到它前面;放到資料夾標題 = 移到該資料夾末端
+    // (空的、收合的資料夾沒有書籤可以對準,只能靠標題 —— 所以 accepts 一定要有 'folder')
     makeDraggable(item, { type: 'bookmark', folderId: folder.id, bookmarkId: bm.id }, (ctx, node) => {
+      if (node.dataset.pmzDrop === 'folder') {
+        if (node.dataset.pmzId) moveBookmark(ctx, node.dataset.pmzId, null);
+        return;
+      }
       const targetId = node.dataset.pmzId;
       const targetFolderId = node.dataset.pmzFolder;
       if (!targetId || ctx.bookmarkId === targetId) return;
@@ -995,7 +1039,7 @@
         beforeId = findFolderById(targetFolderId)?.bookmarks.find((b) => !b.pinned && b.id !== ctx.bookmarkId)?.id ?? null;
       }
       moveBookmark(ctx, targetFolderId, beforeId);
-    }, ['bookmark'], 'bookmark');
+    }, ['bookmark', 'folder'], 'bookmark');
     // 整塊都能點開搜尋(按鈕自己會擋掉冒泡,剛拖完的那一下也不算)
     onActivate(item, () => openBookmark(bm));
     // 兩行:上面整行給名稱(側邊欄窄,名稱不該和按鈕搶寬度),下面一行放操作鈕
@@ -1038,12 +1082,13 @@
     const wrap = el('div', depth ? 'pmz-folder pmz-folder-child' : 'pmz-folder');
     const head = el('div', 'pmz-folder-head');
     head.dataset.pmzId = folder.id;
+    // ⚠ onDrop 是**被拖的那一個**的回呼(見 endDrag),accepts 是它能放到哪些目標。
+    //   資料夾只能放到資料夾上;以前寫成 ['folder', 'bookmark'] 會在書籤上亮起放置框,
+    //   放下去卻什麼都不做。書籤拖到資料夾標題的處理在 renderBookmarkItem。
     makeDraggable(head, { type: 'folder', folderId: folder.id }, (ctx, node, pos) => {
       const targetId = node.dataset.pmzId;
-      if (!targetId) return;
-      if (ctx.type === 'folder') dropFolderOn(ctx, targetId, pos);
-      else moveBookmark(ctx, targetId, null);
-    }, ['folder', 'bookmark'], 'folder');
+      if (targetId) dropFolderOn(ctx, targetId, pos);
+    }, ['folder'], 'folder');
     head.appendChild(el('span', 'pmz-caret', folder.collapsed ? '▸' : '▾'));
     // 圖示平時只是圖示:點下去跟點標題一樣是展開/收合。要換圖示請按 ✎(見下方)
     const iconWrap = el('span', 'pmz-folder-iconbtn');
@@ -2207,7 +2252,7 @@
 
   // ── 啟動 ──
   async function init() {
-    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods } =
+    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, [UI_KEY]: savedUi } =
       await chrome.storage.local.get([
         'bookmarkData',
         'settings',
@@ -2215,6 +2260,7 @@
         'sidebarEnabled',
         'language',
         'bilingualMods',
+        UI_KEY,
       ]);
     // 上限下修後,舊的超量紀錄在開頁時就裁掉(否則要等下一次搜尋才會生效);
     // 只在真的超量時才寫回,不要每次開頁都動 storage。
@@ -2255,14 +2301,24 @@
     }
 
     buildShell();
-    // 面板一開始就是開的話,官網內容也要先讓開;document_end 時官網的 .content
-    // 可能還沒渲染(Vue 掛載晚於 DOM 解析),仿 PTE 在 window load 再套一次。
-    if (state.open) applyPageSqueeze();
+    state.tab = restoredTab(savedUi);
+    rememberLeague();
+    adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去(要在第一次 render 之前)
+    if (savedUi?.open === true) {
+      // 上一頁離開時面板是開的:直接出現在開啟位置,不要每換一頁就滑進來一次。
+      // 讀回來的狀態不必再寫回去(save: false),每次開頁都寫一次 storage 是白費。
+      panel.classList.add('pmz-no-anim');
+      setOpen(true, { save: false });
+      // 強制算一次樣式,讓「已開啟」在沒有 transition 的狀態下定案,拿掉 class 後才不會補播。
+      // ⚠ 不用 requestAnimationFrame:背景分頁不跑 rAF,class 會一直留著,之後開關都沒動畫。
+      void panel.offsetWidth;
+      panel.classList.remove('pmz-no-anim');
+    }
+    // 面板一開始就是開的話,官網內容也要先讓開(setOpen 已套一次);document_end 時官網的
+    // .content 可能還沒渲染(Vue 掛載晚於 DOM 解析),仿 PTE 在 window load 再套一次。
     if (document.readyState !== 'complete') {
       window.addEventListener('load', () => applyPageSqueeze(), { once: true });
     }
-    rememberLeague();
-    adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去
     scheduleHistory();
     dbg(`[PTM] 側邊欄就緒:${state.data.folders.length} 個資料夾 / ${M.countBookmarks(state.data.folders)} 個書籤`);
     // 同步外部寫入(popup 匯入、其他分頁);自己寫的依 _writer 蓋章略過

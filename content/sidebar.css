@@ -105,6 +105,8 @@
   box-shadow: 6px 0 24px rgba(0, 0, 0, 0.6);
 }
 .pmz-panel.pmz-left.pmz-open { left: 44px; right: auto; }
+/* 換頁後還原「開啟」時不播滑入動畫(sidebar.js init);要排在兩條 transition 規則之後 */
+.pmz-panel.pmz-no-anim { transition: none; }
 
 /* 面板開啟:rail 變成貼螢幕邊、全高 44px 的直立欄(PoE Trade Extension 的擺法),
    不可拖曳(enableDrag 在 state.open 時直接 return)。要排在左側模式規則之後才蓋得過。 */
