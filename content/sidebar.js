@@ -59,6 +59,8 @@
     league2: '', // PoE2 聯盟
     sidebarSide: 'right',
     sidebarTop: 45, // 開關鈕垂直位置(vh 百分比,可拖曳調整)
+    keepPanelOpen: true, // 常駐維持展開:換頁後照上次的開/關與分頁還原(狀態本身存在 sidebarUi)
+    dragHintDismissed: false, // 書籤分頁頂部「怎麼拖曳」提示條按過「知道了」
     lastLeague: '', // PoE1 最後看到的聯盟,設定為「自動」時當退路
     lastLeague2: '', // PoE2 同上
   };
@@ -331,11 +333,31 @@
     applyTop();
   }
 
-  function setOpen(open) {
+  // ── 面板開/關與所在分頁:跨頁面保留 ──
+  // 點書籤、換搜尋都是整頁重載,以前每換一頁面板就收起來(2026-09-14 使用者要求維持)。
+  // ⚠ 不放進 settings:settings 會進備份檔,而且 mod-row.js 監聽 settings 的每一次變動;
+  //   開關面板是很頻繁的動作,另立一個鍵。其他分頁改了**不即時同步**,下次載入才套用
+  //   —— 同時開兩個交易站分頁時,一邊收合不該把另一邊也收起來。
+  const UI_KEY = 'sidebarUi';
+  const PANEL_TABS = IS_POE2
+    ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
+    : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
+
+  function persistUi() {
+    chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab } });
+  }
+
+  // 存下來的狀態可能來自另一款遊戲的頁面(PoE1 的「物價」在 PoE2 沒有)或舊資料,不合法就退回書籤
+  function restoredTab(saved) {
+    return PANEL_TABS.some(([id]) => id === saved?.tab) ? saved.tab : 'bookmarks';
+  }
+
+  function setOpen(open, { save = true } = {}) {
     state.open = open;
     panel.classList.toggle('pmz-open', open);
     updateRail();
     applyPageSqueeze();
+    if (save) persistUi();
     if (open) render();
   }
 
@@ -443,8 +465,12 @@
     state.tab = tab;
     state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
     state.historyPickId = null;
-    if (state.open) render();
-    else setOpen(true);
+    if (state.open) {
+      persistUi();
+      render();
+    } else {
+      setOpen(true);
+    }
   }
 
   function buildRail() {
@@ -494,21 +520,13 @@
     header.appendChild(closeBtn);
     panel.appendChild(header);
     const tabs = el('div', 'pmz-tabs');
-    // ⚠ 物價只有 PoE1:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
+    // ⚠ 物價只有 PoE1(PANEL_TABS):bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
     //   在 PoE2 頁面顯示一個永遠載不出東西的分頁,比沒有這個分頁更糟。
-    const TABS = IS_POE2
-      ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
-      : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
-    for (const [id, label] of TABS) {
+    for (const [id, label] of PANEL_TABS) {
       const tab = el('button', 'pmz-tab', label);
       tab.dataset.tab = id;
       tab.title = id === 'settings' ? '設定' : label;
-      tab.addEventListener('click', () => {
-        state.tab = id;
-        state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
-        state.historyPickId = null;
-        render();
-      });
+      tab.addEventListener('click', () => showTab(id)); // 分頁列只在面板開著時看得到
       tabs.appendChild(tab);
     }
     panel.appendChild(tabs);
@@ -567,6 +585,8 @@
     check: 'M20 6 9 17l-5-5',
     star: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z',
     x: 'M18 6 6 18M6 6l12 12',
+    // 拖曳把手:兩排三點(點的粗細由 .pmz-grip 的 stroke-width 決定)
+    grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
   };
 
   function svgIcon(name, extraClass) {
@@ -591,6 +611,16 @@
       onClick();
     });
     return btn;
+  }
+
+  // 拖曳把手:讓人一眼看出「這一列可以拖」。整列本來就能拖,把手是看得見的入口;
+  // 觸控從把手按下去不必長按(見 makeDraggable 的 fromHandle),點把手也不會觸發整列的點擊。
+  // ⚠ 不可加進 INTERACTIVE:那份清單裡的元素連 pointerdown 都會被略過,把手就拖不動了。
+  function gripHandle(title) {
+    const grip = el('span', 'pmz-grip');
+    grip.title = title;
+    grip.appendChild(svgIcon('grip'));
+    return grip;
   }
 
   function actionBtn(label, title, onClick) {
@@ -730,19 +760,181 @@
     state.data.folders = M.applyFolderDrop(state.data.folders, ctx.folderId, plan);
     persist();
     render();
+    // 放開後書籤又展開回來,剛放下的資料夾可能被推到畫面外
+    panel.querySelector(`.pmz-folder-head[data-pmz-id="${ctx.folderId}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 
-  const DROP_CLASSES = ['pmz-drop-target', 'pmz-drop-before', 'pmz-drop-after'];
+  // 書籤拖曳的落點框(資料夾拖曳改用下面的讓位預覽,不用這個)
   function clearDropMarks() {
-    panel.querySelectorAll(`.${DROP_CLASSES.join(', .')}`).forEach((n) => n.classList.remove(...DROP_CLASSES));
+    panel.querySelectorAll('.pmz-drop-target').forEach((n) => n.classList.remove('pmz-drop-target'));
   }
 
-  // ── 長按才拖曳 ──
+  // ── 資料夾拖曳:讓位預覽 ──
+  // 2026-09-14 使用者回報:第一層資料夾拖到另一個資料夾上,分不清是「排到它前後」還是「放進去」
+  // (以前只靠標題上下緣一條細線與中間的虛線框區分)。改成使用者選定的做法:
+  //   ① 拖曳期間所有資料夾的書籤暫時收起,清單只剩資料夾標題
+  //   ② 被拖的資料夾(連同子資料夾)從清單拿掉,在「放開後會出現的位置」插一格空位
+  //   ③ 只有停在放得進去的資料夾標題中間,空位才縮排到它底下、標題加金框、文字改成「放進「B」成為子資料夾」
+  // 排序語意是「插入」不是「互換」(使用者裁定)。判定走 M.folderDropZone、套用走 M.planFolderDrop。
+  // ⚠ 判定用的是**當下畫面上**的位置(空位插進去後其他標題會移動)。游標蓋在空位上時維持上一個結果
+  //   (KEEP_HIT),位置一移動就不會在兩種結果之間來回跳 —— 測試頁有逐 2px 掃描的鎖。
+  // ⚠ 「放進去」也用同一格空位表示(只是縮排、換字),**不要**改回在標題下方另插提示條:
+  //   第一版就是那樣,提示條與空位高度不同,切換時下一個資料夾會跳到游標底下,
+  //   稍微快一點拖就跳過「排在它前面」直接變成「放進它」(測試頁 G5 實際抓到)。
+  //   現在「放進 B」「排在 B 後面」「排在下一個前面」是同一個 DOM 位置,切換時清單完全不動。
+  const KEEP_HIT = Symbol('keep-hit');
+
+  function folderDragPreview(movedId) {
+    let slot = null;
+    let markedHead = null;
+    let spacer = null;
+    let spacerAtTop = false;
+    const bodyEl = () => panel.querySelector('.pmz-body');
+    const nameOf = (id) => findFolderById(id)?.name ?? '';
+
+    function clear() {
+      slot?.remove();
+      markedHead?.classList.remove('pmz-drop-into', 'pmz-drop-invalid');
+      slot = markedHead = null;
+    }
+    function makeSlot(childLevel, variant = '', text = `「${nameOf(movedId)}」會放在這裡`) {
+      const node = el('div', `pmz-drop-slot${childLevel ? ' pmz-drop-slot-child' : ''}${variant ? ` pmz-drop-slot-${variant}` : ''}`, text);
+      node.title = text; // 名稱太長時空位只顯示一行(高度固定才不會影響判定),完整文字放 title
+      return node;
+    }
+    // 第一層資料夾的子資料夾 wrap 緊跟在它後面(renderFolder 的走訪序);「排到它後面」要排在整組後面
+    function lastWrapOfBlock(wrap) {
+      let last = wrap;
+      for (let n = wrap.nextElementSibling; n?.dataset.pmzParent === wrap.dataset.pmzWrap; n = n.nextElementSibling) {
+        if (!n.hidden) last = n;
+      }
+      return last;
+    }
+
+    return {
+      begin() {
+        const wrap = panel.querySelector(`.pmz-folder[data-pmz-wrap="${movedId}"]`);
+        const headTop = wrap?.querySelector('.pmz-folder-head')?.getBoundingClientRect().top;
+        panel.classList.add('pmz-folder-dragging');
+        for (const w of panel.querySelectorAll(`.pmz-folder[data-pmz-wrap="${movedId}"], .pmz-folder[data-pmz-parent="${movedId}"]`)) {
+          w.hidden = true;
+        }
+        if (!wrap) return;
+        // 原位先放一格空位:沒拖到別處就放開 = 不動
+        slot = makeSlot(!!findFolderById(movedId)?.parentId);
+        wrap.before(slot);
+        // 書籤收起來清單會縮短,空位要回到游標底下 —— 不然一按下去整個清單就跳走,
+        // 游標落在清單下方的空白,預覽直接變成「移到最後」(測試頁 F1 實際抓到)。
+        // 先用捲動補;捲到底/頂還補不完就墊一段空白:
+        //   清單本來就在最上面 → 空位跑到游標上方 → 第一個資料夾前面墊高
+        //   清單原本捲到最下面 → 內容變短、捲動位置被瀏覽器夾回去,空位反而在游標下方
+        //   → 清單尾巴墊高再往下捲(測試頁 F10 實際抓到)
+        const body = bodyEl();
+        const shift = slot.getBoundingClientRect().top - headTop;
+        const scrollBefore = body.scrollTop;
+        body.scrollTop += shift;
+        const unabsorbed = shift - (body.scrollTop - scrollBefore);
+        if (Math.abs(unabsorbed) > 1) {
+          spacer = el('div', 'pmz-drag-spacer');
+          spacer.style.height = `${Math.abs(unabsorbed)}px`;
+          spacerAtTop = unabsorbed < 0;
+          if (spacerAtTop) {
+            body.querySelector('.pmz-folder, .pmz-drop-slot')?.before(spacer);
+          } else {
+            body.appendChild(spacer);
+            body.scrollTop += unabsorbed;
+          }
+        }
+      },
+      hitAt(x, y) {
+        const body = bodyEl();
+        let under = document.elementFromPoint(x, y);
+        // 游標往上走進墊高的空白 = 想去清單最上面:把空白縮到清單第一格剛好迎到游標,
+        // 不然那段空白是死區,使用者得在一片空白裡找不到東西放
+        if (spacer && spacerAtTop && under === spacer) {
+          let first = spacer.nextElementSibling;
+          while (first?.hidden) first = first.nextElementSibling;
+          const gap = first ? first.getBoundingClientRect().top - y : spacer.offsetHeight;
+          const rest = spacer.offsetHeight - gap - 4;
+          if (rest > 0) {
+            spacer.style.height = `${rest}px`;
+          } else {
+            spacer.remove();
+            spacer = null;
+          }
+          under = document.elementFromPoint(x, y);
+        }
+        if (!under || !body.contains(under)) return null; // 離開清單:放開不動
+        if (under.closest('.pmz-drop-slot')) return KEEP_HIT;
+        const head = under.closest('.pmz-folder-head');
+        const movedHasKids = M.childFolders(state.data.folders, movedId).length > 0;
+        if (!head) {
+          // 最後一個資料夾下面的空白 = 移到最後(排在最後一個第一層資料夾那整組後面)
+          const wraps = [...body.querySelectorAll('.pmz-folder')].filter((w) => !w.hidden);
+          const lastTop = wraps.filter((w) => !w.dataset.pmzParent).pop();
+          if (lastTop && y > wraps[wraps.length - 1].getBoundingClientRect().bottom) {
+            return { kind: 'after', position: 'after', targetId: lastTop.dataset.pmzWrap, node: lastTop.querySelector('.pmz-folder-head') };
+          }
+          return KEEP_HIT;
+        }
+        const target = findFolderById(head.dataset.pmzId);
+        if (!target || target.id === movedId) return KEEP_HIT;
+        const rect = head.getBoundingClientRect();
+        const zone = M.folderDropZone(y - rect.top, rect.height, {
+          targetIsChild: !!target.parentId,
+          movedHasKids,
+          targetHasVisibleKids: !target.parentId && !!panel.querySelector(`.pmz-folder[data-pmz-parent="${target.id}"]:not([hidden])`),
+        });
+        if (zone === 'invalid') {
+          // 上半/下半一樣分前後,空位畫在「本來會去的位置」只是變紅,切換時清單才不會跳
+          const r = (y - rect.top) / (rect.height || 1);
+          return { kind: 'invalid', side: r < 0.5 ? 'before' : 'after', targetId: target.id, node: head };
+        }
+        return { kind: zone, position: zone, targetId: target.id, node: head };
+      },
+      show(hit) {
+        clear();
+        if (!hit) return;
+        const target = findFolderById(hit.targetId);
+        const wrap = hit.node.closest('.pmz-folder');
+        const side = hit.kind === 'invalid' ? hit.side : hit.kind;
+        if (hit.kind === 'inside') {
+          slot = makeSlot(true, 'into', `放進「${nameOf(hit.targetId)}」成為子資料夾`);
+        } else if (hit.kind === 'invalid') {
+          slot = makeSlot(true, 'invalid', `「${nameOf(movedId)}」底下還有資料夾,不能放進子層`);
+        } else {
+          slot = makeSlot(!!target?.parentId);
+        }
+        slot.dataset.pmzTarget = hit.targetId;
+        if (hit.kind === 'inside' || hit.kind === 'invalid') {
+          markedHead = hit.node;
+          markedHead.classList.add(hit.kind === 'inside' ? 'pmz-drop-into' : 'pmz-drop-invalid');
+        }
+        // 前面 = 目標那一格之前;其餘(後面/放進去)= 子資料夾接在自己後面、第一層接在整組後面
+        if (side === 'before') wrap.before(slot);
+        else (target?.parentId ? wrap : lastWrapOfBlock(wrap)).after(slot);
+      },
+      end() {
+        clear();
+        spacer?.remove();
+        spacer = null;
+        panel.classList.remove('pmz-folder-dragging');
+        for (const w of panel.querySelectorAll('.pmz-folder[hidden]')) w.hidden = false;
+      },
+    };
+  }
+
+  // ── 拖曳 ──
   // 用 pointer 事件自己做,不用 HTML5 的 draggable:draggable 一開就是「按住就拖」,
-  // 整塊沒辦法同時當按鈕用。改成按住 350ms 才進拖曳模式,在那之前手指/滑鼠移開
-  // 或放開都算單純點擊 —— 這樣書籤整塊都能點開搜尋。
+  // 整塊沒辦法同時當按鈕用。什麼時候算開始拖,依輸入裝置分開:
+  //   滑鼠/觸控筆:按住後移動超過 DRAG_START_PX 就開始拖,不必長按。滑鼠按著移動不會
+  //     捲動頁面,沒有要讓給誰。⚠ 以前滑鼠也要長按 350ms,直接按住拖會被當成取消,
+  //     看起來就是「資料夾拖不動」(2026-09-14 使用者回報)。按住不動 350ms 照樣進入。
+  //   觸控:維持長按 350ms,在那之前移動超過 MOVE_CANCEL_PX 就當成捲動,取消長按。
+  // 沒移動就放開都算單純點擊 —— 書籤整塊照樣能點開搜尋。
   const LONG_PRESS_MS = 350;
   const MOVE_CANCEL_PX = 8;
+  const DRAG_START_PX = 5;
   // 這些子元素自己有動作,不該吃掉點擊或觸發拖曳
   const INTERACTIVE = '.pmz-iconact, .pmz-act, button, input, select, textarea, a';
   let drag = null; // { ctx, ghost, source }
@@ -754,39 +946,85 @@
 
   function endDrag(apply) {
     if (!drag) return;
-    const { ghost, source, hit } = drag;
+    const { ghost, source, hit, preview } = drag;
+    clearInterval(drag.scrollTimer);
     ghost?.remove();
     source?.classList.remove('pmz-dragging');
     clearDropMarks();
+    preview?.end(); // 先把清單還原,onDrop 沒有 render 的路徑(放回原位)才不會留著空位
     document.body.style.userSelect = '';
     const finished = drag;
     drag = null;
-    if (apply && hit) finished.onDrop(finished.ctx, hit.node, hit.position);
+    if (apply && hit && hit.kind !== 'invalid') finished.onDrop(finished.ctx, hit.node, hit.position, hit);
   }
 
-  // 游標底下可以放的目標(ghost 有 pointer-events:none,不會擋住 elementFromPoint)
+  // 書籤拖曳:游標底下可以放的目標(ghost 有 pointer-events:none,不會擋住 elementFromPoint)。
+  // 放到書籤 = 插到它前面、放到資料夾標題 = 移進去,都只有一種放法。
   function hitTest(x, y, accepts) {
     const el0 = document.elementFromPoint(x, y);
     const node = el0?.closest('[data-pmz-drop]');
     if (!node || !panel.contains(node)) return null;
-    const kind = node.dataset.pmzDrop;
-    if (!accepts.includes(kind)) return null;
-    const rect = node.getBoundingClientRect();
-    // 資料夾之間才分上/中/下三段;書籤只有「插到它前面」一種
-    const position = drag?.ctx.type === 'folder' && kind === 'folder'
-      ? M.dropPosition(y - rect.top, rect.height)
-      : 'inside';
-    return { node, position };
+    if (!accepts.includes(node.dataset.pmzDrop)) return null;
+    return { node, position: 'inside' };
   }
 
-  function makeDraggable(node, ctx, onDrop, accepts, kind) {
+  function updateHit(x, y) {
+    if (drag.preview) {
+      const hit = drag.preview.hitAt(x, y);
+      if (hit === KEEP_HIT) return;
+      drag.hit = hit;
+      drag.preview.show(hit);
+      return;
+    }
+    clearDropMarks();
+    drag.hit = hitTest(x, y, drag.accepts);
+    if (drag.hit && drag.hit.node !== drag.source) drag.hit.node.classList.add('pmz-drop-target');
+  }
+
+  // 拖到清單上下緣自動捲動:書籤一多,放的位置常常不在同一個畫面裡。
+  // ⚠ 用 setInterval 不用 requestAnimationFrame:沒在合成畫面的分頁不跑 rAF(見面板還原那段)
+  const AUTOSCROLL_EDGE_PX = 40;
+  const AUTOSCROLL_STEP_PX = 14;
+  function updateAutoScroll(y) {
+    const body = panel.querySelector('.pmz-body');
+    const rect = body.getBoundingClientRect();
+    const dir = y < rect.top + AUTOSCROLL_EDGE_PX ? -1 : y > rect.bottom - AUTOSCROLL_EDGE_PX ? 1 : 0;
+    // 從貼著上下緣的那一列開始拖時,游標一開始就在邊緣區 —— 要先離開一次再進去才捲,
+    // 否則一按下去清單就自己跑(測試頁 F10 實際抓到)
+    if (!drag.scrollArmed) {
+      if (dir === 0) drag.scrollArmed = true;
+      return;
+    }
+    if (dir === drag.scrollDir) return;
+    clearInterval(drag.scrollTimer);
+    drag.scrollDir = dir;
+    drag.scrollTimer = dir ? setInterval(() => {
+      if (!drag) return;
+      body.scrollTop += dir * AUTOSCROLL_STEP_PX;
+      updateHit(drag.lastX, drag.lastY); // 清單在游標底下動了,落點要跟著重算
+    }, 16) : null;
+  }
+
+  // preview(可省):資料夾拖曳的讓位預覽,見 folderDragPreview
+  function makeDraggable(node, ctx, onDrop, accepts, kind, preview) {
     node.dataset.pmzDrop = kind;
+    // 瀏覽器原生的拖曳(資料夾圖示是 <img>、或按在已選取的文字上)一啟動就會發
+    // pointercancel,把我們的拖曳整個取消掉 —— 一律擋掉,拖曳只走下面這套。
+    node.addEventListener('dragstart', (e) => e.preventDefault());
     node.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest(INTERACTIVE)) return;
       const startX = e.clientX;
       const startY = e.clientY;
-      let timer = setTimeout(() => {
+      // 從把手按下去就是明確要拖(把手是 touch-action:none,不會變成捲動),觸控也不必長按
+      const fromHandle = !!e.target.closest('.pmz-grip');
+      const byTouch = e.pointerType === 'touch' && !fromHandle;
+      const beginDrag = () => {
         timer = null;
+        // 按下去那一刻若有輸入框失焦,render() 會把這一列換掉;舊節點不在畫面上就不拖
+        if (!node.isConnected) {
+          cleanup();
+          return;
+        }
         // 進入拖曳:做一個半透明複本跟著游標走
         const rect = node.getBoundingClientRect();
         const ghost = node.cloneNode(true);
@@ -797,29 +1035,40 @@
         document.body.appendChild(ghost);
         node.classList.add('pmz-dragging');
         document.body.style.userSelect = 'none';
-        drag = { ctx, ghost, source: node, onDrop, accepts, offsetX: startX - rect.left, offsetY: startY - rect.top, hit: null };
-      }, LONG_PRESS_MS);
+        window.getSelection()?.removeAllRanges(); // 滑鼠按著移動的那幾 px 可能已經選到字
+        drag = {
+          ctx, ghost, source: node, onDrop, accepts, preview: preview ?? null,
+          offsetX: startX - rect.left, offsetY: startY - rect.top, hit: null,
+          lastX: startX, lastY: startY, scrollDir: 0, scrollTimer: null, scrollArmed: false,
+        };
+        drag.preview?.begin();
+      };
+      let timer = setTimeout(beginDrag, LONG_PRESS_MS);
 
       const onMove = (ev) => {
         if (timer) {
-          // 還沒進拖曳模式:移動超過門檻就當使用者要捲動/選字,取消長按
-          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > MOVE_CANCEL_PX) {
-            clearTimeout(timer);
-            timer = null;
-            cleanup();
+          const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+          if (byTouch) {
+            // 觸控還沒長按到:移動超過門檻就當使用者要捲動,取消長按
+            if (dist > MOVE_CANCEL_PX) {
+              clearTimeout(timer);
+              timer = null;
+              cleanup();
+            }
+            return;
           }
-          return;
+          // 滑鼠:移動超過門檻就直接開始拖,接著照常更新位置與落點
+          if (dist <= DRAG_START_PX) return;
+          clearTimeout(timer);
+          beginDrag();
         }
         if (!drag) return;
+        drag.lastX = ev.clientX;
+        drag.lastY = ev.clientY;
         drag.ghost.style.left = `${ev.clientX - drag.offsetX}px`;
         drag.ghost.style.top = `${ev.clientY - drag.offsetY}px`;
-        clearDropMarks();
-        drag.hit = hitTest(ev.clientX, ev.clientY, drag.accepts);
-        if (drag.hit && drag.hit.node !== node) {
-          const cls = drag.hit.position === 'before' ? 'pmz-drop-before'
-            : drag.hit.position === 'after' ? 'pmz-drop-after' : 'pmz-drop-target';
-          drag.hit.node.classList.add(cls);
-        }
+        updateHit(ev.clientX, ev.clientY);
+        updateAutoScroll(ev.clientY);
       };
       const onUp = () => {
         if (timer) clearTimeout(timer);
@@ -848,11 +1097,12 @@
     });
   }
 
-  // 整塊可點:點在自己有動作的子元素上不算,剛拖完的那一下也不算
+  // 整塊可點:點在自己有動作的子元素上不算,剛拖完的那一下也不算;
+  // 點把手也不算(想拖卻沒拖動就放開,不該打開書籤或收合資料夾)
   function onActivate(node, handler) {
     node.addEventListener('click', (e) => {
       if (Date.now() - dragEndedAt < CLICK_GUARD_MS) return;
-      if (e.target.closest(INTERACTIVE)) return;
+      if (e.target.closest(INTERACTIVE) || e.target.closest('.pmz-grip')) return;
       handler(e);
     });
   }
@@ -981,8 +1231,13 @@
     const item = el('div', 'pmz-item');
     item.dataset.pmzId = bm.id;
     item.dataset.pmzFolder = folder.id;
-    // 長按才拖曳:放到另一個書籤上 = 插到它前面;放到資料夾標題 = 移到該資料夾
+    // 拖曳:放到另一個書籤上 = 插到它前面;放到資料夾標題 = 移到該資料夾末端
+    // (空的、收合的資料夾沒有書籤可以對準,只能靠標題 —— 所以 accepts 一定要有 'folder')
     makeDraggable(item, { type: 'bookmark', folderId: folder.id, bookmarkId: bm.id }, (ctx, node) => {
+      if (node.dataset.pmzDrop === 'folder') {
+        if (node.dataset.pmzId) moveBookmark(ctx, node.dataset.pmzId, null);
+        return;
+      }
       const targetId = node.dataset.pmzId;
       const targetFolderId = node.dataset.pmzFolder;
       if (!targetId || ctx.bookmarkId === targetId) return;
@@ -995,11 +1250,12 @@
         beforeId = findFolderById(targetFolderId)?.bookmarks.find((b) => !b.pinned && b.id !== ctx.bookmarkId)?.id ?? null;
       }
       moveBookmark(ctx, targetFolderId, beforeId);
-    }, ['bookmark'], 'bookmark');
+    }, ['bookmark', 'folder'], 'bookmark');
     // 整塊都能點開搜尋(按鈕自己會擋掉冒泡,剛拖完的那一下也不算)
     onActivate(item, () => openBookmark(bm));
     // 兩行:上面整行給名稱(側邊欄窄,名稱不該和按鈕搶寬度),下面一行放操作鈕
     const nameRow = el('div', 'pmz-item-top');
+    nameRow.appendChild(gripHandle('拖曳調整順序;拖到資料夾標題上可移進該資料夾'));
     if (bm.pinned) nameRow.appendChild(svgIcon('pin', 'pmz-pinned-mark'));
     const name = el('span', 'pmz-item-name', (bm.type === 'exchange' ? '⇄ ' : '') + bm.name);
     name.title = `${bm.searchId ? bm.searchId : '自訂搜尋條件'} / ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'}`;
@@ -1036,14 +1292,18 @@
   function renderFolder(entry, cur, body) {
     const { folder, depth, childCount } = entry;
     const wrap = el('div', depth ? 'pmz-folder pmz-folder-child' : 'pmz-folder');
+    // 讓位預覽靠這兩個屬性找「這個資料夾那一整組」(自己 + 緊跟在後的子資料夾)
+    wrap.dataset.pmzWrap = folder.id;
+    if (folder.parentId) wrap.dataset.pmzParent = folder.parentId;
     const head = el('div', 'pmz-folder-head');
     head.dataset.pmzId = folder.id;
-    makeDraggable(head, { type: 'folder', folderId: folder.id }, (ctx, node, pos) => {
-      const targetId = node.dataset.pmzId;
-      if (!targetId) return;
-      if (ctx.type === 'folder') dropFolderOn(ctx, targetId, pos);
-      else moveBookmark(ctx, targetId, null);
-    }, ['folder', 'bookmark'], 'folder');
+    // ⚠ onDrop 是**被拖的那一個**的回呼(見 endDrag),accepts 是它能放到哪些目標。
+    //   資料夾拖曳的落點由 folderDragPreview 算(hit 帶 targetId),accepts 只剩書籤拖曳在用。
+    //   書籤拖到資料夾標題的處理在 renderBookmarkItem。
+    makeDraggable(head, { type: 'folder', folderId: folder.id }, (ctx, node, pos, hit) => {
+      if (hit?.targetId) dropFolderOn(ctx, hit.targetId, pos);
+    }, ['folder'], 'folder', folderDragPreview(folder.id));
+    head.appendChild(gripHandle('拖曳調整順序;拖到其他資料夾標題的中間可變成它的子資料夾'));
     head.appendChild(el('span', 'pmz-caret', folder.collapsed ? '▸' : '▾'));
     // 圖示平時只是圖示:點下去跟點標題一樣是展開/收合。要換圖示請按 ✎(見下方)
     const iconWrap = el('span', 'pmz-folder-iconbtn');
@@ -1182,9 +1442,31 @@
       body.appendChild(el('div', 'pmz-empty', `${state.gameTab === 'Poe2' ? 'PoE2' : 'PoE1'} 目前沒有書籤`));
       return;
     }
+    if (state.settings.dragHintDismissed !== true) body.appendChild(buildDragHint());
     for (const entry of M.orderedFolders(shown, { skipCollapsed: true })) {
       renderFolder(entry, cur, body);
     }
+  }
+
+  // 書籤樹頂部的操作提示(2026-09-14 使用者要求「UI 上要有明顯的地方讓使用者知道怎麼調整」)。
+  // 按「知道了」之後不再出現;每一列左側的把手與它的 title 常駐,關掉提示也還看得出能拖。
+  // 只在有資料夾可拖時出現(空狀態有自己的說明)。
+  function buildDragHint() {
+    const tip = el('div', 'pmz-tip');
+    tip.appendChild(svgIcon('grip', 'pmz-tip-icon'));
+    const text = el('div', 'pmz-tip-text');
+    text.appendChild(el('div', 'pmz-tip-title', '拖曳左側把手即可調整順序'));
+    text.appendChild(el('div', null, '書籤拖到資料夾標題上會移進去;資料夾拖到另一個資料夾標題的中間會變成子資料夾'));
+    tip.appendChild(text);
+    const ok = el('button', 'pmz-act', '知道了');
+    ok.type = 'button';
+    ok.addEventListener('click', () => {
+      state.settings.dragHintDismissed = true;
+      persistSettings();
+      render();
+    });
+    tip.appendChild(ok);
+    return tip;
   }
 
   // ── 歷史分頁 ──
@@ -1914,6 +2196,9 @@
         applySide();
         render();
       });
+    // 關掉 = 回到舊行為:每次開頁面板都是收合的。開關本身存 settings(偏好),
+    // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
+    settingToggle(body, 'keepPanelOpen', '常駐維持展開(換頁後不自動收合)');
     settingToggle(body, 'autoInstantBuyout', '開啟頁面自動將狀態設為「即刻購買」 ↻');
 
     // ── 2. 顯示 ──
@@ -2207,7 +2492,7 @@
 
   // ── 啟動 ──
   async function init() {
-    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods } =
+    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, [UI_KEY]: savedUi } =
       await chrome.storage.local.get([
         'bookmarkData',
         'settings',
@@ -2215,6 +2500,7 @@
         'sidebarEnabled',
         'language',
         'bilingualMods',
+        UI_KEY,
       ]);
     // 上限下修後,舊的超量紀錄在開頁時就裁掉(否則要等下一次搜尋才會生效);
     // 只在真的超量時才寫回,不要每次開頁都動 storage。
@@ -2255,14 +2541,26 @@
     }
 
     buildShell();
-    // 面板一開始就是開的話,官網內容也要先讓開;document_end 時官網的 .content
-    // 可能還沒渲染(Vue 掛載晚於 DOM 解析),仿 PTE 在 window load 再套一次。
-    if (state.open) applyPageSqueeze();
+    // 「常駐維持展開」關掉時完全照舊:收合、書籤分頁
+    const keepOpen = state.settings.keepPanelOpen !== false;
+    if (keepOpen) state.tab = restoredTab(savedUi);
+    rememberLeague();
+    adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去(要在第一次 render 之前)
+    if (keepOpen && savedUi?.open === true) {
+      // 上一頁離開時面板是開的:直接出現在開啟位置,不要每換一頁就滑進來一次。
+      // 讀回來的狀態不必再寫回去(save: false),每次開頁都寫一次 storage 是白費。
+      panel.classList.add('pmz-no-anim');
+      setOpen(true, { save: false });
+      // 強制算一次樣式,讓「已開啟」在沒有 transition 的狀態下定案,拿掉 class 後才不會補播。
+      // ⚠ 不用 requestAnimationFrame:背景分頁不跑 rAF,class 會一直留著,之後開關都沒動畫。
+      void panel.offsetWidth;
+      panel.classList.remove('pmz-no-anim');
+    }
+    // 面板一開始就是開的話,官網內容也要先讓開(setOpen 已套一次);document_end 時官網的
+    // .content 可能還沒渲染(Vue 掛載晚於 DOM 解析),仿 PTE 在 window load 再套一次。
     if (document.readyState !== 'complete') {
       window.addEventListener('load', () => applyPageSqueeze(), { once: true });
     }
-    rememberLeague();
-    adoptSearchId(); // 剛剛是從帶條件的書籤點進來的話,把官方編號記回去
     scheduleHistory();
     dbg(`[PTM] 側邊欄就緒:${state.data.folders.length} 個資料夾 / ${M.countBookmarks(state.data.folders)} 個書籤`);
     // 同步外部寫入(popup 匯入、其他分頁);自己寫的依 _writer 蓋章略過
