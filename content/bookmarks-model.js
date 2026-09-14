@@ -220,6 +220,22 @@
     return 'inside';
   }
 
+  // 拖曳預覽用的落點判定(2026-09-14 使用者回報「分不清是排到前後還是放進去」後改成讓位預覽)。
+  // 只在「放得進去」時才有中段:
+  //   目標是子資料夾 → 上半/下半 = 排在它前/後(成為同一個父的子);被拖的底下還有資料夾 → 'invalid'
+  //   被拖的底下還有資料夾 → 不能變成子,上半/下半 = 前/後
+  //   其餘 → 上緣 before / 中間 inside / 下緣 after;目標底下有展開的子資料夾時下緣也算 inside
+  //   (它的「後面」在子資料夾清單的尾巴,游標停在標題上時放到那麼遠的地方反而看不懂;
+  //    要排到整組後面,停在下一個資料夾的上緣即可)
+  function folderDropZone(offsetY, height, opts) {
+    const h = Number(height) || 0;
+    const r = h > 0 ? Number(offsetY) / h : 0.5;
+    if (opts?.targetIsChild) return opts?.movedHasKids ? 'invalid' : r < 0.5 ? 'before' : 'after';
+    if (opts?.movedHasKids) return r < 0.5 ? 'before' : 'after';
+    const p = dropPosition(offsetY, height);
+    return p === 'after' && opts?.targetHasVisibleKids ? 'inside' : p;
+  }
+
   // 算出「這樣放會變成什麼」,不動資料;不允許時回 { error }
   function planFolderDrop(folders, movedId, targetId, position) {
     const list = Array.isArray(folders) ? folders : [];
@@ -884,6 +900,7 @@
     orderedFolders,
     childFolders,
     dropPosition,
+    folderDropZone,
     planFolderDrop,
     applyFolderDrop,
     countBookmarks,

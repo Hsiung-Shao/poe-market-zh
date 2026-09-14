@@ -626,9 +626,35 @@ body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
 .pmz-modal-ok { background: #6b2420; border: 1px solid #8a2f28; color: #ffe0d8; font-weight: 600; }
 .pmz-modal-ok:hover { background: #8a2f28; }
 
-/* 拖曳資料夾時的落點指示:上緣/下緣 = 排在前/後(同一層),中間 = 放進去當子 */
-.pmz-drop-before { box-shadow: inset 0 3px 0 0 #c9a66b; }
-.pmz-drop-after { box-shadow: inset 0 -3px 0 0 #c9a66b; }
+/* ── 拖曳資料夾時的讓位預覽(sidebar.js folderDragPreview)──
+   以前是標題上下緣一條細線 + 中間虛線框,使用者分不清「排到前後」還是「放進去」。
+   現在:書籤暫時收起、被拖的那一格換成空位;放得進去時才是金框 + 文字。 */
+.pmz-folder-dragging .pmz-folder-body,
+.pmz-folder-dragging .pmz-folder > .pmz-form { display: none; }
+/* 空位高度要接近一個資料夾標題(約 46px):判定用的是當下畫面位置,
+   空位太矮時「放進去」與「排到後面」會在同一個游標位置來回切換 */
+.pmz-drop-slot {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px dashed #c9a66b;
+  border-radius: 5px;
+  background: rgba(201, 166, 107, 0.08);
+  color: #ffe8b8;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  /* 一律單行:高度固定,「放進去/排前後/不能放」三種切換時清單才不會跳 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pmz-drop-slot-child { margin-left: 22px; } /* 對齊 .pmz-folder-child 的 16px 縮排 + 左框與內距 */
+/* 放進去:空位縮排在目標底下 + 實線 + 目標標題金框 */
+.pmz-drop-slot-into { border-style: solid; background: #33291d; }
+.pmz-folder-head.pmz-drop-into { box-shadow: inset 0 0 0 2px #c9a66b; background: #33291d; }
+/* 不能放(底下還有資料夾的拖到子層):同一格空位轉紅,放開不動 */
+.pmz-drop-slot-invalid { border-color: #8a2f28; background: #3a2420; color: #e0a8a0; }
+.pmz-folder-head.pmz-drop-invalid { box-shadow: inset 0 0 0 2px #8a2f28; }
 
 /* ── 書籤/歷史頂部的 PoE1 / PoE2 分頁 ── */
 /* 依網址自動切換,也可以手動點。數量直接標在標籤上,不必再靠事後補說明。 */
