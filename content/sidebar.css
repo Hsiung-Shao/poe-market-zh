@@ -162,6 +162,20 @@
   font-variant: small-caps;
   letter-spacing: 0.5px;
 }
+/* 設定分頁才顯示的版本資訊(標頭右上角)。⚠ 不要設 display:會蓋掉 hidden 屬性 */
+.pmz-header-version {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 8px;
+  border: 1px solid #4a3f2f;
+  border-radius: 10px;
+  color: #a99a7c;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.pmz-header-version[hidden] { display: none; }
 .pmz-header-close {
   background: none;
   border: 1px solid #4a3f2f;

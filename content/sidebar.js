@@ -514,6 +514,12 @@
     headText.appendChild(el('div', 'pmz-header-title', 'Poe Market Zh'));
     headText.appendChild(el('div', 'pmz-header-sub', '交易站中文化'));
     header.appendChild(headText);
+    // 版本資訊:只在設定分頁顯示(使用者 2026-09-14 指定「設定頁右上角」),由 render() 切換。
+    // 一律讀 manifest,不寫死 —— 版號只有 manifest.json 一個真值(popup 也是這樣讀)。
+    const versionTag = el('span', 'pmz-header-version', `v${chrome.runtime.getManifest().version}`);
+    versionTag.title = 'Poe Market Zh 目前版本';
+    versionTag.hidden = true;
+    header.appendChild(versionTag);
     const closeBtn = el('button', 'pmz-header-close', '✕');
     closeBtn.title = '收合側邊欄';
     closeBtn.addEventListener('click', () => setOpen(false));
@@ -2458,6 +2464,7 @@
       t.classList.toggle('pmz-tab-active', t.dataset.tab === state.tab);
     });
     updateRail(); // 面板內切分頁時 rail 的高亮也要跟著走
+    panel.querySelector('.pmz-header-version').hidden = state.tab !== 'settings';
     const body = panel.querySelector('.pmz-body');
     body.textContent = '';
     if (state.tab === 'bookmarks') renderBookmarks(body);
