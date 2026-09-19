@@ -57,7 +57,7 @@
         "https://www.pathofexile.com/trade2/*",
         "https://pathofexile.com/trade2/*"
       ],
-      "js": ["content/mod-row.js", "content/results.js"],
+      "js": ["content/mod-row.js", "content/item-text.js", "content/copy-item.js", "content/results.js"],
       "run_at": "document_end"
     },
     {
