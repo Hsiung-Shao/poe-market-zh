@@ -589,6 +589,8 @@
     trash: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6',
     plus: 'M5 12h14M12 5v14',
     check: 'M20 6 9 17l-5-5',
+    // replace:兩個方向相反的箭頭,對應「把這個書籤換成目前的搜尋」
+    replace: 'M14 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2M8 6H5a2 2 0 0 0-2 2v3M4 14a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2zM16 18h3a2 2 0 0 0 2-2v-3M7 3 4 6l3 3M17 21l3-3-3-3',
     star: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z',
     x: 'M18 6 6 18M6 6l12 12',
     // 拖曳把手:兩排三點(點的粗細由 .pmz-grip 的 stroke-width 決定)
@@ -1280,6 +1282,48 @@
         persist();
       });
     }));
+    // ── 以目前的搜尋取代這個書籤 ──
+    // 條件調過之後想蓋回同一個書籤(刪掉重存會失去名稱、釘選與在資料夾裡的位置)。
+    // ⚠ 只在「目前頁面真的有一個搜尋」而且**與書籤同一款遊戲**時才可按 ——
+    //   在 PoE1 頁面把 PoE2 書籤蓋成 PoE1 的搜尋,那個書籤就再也開不出東西。
+    {
+      const cur = currentSearch();
+      const sameGame = cur && (cur.poeVersion ?? 'Poe1') === (bm.poeVersion ?? 'Poe1');
+      const canReplace = !!cur && sameGame && cur.searchId !== bm.searchId;
+      const why = !cur
+        ? '開啟一個搜尋後才能取代'
+        : !sameGame
+          ? `目前是 ${cur.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'} 的搜尋,不能取代 ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'} 的書籤`
+          : cur.searchId === bm.searchId
+            ? '這個書籤就是目前的搜尋'
+            : '以目前的搜尋取代(名稱不變)';
+      const repBtn = iconBtn('replace', why, () => {
+        if (!canReplace) return;
+        confirmDialog({
+          title: '取代書籤的搜尋',
+          message: `「${bm.name}」的搜尋會換成目前這一個。
+${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
+名稱與所在位置不變,原本的搜尋不會留下。`,
+          okLabel: '取代',
+          onOk: () => {
+            const next = M.replaceBookmarkSearch(bm, cur);
+            if (!next) {
+              state.dataMsg = { ok: false, text: '目前這個網址看不出搜尋編號,沒有取代' };
+              render();
+              return;
+            }
+            const i = folder.bookmarks.findIndex((b) => b.id === bm.id);
+            if (i < 0) return;
+            folder.bookmarks[i] = next;
+            persist();
+            state.dataMsg = { ok: true, text: `已把「${next.name}」換成目前的搜尋` };
+            render();
+          },
+        });
+      });
+      repBtn.disabled = !canReplace;
+      acts.appendChild(repBtn);
+    }
     acts.appendChild(iconBtn('trash', '刪除', () => {
       confirmDialog({
         title: '刪除書籤',

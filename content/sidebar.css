@@ -354,6 +354,9 @@
 .pmz-iconact:hover { background: #33291d; color: #ffe8b8; }
 .pmz-iconact.pmz-on { color: #c9a66b; }
 .pmz-iconact.pmz-danger:hover { background: #3a2420; color: #e0a8a0; }
+/* 停用中的圖示鈕(例如沒開搜尋時的「取代」):看得到但按不動,滑過去也不亮 */
+.pmz-iconact:disabled { opacity: .35; cursor: default; }
+.pmz-iconact:disabled:hover { background: none; color: inherit; }
 /* 已釘選的書籤:名稱前一個小金針 */
 .pmz-pinned-mark { width: 12px; height: 12px; color: #c9a66b; flex: none; }
 .pmz-history-time { font-size: 11px; color: #7a6f5a; align-self: center; margin-right: 4px; }
