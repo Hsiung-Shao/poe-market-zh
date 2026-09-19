@@ -705,5 +705,9 @@ body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
    見 content/copy-item.js)。我們自己補上文字之後要把它放回來 ——
    官網是用它自己的樣式表隱藏的,只能用 !important 壓過去。
    只對掛上 pmz-copy-on 的那些鈕生效:拿不到 JSON 的那一列維持隱藏,
-   不要給一顆按了沒反應的鈕。 */
-.resultset .row button.copy.pmz-copy-on { display: block !important; }
+   不要給一顆按了沒反應的鈕。
+   ⚠ 顯示時機要跟**旁邊那兩顆官方的鈕一致**:`button.refresh` 與
+   `button.searchBy` 平時是 display:none,滑鼠移到那一列上才出現。
+   一直亮著的話這一列會比官方多一顆常駐的鈕,看起來不是同一套介面。 */
+.resultset .row button.copy.pmz-copy-on { display: none !important; }
+.resultset .row:hover button.copy.pmz-copy-on { display: block !important; }
