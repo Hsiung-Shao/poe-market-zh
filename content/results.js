@@ -169,16 +169,25 @@
     return [...forms];
   }
 
-  function buildPattern(enTpl) {
+  const anyPlural = (word) =>
+    `(?:${pluralAlternatives(word).map((w) => w.replace(REGEX_ESCAPE, '\\$&')).join('|')})`;
+
+  // allWords:把**每個**英文詞都放寬單複數,而不是只放寬 `#` 後面那一個。
+  // 只有字面數值槽位那條路徑會開(見 literalSlot):數值原本寫死在模板裡,
+  // 跟著它變複數的名詞未必緊接在槽位後面 ——「Expeditions contain 1 Vaal Relic」
+  // 變的是 Relic,而槽位後面第一個詞是 Vaal。開這個旗標的前提是**模板已由
+  // 官方 stat id 指定**,比對對象只有這一條,不是拿相似句子猜翻譯。
+  function buildPattern(enTpl, { allWords = false } = {}) {
     // 先切成「# / 其他」兩種片段,對非 # 片段轉義,# 變捕獲群組
     const parts = lineTrim(enTpl).split('#');
     let out = '';
     for (let i = 0; i < parts.length; i++) {
       let seg = parts[i].replace(REGEX_ESCAPE, '\\$&');
-      // 緊接在 # 後面的第一個英文詞放寬單複數(只有 i > 0 的片段才在 # 後面)
-      if (i > 0) {
-        seg = seg.replace(/^(\s+)([A-Za-z]+)\b/, (_m, sp, word) =>
-          `${sp}(?:${pluralAlternatives(word).map((w) => w.replace(REGEX_ESCAPE, '\\$&')).join('|')})`);
+      if (allWords) {
+        seg = seg.replace(/[A-Za-z]+/g, (word) => anyPlural(word));
+      } else if (i > 0) {
+        // 緊接在 # 後面的第一個英文詞放寬單複數(只有 i > 0 的片段才在 # 後面)
+        seg = seg.replace(/^(\s+)([A-Za-z]+)\b/, (_m, sp, word) => `${sp}${anyPlural(word)}`);
       }
       // 空白一律 \s+;換行兩側允許空白
       seg = seg.replace(/\n/g, '\\s*\\n\\s*').replace(/ +/g, '\\s+');
@@ -187,16 +196,50 @@
     return out;
   }
 
-  function renderWith(text, en, zh) {
+  function renderWith(text, en, zh, opts) {
     let m;
     try {
-      m = new RegExp(`^${buildPattern(en)}$`).exec(text);
+      m = new RegExp(`^${buildPattern(en, opts)}$`).exec(text);
     } catch (_) {
       return null; // 模板轉不成合法正則就放棄,交給後備路徑
     }
     if (!m) return null;
     let i = 1;
     return zh.replace(/#/g, () => m[i++] ?? '#');
+  }
+
+  // ── 字面數值槽位(2026-09-19)──
+  // 官方 API 有一整類模板**把數值寫死成字面量**而不是 `#`:
+  //   `Expeditions contain 1 Vaal Relic in Map` / 「地圖中的探險含有1個瓦爾遺物」
+  // 但這條詞綴實際值域是 1~2,物品印出來的是
+  //   `Expeditions contain 2 Vaal Relics in Map`
+  // 拿模板原樣組擷取正則永遠比不中(字面 1 對不上 2,Relic/Relics 還差一個 s,
+  // 而單複數放寬只套用在 `#` 後面那個詞)。live API 實測兩服**各只有這一個 id**,
+  // 沒有 1 / 2 各一條可查,所以不是查表查錯,是模板本身沒有槽位。
+  //
+  // 作法:英文模板恰有一個數值、中文模板也恰有同一個數值時,把兩邊那一個換成
+  // `#`,交給既有的 renderWith 走正常流程(順帶得到 `#` 後那個詞的單複數放寬)。
+  //
+  // ⚠ 只在原樣比對失敗後才跑 —— 既有命中一律優先,固定值的模板
+  //   (`Skills reserve 50% less Spirit` 這種)原樣就會中,走不到這裡。
+  // ⚠ 「恰一個」是硬性條件:多個數值時中英語序不保證一致,換了就是位置對位,
+  //   會把值填到錯的格子。兩邊本來就帶 `#` 的模板也一律不碰(新增槽位會讓
+  //   既有 `#` 的填入順序錯位)。
+  // ⚠ 兩代模板不共用(statMap / statMap2、ggpk.json / ggpk2.json、
+  //   /api/trade 與 /api/trade2 各自獨立,實測 1,109 個共用 id 裡有 463 個
+  //   文字不同)。這裡只換「當前這條詞綴自己的模板」裡的字面值,
+  //   不會拿另一代的模板來湊。
+  function literalSlot(en, zh) {
+    if (en.includes('#') || zh.includes('#')) return null;
+    const enNums = en.match(NUM_RE) ?? [];
+    if (enNums.length !== 1) return null;
+    const n = enNums[0];
+    // 中文側以**數值 token** 比對(不是子字串):否則模板裡的 `12` 會被當成
+    // 含有 `1`,換出來的槽位落在半個數字上
+    const zhNums = zh.match(NUM_RE) ?? [];
+    if (zhNums.filter((x) => x === n).length !== 1) return null;
+    const swap = (s) => s.replace(NUM_RE, (m) => (m === n ? '#' : m));
+    return { en: swap(en), zh: swap(zh) };
   }
 
   // 用美服模板當擷取正則:轉義正則特殊字元後,把 # 換成捕獲群組。
@@ -206,11 +249,22 @@
   function renderStat(text, enTpl, zhTpl) {
     const sym = applySymmetry(text, enTpl, zhTpl);
     if (!sym) return null;
-    const direct = renderWith(text, sym.en, sym.zh);
-    if (direct) return direct;
+    // 候選模板依序試,先原樣、再剝括號尾綴,最後才把字面數值當槽位
+    const forms = [sym];
     // 括號尾綴:英文模板有、畫面沒有 → 兩邊一起剝掉再比(中文沒有對應括號就不剝)
     if (TAIL_PAREN_EN.test(sym.en) && !TAIL_PAREN_EN.test(text) && TAIL_PAREN_ZH.test(sym.zh)) {
-      return renderWith(text, sym.en.replace(TAIL_PAREN_EN, ''), sym.zh.replace(TAIL_PAREN_ZH, ''));
+      forms.push({ en: sym.en.replace(TAIL_PAREN_EN, ''), zh: sym.zh.replace(TAIL_PAREN_ZH, '') });
+    }
+    for (const f of forms) {
+      const out = renderWith(text, f.en, f.zh);
+      if (out) return out;
+    }
+    // 最後才試字面數值槽位:整段單複數放寬只在這一步開(見 buildPattern 的 allWords)
+    for (const f of forms) {
+      const slotted = literalSlot(f.en, f.zh);
+      if (!slotted) continue;
+      const out = renderWith(text, slotted.en, slotted.zh, { allWords: true });
+      if (out) return out;
     }
     return null;
   }
