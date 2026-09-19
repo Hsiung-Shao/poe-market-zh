@@ -588,6 +588,37 @@
     };
   }
 
+  // ── 以目前的搜尋取代某個書籤的內容 ──
+  // 使用者的情境:同一個「找六鏈胸甲」的書籤,條件調過之後想直接蓋回去,
+  // 而不是刪掉重存(重存會失去名稱、釘選與在資料夾裡的位置)。
+  //
+  // 只換「這個書籤指到哪個搜尋」:searchId / type / realm,以及帶條件書籤的
+  // query 與 cachedSearchId。**名稱、釘選、id、createdAt、league 一律保留**
+  // (使用者裁定 2026-09-19:書籤名稱是自己取的,換搜尋不該連名字一起換)。
+  //
+  // ⚠ 回傳新物件而不是就地改:呼叫端要能在寫進去之前先確認「真的換得成」。
+  //   cur 不合法(沒有 search id)時回 null,呼叫端維持原狀並報錯。
+  // ⚠ 跨遊戲不換 —— 在 PoE1 頁面把 PoE2 書籤蓋成 PoE1 的搜尋,那個書籤就再也
+  //   開不出東西了。poeVersion 不同時直接回 null,由呼叫端在 UI 上先擋掉。
+  function replaceBookmarkSearch(bookmark, cur) {
+    if (!bookmark || !cur || !SEARCH_ID_RE.test(String(cur.searchId ?? ''))) return null;
+    if ((bookmark.poeVersion ?? 'Poe1') !== (cur.poeVersion ?? 'Poe1')) return null;
+    const next = sanitizeBookmark({
+      ...bookmark,
+      searchId: cur.searchId,
+      type: cur.type,
+      realm: cur.realm,
+      // 帶條件的書籤換成官方搜尋編號之後,那兩個欄位就沒有意義了(留著會讓
+      // buildTradeUrl 繼續走 ?q= 那條路,等於沒換)
+      query: null,
+      cachedSearchId: '',
+      cachedLeague: '',
+    });
+    // 名稱有可能是 sanitizeBookmark 依 searchId 補的預設值;原本有名字就留原本的
+    if (next && bookmark.name) next.name = bookmark.name;
+    return next;
+  }
+
   // 書籤存的是與聯盟無關的 search id,所以換季後舊書籤照樣能開。
   // 順序:**設定的聯盟** → 書籤自己存的 → 目前頁面 → 上次看到的 → Standard
   // 設定的聯盟排最前面是使用者裁定的(2026-08-14):書籤的聯盟由「聯盟」設定
@@ -922,6 +953,7 @@
     mapExtensionIcon,
     leagueFromHref,
     parseSearchUrl,
+    replaceBookmarkSearch,
     isLegacySearchId,
     planSearchIdAdoption,
     extractSearchState,

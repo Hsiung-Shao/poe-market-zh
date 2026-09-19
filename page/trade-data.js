@@ -73,8 +73,33 @@
     return `{"result":${raw}}`;
   }
 
+  // ── 結果列物品 JSON 的旁路(唯讀)──
+  // PoE2 的結果列要「複製物品」就得拿到官方的結構化 JSON(畫面上的文字已經被
+  // 我們翻成中文,回推只會複製出中文,PoB 解析不了)。官網本來就會抓這份,
+  // 我們**只複製一份送給 content script**,不改內容、不多發請求、不吃限流額度。
+  // 送出的是 MAIN world → isolated world 的 postMessage,失敗一律吞掉:
+  // 這條路徑壞掉只該讓那顆鈕不出現,不可以影響官網自己的結果列。
+  // 只攔 trade2:PoE1 的那顆鈕官網自己就會動,抓了也沒人用。
+  const FETCH_RE = /^\/api\/trade2\/fetch\//;
+  function tapFetch(url, promise) {
+    promise.then((res) => {
+      if (!res?.ok) return;
+      return res.clone().json().then((j) => {
+        const items = (j?.result ?? [])
+          .filter((r) => r?.item?.id)
+          .map((r) => ({ id: r.item.id, item: r.item }));
+        if (items.length) window.postMessage({ __pmz: 'items', items }, location.origin);
+      });
+    }).catch(() => {});
+  }
+
   window.fetch = function (input, init) {
     const url = urlOf(input);
+    if (url && FETCH_RE.test(url.pathname)) {
+      const p = origFetch.apply(this, arguments);
+      tapFetch(url, p);
+      return p;
+    }
     const m = url && DATA_RE.exec(url.pathname);
     if (!m) return origFetch.apply(this, arguments);
 
