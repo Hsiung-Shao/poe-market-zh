@@ -64,7 +64,9 @@
     // 免得哪天官網補上之後同一下點擊被處理兩次
     e.preventDefault();
     e.stopPropagation();
-    const text = IT.itemTextFor(item);
+    // 明講遊戲別:item-text.js 預設看 item.realm,但那是 GGG 的欄位,哪天不見了
+    // 不該讓 PoE2 悄悄退回 PoE1 的寫法(需求段兩款不同,見 item-text.js)。
+    const text = IT.itemTextFor(item, { game: 'poe2' });
     if (!text) return;
     navigator.clipboard.writeText(text).then(
       () => flash(btn, '已複製物品文字(可貼進 Path of Building)'),
