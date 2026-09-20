@@ -151,6 +151,11 @@
     push(modLines(item.enchantMods, ' (enchant)'));
     push(modLines(item.scourgeMods));
     push(modLines(item.implicitMods));
+    // PoE2 的符文/靈魂核心詞綴自成一段,**每條要帶 ` (rune)` 後綴** ——
+    // 那是遊戲進階複製的旗標,PoB 的 Item.lua 靠它把這些行收進 runeModLines;
+    // 不標的話會被當成固有詞綴算進去,數值來源就錯了。
+    // ⚠ PoE1 沒有這個欄位,不會受影響。
+    push(modLines(item.runeMods, ' (rune)'));
     // 一件裝備身上這幾種詞綴是**同一段**,遊戲不會用分隔線把它們拆開
     push([
       ...modLines(item.fracturedMods, ' (fractured)'),
