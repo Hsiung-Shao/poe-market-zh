@@ -59,6 +59,28 @@
     return `${name}: ${shown.join(', ')}`;
   }
 
+  // ── 需求段:兩款遊戲寫法不同,不可共用 ──
+  // PoE1 的進階複製是一段多行(語料 80/80 逐字元確認):
+  //     Requirements:
+  //     Level: 62
+  //     Str: 80
+  // PoE2 的客戶端字串是 `ItemRequirementsLabel` = 「Requires: 」(GGPK 實證),
+  // 畫面與交易站都印成**單行**:
+  //     Requires: Level 70, 99 Dex
+  //
+  // ⚠ 這裡照 PoE1 的寫法輸出會出事:PoB2 的 Item.lua 只認得 `Requires`(整行略過)
+  //   與 `Level`,**沒有 `Str`/`Dex`/`Int` 的分支** —— 那幾行會掉進「其他帶冒號的
+  //   都是詞綴」那一支,在 PoB 裡變成紅字「Dex: 99 (Not supported in PoB yet)」
+  //   (2026-09-20 使用者實機截圖)。
+  //
+  // displayMode 決定名稱與值的前後:0 = 名稱在前(Level 70),1 = 值在前(99 Dex)。
+  function requirementPart(r) {
+    const name = stripMarkup(r?.name);
+    const vals = (Array.isArray(r?.values) ? r.values : []).map((v) => stripMarkup(v?.[0])).join(', ');
+    if (!vals) return name;
+    return r?.displayMode === 1 ? `${vals} ${name}` : `${name} ${vals}`;
+  }
+
   // 詞綴陣列有兩種形態:純字串,或 `{ description, hash, mods }`(帶詞綴階級資料)。
   // 兩種都可能出現在同一個回應裡,所以逐筆判斷,不看第一筆就決定。
   // 部分詞綴在遊戲裡會標來源(附魔、工藝、分裂),官方正解語料逐條確認過。
@@ -105,6 +127,10 @@
   // opts.note:結果列上的價格備註(item.note 沒有時才用,例如 listing 那一側才有價)
   function buildItemText(item, opts) {
     if (!item || typeof item !== 'object') return null;
+    // 哪一款遊戲決定了需求段的寫法(見 requirementPart)。
+    // 預設看資料自己:PoE2 的每一筆 item 都帶 `realm: 'poe2'`,PoE1 沒有這個欄位 ——
+    // 用語言無關的資料欄位判定,不靠呼叫端記得傳。呼叫端要覆寫就傳 opts.game。
+    const isPoe2 = (opts?.game ?? item.realm) === 'poe2';
     const blocks = [];
     const push = (lines) => {
       const arr = (Array.isArray(lines) ? lines : [lines]).filter((l) => l != null && l !== '');
@@ -133,7 +159,7 @@
     ]);
 
     const reqs = Array.isArray(item.requirements) ? item.requirements : [];
-    if (reqs.length) push(['Requirements:', ...reqs.map(propLine)]);
+    if (reqs.length) push(isPoe2 ? [`Requires: ${reqs.map(requirementPart).join(', ')}`] : ['Requirements:', ...reqs.map(propLine)]);
 
     push(socketLine(item.sockets));
 
@@ -151,6 +177,11 @@
     push(modLines(item.enchantMods, ' (enchant)'));
     push(modLines(item.scourgeMods));
     push(modLines(item.implicitMods));
+    // PoE2 的符文/靈魂核心詞綴自成一段,**每條要帶 ` (rune)` 後綴** ——
+    // 那是遊戲進階複製的旗標,PoB 的 Item.lua 靠它把這些行收進 runeModLines;
+    // 不標的話會被當成固有詞綴算進去,數值來源就錯了。
+    // ⚠ PoE1 沒有這個欄位,不會受影響。
+    push(modLines(item.runeMods, ' (rune)'));
     // 一件裝備身上這幾種詞綴是**同一段**,遊戲不會用分隔線把它們拆開
     push([
       ...modLines(item.fracturedMods, ' (fractured)'),
