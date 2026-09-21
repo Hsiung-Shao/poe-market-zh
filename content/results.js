@@ -64,23 +64,31 @@
     // 兩條既有路徑都必然落空,因此改走逐個名稱 span 的專用路徑。
     // 傭兵契約書是 PoE1 3.29 的東西;PoE2 沒有這個區塊,選擇器留著也不會命中
     mercenaryBlock: '.item-mod--mercenary',
-    // ── 以下 per-game(2026-08-26 於 PoE2 活站逐項實測)──
-    // PoE1:<div class="itemName"><span class="lc">名稱</span></div>
-    // PoE2:<div class="item-popup item-popup--unique item-popup--poe2">
-    //         <div class="item-popup__header …">
-    //           <div class="item-popup__header-line">傳奇名 / 稀有名</div>
-    //           <div class="item-popup__header-line">基底名</div>
+    // ── 物品名 ──
+    // 兩款現在是**同一套**結構(PoE2 自 2026-08-26 實測;PoE1 於 2026-09-21 活站實測
+    // 發現官網已換成同一套,舊的 `.itemName` 一個都不剩 —— 使用者回報 PoE1 基底名全英文):
+    //   <div class="item-popup item-popup--unique …">
+    //     <div class="item-popup__header …">
+    //       <div class="item-popup__header-line">傳奇名 / 稀有名</div>
+    //       <div class="item-popup__header-line">基底名</div>
     //   一張卡最多兩行,兩行各自查表(官方 items 的傳奇名與基底名本來就是兩個欄位)。
-    // ⚠ `.notableProperty` / `.itemBoxContent` 在 PoE2 **都不存在**
-    //   (星團珠寶/塗油是 PoE1 才有的東西)。
-    itemName: IS_POE2 ? '.item-popup__header-line' : '.itemName .lc',
-    notable: IS_POE2 ? null : '.notableProperty', // 天賦卡(星團珠寶/塗油)
+    // PoE1 的舊結構 `<div class="itemName"><span class="lc">名稱</span></div>` 仍留作
+    // 後備:官網若分批上線或回滾,兩種都接得住。兩個選擇器不會同時命中同一個節點。
+    // ⚠ 修這類問題時**不要**只看詞綴:詞綴走 `.item-mod`(兩版共用、一直沒壞),
+    //   所以「詞綴有翻、名字沒翻」是改版的典型症狀,不是字典缺資料。
+    itemName: IS_POE2 ? '.item-popup__header-line' : '.item-popup__header-line, .itemName .lc',
+    // 天賦卡(星團珠寶/塗油)只有 PoE1 有。⚠ PoE1 改版後活站已找不到 `.notableProperty`
+    //   (2026-09-21 以大型星團珠寶實測:天賦內容改成一般的 `.item-mod--enchant` 行,
+    //   走詞綴路徑照樣有翻)。選擇器留著:沒命中就不做事,官網回滾時仍接得住。
+    notable: IS_POE2 ? null : '.notableProperty',
     notableTitle: '.colourAugmented',
     notableDesc: '.lc',
-    // 傳奇卡的根節點(PoE2)。同一個英文可以既是基底/寶石名又是傳奇名
+    // 傳奇卡的根節點。同一個英文可以既是基底/寶石名又是傳奇名
     // (`Briarpatch` = 寶石「荊棘叢」+ 傳奇靴「薔薇眼罩」,台服 trade2 兩者都證實),
     // 一張扁平表分不出來 —— 靠卡片自己的 BEM 修飾字判角色。
-    uniqueCard: IS_POE2 ? '.item-popup--unique' : null,
+    // PoE1 改版後同樣有這個修飾字;PoE1 沒有獨立的傳奇名表(uniqueMap 是空的),
+    // 查不到會退回 itemMap,行為與改版前相同。
+    uniqueCard: '.item-popup--unique',
   };
 
   // 與 bg/translation.js 的正規化規則一致(不含正負號)
