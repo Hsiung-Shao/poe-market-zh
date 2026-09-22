@@ -62,6 +62,21 @@
     color: #ffe8b8;
   }
   #clearCache { color: #b98a80; }
+  /* 介面語言兩顆:目前那顆金色填充 */
+  .lang-select {
+    width: 100%;
+    margin-top: 6px;
+    padding: 7px 8px;
+    background: #2a241c;
+    color: #ffe8b8;
+    border: 1px solid #c9a66b;
+    border-radius: 4px;
+    font: 600 14px/1.3 inherit;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .lang-select option { background: #1a1612; color: #cfc3a8; }
+  #zhOnly { display: flex; flex-direction: column; gap: 8px; }
   #clearCache:hover:not(:disabled) { border-color: #c96b6b; color: #e0a8a0; }
   /* ⚠ 一定要留這條:HTML 的 hidden 屬性等於 display:none,但**任何顯式的 display
      宣告都會蓋掉它** —— .toggle-row 的 display:flex 就讓 hidden 完全失效
@@ -114,27 +129,37 @@
     <span class="ver" id="version"></span>
   </header>
   <main>
+    <!-- 介面語言(uiLang):擴充自己的介面。English = 交易站不翻、不載任何中文資料 -->
     <div class="lang-card">
-      <div class="label">目前語系</div>
-      <div class="lang" id="langNow">…</div>
+      <div class="label" data-i18n="pop.uiLang">介面語言 / Language</div>
+      <!-- 選項由 popup.js 依 shared/i18n.js 的語言清單產生(加語言不必改這裡) -->
+      <select id="uiLangSel" class="lang-select" aria-label="Language"></select>
     </div>
-    <button id="applyZh">繁體中文化(ZH_TW)</button>
-    <button id="restoreEn">還原回英文(US)</button>
-    <button id="bilingualToggle" class="toggle-row"><span>詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
-    <button id="sidebarToggle" class="toggle-row"><span>側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
+    <!-- 以下三項只在中文介面出現(交易站翻不翻、雙語顯示) -->
+    <div id="zhOnly">
+      <div class="lang-card">
+        <div class="label" data-i18n="pop.langNow">目前語系</div>
+        <div class="lang" id="langNow">…</div>
+      </div>
+      <button id="applyZh" data-i18n="pop.applyZh">繁體中文化(ZH_TW)</button>
+      <button id="restoreEn" data-i18n="pop.restoreEn">還原回英文(US)</button>
+      <button id="bilingualToggle" class="toggle-row"><span data-i18n="pop.bilingual">詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
+    </div>
+    <button id="sidebarToggle" class="toggle-row"><span data-i18n="pop.sidebar">側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
     <!-- poe.ninja 的授權按鈕平常不顯示:安裝/更新後 background 會把這頁開成
          popup.html?ask=ninja 專門問一次,側邊欄設定裡的開關也是開這個網址。
          chrome.permissions.request 只能從擴充頁面呼叫,所以按鈕得留在這裡。 -->
-    <button id="ninjaToggle" class="toggle-row" hidden><span>物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
-    <button id="clearCache">清除快取</button>
+    <button id="ninjaToggle" class="toggle-row" hidden><span data-i18n="pop.ninja">物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
+    <button id="clearCache" data-i18n="pop.clearCache">清除快取</button>
     <div id="status"></div>
     <div id="dictInfo"></div>
   </main>
   <ol>
-    <li>套用後記得重新整理交易頁讓修改生效</li>
-    <li>POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具</li>
-    <li>開啟交易站時若翻譯資料超過 6 小時會自動背景更新;台服跟上改版後會自動補上新詞綴</li>
+    <li data-i18n="pop.tip1">套用後記得重新整理交易頁讓修改生效</li>
+    <li data-i18n="pop.tip2">POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具</li>
+    <li data-i18n="pop.tip3">開啟交易站時若翻譯資料超過 6 小時會自動背景更新;台服跟上改版後會自動補上新詞綴</li>
   </ol>
+  <script src="../shared/i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

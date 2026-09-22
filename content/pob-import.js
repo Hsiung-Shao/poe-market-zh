@@ -17,6 +17,13 @@
 (function (root) {
   'use strict';
 
+  // 使用者看得到的字串走 PMZ_I18N;離線驗證的 vm 沒有它 → 退回中文原文(與改動前相同)
+  const tr = (key, zh, vars) => {
+    const I18N = root.PMZ_I18N;
+    if (I18N) return I18N.t(key, vars);
+    return vars ? zh.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : zh;
+  };
+
   // 物品文字裡「key: value」形式的資料行,不是詞綴
   const META_KEYS = new Set([
     'Rarity', 'Unique ID', 'Item Level', 'LevelReq', 'Implicits', 'Quality', 'Sockets',
@@ -36,6 +43,8 @@
     'Crusader Item', 'Redeemer Item', 'Hunter Item', 'Warlord Item', 'Replica',
   ]);
 
+  // 部位的中文名(= i18n 表 `pob.slot.<部位>` 的 zh 值,verify-i18n 鎖住兩邊相同)。
+  // 顯示一律走 slotLabel(),依介面語言出中文或英文。
   const SLOT_ZH = {
     'Weapon 1': '主手', 'Weapon 2': '副手',
     'Weapon 1 Swap': '換手主手', 'Weapon 2 Swap': '換手副手',
@@ -44,7 +53,11 @@
     'Flask 1': '藥水 1', 'Flask 2': '藥水 2', 'Flask 3': '藥水 3', 'Flask 4': '藥水 4', 'Flask 5': '藥水 5',
     Trinket: '飾品', Charm: '護符',
   };
-  const CATEGORIES = ['武器', '防具', '飾品', '珠寶', '藥水', '其他'];
+  // 分類是**語言無關的 id**,顯示名走 categoryLabel()(會變成資料夾名)
+  const CATEGORIES = ['weapon', 'armour', 'accessory', 'jewel', 'flask', 'other'];
+  const CATEGORY_ZH = { weapon: '武器', armour: '防具', accessory: '飾品', jewel: '珠寶', flask: '藥水', other: '其他' };
+  const categoryLabel = (c) => tr(`pob.cat.${c}`, CATEGORY_ZH[c] ?? c);
+  const slotLabel = (slot) => (SLOT_ZH[slot] ? tr(`pob.slot.${slot}`, SLOT_ZH[slot]) : String(slot ?? ''));
 
   // ── local 詞綴 ──
   // 官方交易站對「只影響這件裝備本身」的詞綴另發一個代碼,文字尾巴多 " (Local)"
@@ -102,32 +115,32 @@
   }
 
   function categoryOf(slotName, isJewel) {
-    if (isJewel) return '珠寶';
+    if (isJewel) return 'jewel';
     const s = String(slotName ?? '');
-    if (/^Weapon/.test(s)) return '武器';
-    if (/^(Helmet|Body Armour|Gloves|Boots)$/.test(s)) return '防具';
-    if (/^(Amulet|Ring|Belt|Trinket)/.test(s)) return '飾品';
-    if (/^Flask/.test(s)) return '藥水';
-    return '其他';
+    if (/^Weapon/.test(s)) return 'weapon';
+    if (/^(Helmet|Body Armour|Gloves|Boots)$/.test(s)) return 'armour';
+    if (/^(Amulet|Ring|Belt|Trinket)/.test(s)) return 'accessory';
+    if (/^Flask/.test(s)) return 'flask';
+    return 'other';
   }
 
   // ── PoB code → XML ──
   async function decodePobCode(text) {
     const cleaned = String(text ?? '').replace(/\s+/g, '');
-    if (!cleaned) throw new Error('沒有內容');
+    if (!cleaned) throw new Error(tr('pob.err.empty', '沒有內容'));
     const std = cleaned.replace(/-/g, '+').replace(/_/g, '/');
     const padded = std + '='.repeat((4 - (std.length % 4)) % 4);
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(padded)) throw new Error('這段文字不是 PoB code(不是 base64)');
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(padded)) throw new Error(tr('pob.err.notBase64', '這段文字不是 PoB code(不是 base64)'));
     let bytes;
     try {
       const binary = root.atob(padded);
       bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     } catch (_) {
-      throw new Error('這段文字不是 PoB code(base64 解不開)');
+      throw new Error(tr('pob.err.badBase64', '這段文字不是 PoB code(base64 解不開)'));
     }
     // PoB 用的是帶 zlib 標頭的 deflate(magic 78 xx),對應 'deflate' 而不是 'deflate-raw'
-    if (bytes.length < 2 || bytes[0] !== 0x78) throw new Error('這段文字不是 PoB code(不是 zlib 壓縮)');
+    if (bytes.length < 2 || bytes[0] !== 0x78) throw new Error(tr('pob.err.notZlib', '這段文字不是 PoB code(不是 zlib 壓縮)'));
     let xml;
     try {
       const stream = new root.DecompressionStream('deflate');
@@ -136,9 +149,9 @@
       );
       xml = await decompressed.text();
     } catch (err) {
-      throw new Error(`PoB code 解壓失敗:${String(err?.message ?? err)}`);
+      throw new Error(tr('pob.err.inflate', 'PoB code 解壓失敗:{error}', { error: String(err?.message ?? err) }));
     }
-    if (!/<PathOfBuilding/.test(xml)) throw new Error('解出來的不是 Path of Building 存檔');
+    if (!/<PathOfBuilding/.test(xml)) throw new Error(tr('pob.err.notPob', '解出來的不是 Path of Building 存檔'));
     return xml;
   }
 
@@ -350,8 +363,8 @@
       items.push({
         ...parsed,
         slot: slot.name ?? '',
-        slotZh: SLOT_ZH[slot.name] ?? slot.name ?? '',
-        category: abyssal ? '珠寶' : categoryOf(slot.name, false),
+        slotZh: slotLabel(slot.name),
+        category: abyssal ? 'jewel' : categoryOf(slot.name, false),
       });
     }
     for (const id of jewelIds) {
@@ -361,7 +374,7 @@
       const parsed = parseItemText(block.text);
       if (!parsed) continue;
       seen.add(id);
-      items.push({ ...parsed, slot: 'Jewel', slotZh: '珠寶', category: '珠寶' });
+      items.push({ ...parsed, slot: 'Jewel', slotZh: categoryLabel('jewel'), category: 'jewel' });
     }
 
     const className = build.ascendClassName && build.ascendClassName !== 'None'
@@ -371,7 +384,7 @@
       className: build.className ?? '',
       ascendClassName: build.ascendClassName ?? '',
       level: build.level ?? '',
-      buildName: className ? `${className}${build.level ? ` Lv${build.level}` : ''}` : 'PoB 匯入',
+      buildName: className ? `${className}${build.level ? ` Lv${build.level}` : ''}` : tr('pob.defaultBuild', 'PoB 匯入'),
       items,
       skipped: blocks.length - items.length, // 解不出來或沒有裝在身上的
     };
@@ -386,25 +399,32 @@
       const { query, unmatched, filters } = itemToQuery(item, statIndex);
       const unique = item.rarity === 'UNIQUE' || item.rarity === 'RELIC';
       if (!item.base && !unique) report.noBase.push(item.name);
-      if (unmatched.length) report.unmatchedMods.push(...unmatched.map((m) => `${item.name}:${m}`));
+      if (unmatched.length) {
+        report.unmatchedMods.push(...unmatched.map((m) => tr('pob.pair', '{a}:{b}', { a: item.name, b: m })));
+      }
       if (filters) report.withFilters++;
       report.items++;
       const cat = item.category;
       if (!groups.has(cat)) groups.set(cat, []);
       groups.get(cat).push({
-        name: `${item.slotZh}:${item.name}`,
+        name: tr('pob.pair', '{a}:{b}', { a: item.slotZh, b: item.name }),
         query,
         rarity: item.rarity,
         unmatched,
       });
     }
     // 依固定順序輸出,免得資料夾每次匯入排列都不一樣
-    const ordered = CATEGORIES.filter((c) => groups.has(c)).map((c) => ({ category: c, items: groups.get(c) }));
+    // category = 語言無關的 id(排序與測試用),label = 資料夾名(依介面語言)
+    const ordered = CATEGORIES.filter((c) => groups.has(c))
+      .map((c) => ({ category: c, label: categoryLabel(c), items: groups.get(c) }));
     return { buildName: parsed.buildName, groups: ordered, report };
   }
 
   const api = {
     CATEGORIES,
+    CATEGORY_ZH,
+    categoryLabel,
+    slotLabel,
     SLOT_ZH,
     LOCAL_WEAPON_MODS,
     LOCAL_ARMOUR_MODS,

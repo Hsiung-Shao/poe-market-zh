@@ -85,6 +85,11 @@ const PMZ_TAG = PMZ_GAME.label;
 // 交給 document_end 的 results.js / sidebar.js 用(那個時點跨檔 globalThis 是可靠的,
 // 壞掉的只有 document_start 那一刻)。它們仍各自有備援,不會因為這裡沒設就整支死掉。
 globalThis.PMZ_GAME = PMZ_GAME;
+// 站別:國際服 `pathofexile.com` / 台服 `pathofexile.tw`。台服頁面本身就是中文,
+// 不載任何詞綴資料、不碰官網快取、不送建置(見 main() 開頭)。
+// ⚠ 其他 content script 各自有同一條判定當備援(results.js / sidebar.js …)。
+const PMZ_SITE = /(^|\.)pathofexile\.tw$/.test(location.hostname) ? 'tw' : 'intl';
+globalThis.PMZ_SITE = PMZ_SITE;
 
 const LSCACHE_KEYS = PMZ_GAME.lscache;
 const LOCAL_UPDATED = 'ptm-local-updated'; // 舊版鍵,只保留清除用
@@ -223,6 +228,9 @@ async function main() {
   // 注入**一起擋,那種情況下拿到再多資料也沒有地方用;若只是背景請求被擋,翻譯
   // 其實還活著。診斷訊息靠這筆分流(見 diagnoseApiFailure)。
   chrome.storage.local.set({ contentAliveAt: Date.now() }).catch(() => {});
+  // 台服:頁面本身就是中文,這支腳本的工作(lscache 覆寫、UI 字典、觸發建置)一件都不做。
+  // gamesSeen 也不記 —— 它決定背景要建哪幾款的**中文翻譯資料**,台服用不到。
+  if (PMZ_SITE === 'tw') return;
   markGameSeen();
 
   const K = PMZ_GAME.store;
@@ -232,8 +240,15 @@ async function main() {
   //   加上另一端的讀取與解析更多。這裡是 document_start,每開一個交易站分頁都在
   //   付,偏偏**簽章相符時它會被原封不動丟掉**(常態就是相符)。
   //   改成算完簽章、確定真的要寫 lscache 才去拿,見下方 needTranslation。
-  const stored = await chrome.storage.local.get(['language', K.updated, K.uiExtra]);
-  const language = stored.language;
+  const stored = await chrome.storage.local.get(['language', 'uiLang', K.updated, K.uiExtra]);
+  // 只有使用者選了中文介面才翻(使用者 2026-09-21 裁定):English 不載任何中文資料;
+  // 還沒選語言(全新安裝)也不翻、不觸發建置。舊使用者更新時已補成 'zh'。
+  // ⚠ 沒有 uiLang 但有 language = 329.5.9 以前的舊使用者 = 中文(與 shared/i18n.js 的
+  //   effectiveUiLang 同一條規則):更新後這一頁可能搶在背景補值之前載入,不能被當成沒選語言。
+  const ui = stored.uiLang === 'zh' || stored.uiLang === 'en'
+    ? stored.uiLang
+    : stored.language !== undefined ? 'zh' : undefined;
+  const language = ui === 'zh' ? stored.language : 'us';
   const updated = stored[K.updated];
   const uiExtra = stored[K.uiExtra];
 

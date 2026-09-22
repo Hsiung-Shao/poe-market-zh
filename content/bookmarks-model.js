@@ -14,6 +14,22 @@
   'use strict';
 
   const VERSION = 3;
+  // 使用者看得到的字串走 PMZ_I18N(content script 有載 shared/i18n.js);
+  // 離線驗證的 vm 沒有它 → 退回中文原文(與改動前逐字相同)。
+  // ⚠ 預設名稱(未命名、我的書籤…)會**存進資料**,所以存的是建立當下的介面語言。
+  // tools/verify-i18n.mjs 鎖住這裡的中文原文與 i18n 表的 zh 值逐字相同。
+  const tr = (key, zh, vars) => {
+    const I18N = root.PMZ_I18N;
+    if (I18N) return I18N.t(key, vars);
+    return vars ? zh.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : zh;
+  };
+  // 站別:書籤與歷史兩服共用一份(使用者 2026-09-21 裁定),網址用當下的網域組;
+  // 但**聯盟名與官方搜尋編號是各服各自的**(台服聯盟是中文),所以要記得出身。
+  const SITES = new Set(['intl', 'tw']);
+  const scopeFields = (s) => (SITES.has(s?.site) && GAME_VERSIONS.has(s?.poeVersion)
+    ? { site: s.site, poeVersion: s.poeVersion }
+    : {});
+  const siteOf = (origin) => (/(^|[/.])pathofexile\.tw(\/|:|$)/.test(String(origin ?? '')) ? 'tw' : 'intl');
   const DEFAULT_ICON = '📁';
   // 官方 search id 的字元集。3.29.3b 起官網**不再產生 10 碼短編號**,改成把整個查詢
   // gzip 之後以 **base64url** 編碼塞進網址(`H4sI…`,長度隨查詢複雜度變動),
@@ -32,8 +48,8 @@
   // 舊短編號只有 10 碼,拿來當書籤預設名稱還說得過去;新格式是整個查詢的
   // gzip,動輄一百多個字元 —— 直接當名字會把書籤列撠成一堆亂碼。
   function defaultName(searchId) {
-    if (!searchId) return '自訂搜尋';
-    return searchId.length <= 24 ? searchId : '搜尋條件';
+    if (!searchId) return tr('bm.customSearch', '自訂搜尋');
+    return searchId.length <= 24 ? searchId : tr('bm.searchQuery', '搜尋條件');
   }
 
   // 舊格式(官方短編號):還開得起來,但它的查詢內容只存在官方 server 上,
@@ -60,13 +76,17 @@
     return `${prefix}-${Date.now().toString(36)}-${seq.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  function newFolder(name, icon, parentId) {
+  // scope = { site, poeVersion }:這個資料夾是在哪個空間建的(國際服/台服 × PoE1/PoE2,
+  // 使用者 2026-09-23 裁定四個空間互不相見)。只決定**空資料夾**顯示在哪;有書籤的資料夾
+  // 跟著書籤走。沒給 = 不綁空間(匯入、舊資料),欄位就不寫,舊版讀到也不受影響。
+  function newFolder(name, icon, parentId, scope) {
     return {
       id: newId('fd'),
-      name: String(name ?? '').trim() || '未命名',
+      name: String(name ?? '').trim() || tr('bm.untitled', '未命名'),
       icon: icon || DEFAULT_ICON,
       parentId: parentId ?? null,
       collapsed: false,
+      ...scopeFields(scope),
       bookmarks: [],
     };
   }
@@ -86,11 +106,14 @@
       const cached = String(raw.cachedSearchId ?? '').trim();
       return {
         id: typeof raw.id === 'string' && raw.id ? raw.id : newId('bm'),
-        name: String(raw.name ?? '').trim() || '自訂搜尋',
+        name: String(raw.name ?? '').trim() || tr('bm.customSearch', '自訂搜尋'),
         searchId: '',
         query,
         cachedSearchId: SEARCH_ID_RE.test(cached) ? cached : '',
         cachedLeague: typeof raw.cachedLeague === 'string' ? raw.cachedLeague : '',
+        // 快取的編號是在哪一服建的(另一服不認得那個編號)。舊資料沒有這欄 = 國際服
+        cachedSite: SITES.has(raw.cachedSite) ? raw.cachedSite : 'intl',
+        site: SITES.has(raw.site) ? raw.site : 'intl',
         league: typeof raw.league === 'string' && raw.league && raw.league !== 'Auto' ? raw.league : null,
         type: TYPES.has(raw.type) ? raw.type : 'search',
         poeVersion: GAME_VERSIONS.has(raw.poeVersion) ? raw.poeVersion : 'Poe1',
@@ -105,6 +128,8 @@
       name: String(raw.name ?? '').trim() || defaultName(searchId),
       searchId,
       league, // null = 開啟時才決定(Extension 的 "Auto")
+      // 建立時所在的站。只影響「書籤自己存的聯盟」能不能用(見 resolveLeague);舊資料 = 國際服
+      site: SITES.has(raw.site) ? raw.site : 'intl',
       realm: PC_REALMS.has(raw.realm) ? raw.realm : '',
       type: TYPES.has(raw.type) ? raw.type : 'search',
       poeVersion: GAME_VERSIONS.has(raw.poeVersion) ? raw.poeVersion : 'Poe1',
@@ -129,10 +154,11 @@
       }
       return {
         id: typeof f.id === 'string' && f.id ? f.id : newId('fd'),
-        name: String(f.name ?? '').trim() || '未命名',
+        name: String(f.name ?? '').trim() || tr('bm.untitled', '未命名'),
         icon: f.icon || DEFAULT_ICON,
         parentId: typeof f.parentId === 'string' && f.parentId ? f.parentId : null,
         collapsed: f.collapsed === true,
+        ...scopeFields(f),
         bookmarks,
         _dropped: dropped.length,
       };
@@ -167,7 +193,7 @@
     if (Array.isArray(data?.folders)) return { version: VERSION, folders: normalizeFolders(data.folders) };
     if (Array.isArray(data?.bookmarks)) {
       // PoE Trade Mate v1:扁平書籤清單,包成一個資料夾
-      const folder = newFolder('我的書籤', DEFAULT_ICON, null);
+      const folder = newFolder(tr('bm.myBookmarks', '我的書籤'), DEFAULT_ICON, null);
       folder.bookmarks = data.bookmarks.map(sanitizeBookmark).filter(Boolean);
       return { version: VERSION, folders: [folder] };
     }
@@ -249,9 +275,9 @@
     } else {
       parentId = target.parentId ?? null;
     }
-    if (parentId === moved.id) return { error: '不能把資料夾放進自己底下' };
+    if (parentId === moved.id) return { error: tr('bm.err.selfParent', '不能把資料夾放進自己底下') };
     if (parentId && childFolders(list, moved.id).length) {
-      return { error: `「${moved.name}」底下還有資料夾,不能再變成子資料夾(最多兩層)` };
+      return { error: tr('bm.err.twoLevels', '「{name}」底下還有資料夾,不能再變成子資料夾(最多兩層)', { name: moved.name }) };
     }
     const beforeId = position === 'inside' && parentId === target.id ? null : target.id;
     const after = position === 'after' || (position === 'inside' && parentId === target.parentId);
@@ -320,7 +346,7 @@
       for (const b of Array.isArray(f.bookmarks) ? f.bookmarks : []) {
         const clean = sanitizeBookmark({ ...b, id: undefined });
         if (clean) folder.bookmarks.push(clean);
-        else report.droppedBookmarks.push({ folder: folder.name, name: String(b?.name ?? '(無名稱)') });
+        else report.droppedBookmarks.push({ folder: folder.name, name: String(b?.name ?? tr('bm.noName', '(無名稱)')) });
       }
       if (typeof f.id === 'string' && f.id) idMap.set(f.id, folder.id);
       folders.push({ folder, srcParentId: typeof f.parentId === 'string' ? f.parentId : null });
@@ -351,13 +377,13 @@
 
   function decodeBase64Utf8(text) {
     const cleaned = String(text ?? '').replace(/\s+/g, '');
-    if (!cleaned) throw new Error('沒有內容');
+    if (!cleaned) throw new Error(tr('bm.err.empty', '沒有內容'));
     // 同時接受標準 base64 與 url-safe 變體(貼上時可能經過網址列)
     const std = cleaned.replace(/-/g, '+').replace(/_/g, '/');
     const padded = std + '='.repeat((4 - (std.length % 4)) % 4);
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(padded)) throw new Error('這段文字不是匯出碼(不是 base64)');
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(padded)) throw new Error(tr('bm.err.notBase64', '這段文字不是匯出碼(不是 base64)'));
     const decode = root.atob;
-    if (typeof decode !== 'function') throw new Error('環境不支援 base64 解碼');
+    if (typeof decode !== 'function') throw new Error(tr('bm.err.noBase64', '環境不支援 base64 解碼'));
     const binary = decode(padded);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -371,14 +397,14 @@
     try {
       data = JSON.parse(json);
     } catch (_) {
-      throw new Error('這段文字不是匯出碼(內容不是 JSON)');
+      throw new Error(tr('bm.err.codeNotJson', '這段文字不是匯出碼(內容不是 JSON)'));
     }
     const folders = Array.isArray(data?.settings?.folders)
       ? data.settings.folders
       : Array.isArray(data?.folders)
         ? data.folders
         : null;
-    if (!folders) throw new Error('這份匯出碼裡沒有書籤資料');
+    if (!folders) throw new Error(tr('bm.err.codeNoBookmarks', '這份匯出碼裡沒有書籤資料'));
     return importFolders(folders, opts);
   }
 
@@ -472,6 +498,7 @@
         league: typeof h.league === 'string' ? h.league : '',
         type: TYPES.has(h.type) ? h.type : 'search',
         poeVersion: GAME_VERSIONS.has(h.poeVersion) ? h.poeVersion : 'Poe1',
+        site: SITES.has(h.site) ? h.site : 'intl',
         name: String(h.name ?? '').trim() || searchId,
         at: Number.isFinite(h.at) ? h.at : Date.now(),
       });
@@ -488,7 +515,7 @@
     try {
       data = JSON.parse(String(text ?? ''));
     } catch (_) {
-      throw new Error('檔案內容不是 JSON');
+      throw new Error(tr('bm.err.fileNotJson', '檔案內容不是 JSON'));
     }
     const isBackup = !!data && typeof data === 'object' && data.kind === BACKUP_KIND && Array.isArray(data.folders);
     if (!isBackup) return { isBackup: false, ...parseBookmarkFile(text, opts) };
@@ -509,13 +536,13 @@
     try {
       data = JSON.parse(String(text ?? ''));
     } catch (_) {
-      throw new Error('檔案內容不是 JSON');
+      throw new Error(tr('bm.err.fileNotJson', '檔案內容不是 JSON'));
     }
     if (Array.isArray(data?.folders)) return importFolders(data.folders, opts);
     if (Array.isArray(data?.bookmarks)) {
-      return importFolders([{ name: '我的書籤', bookmarks: data.bookmarks }], opts);
+      return importFolders([{ name: tr('bm.myBookmarks', '我的書籤'), bookmarks: data.bookmarks }], opts);
     }
-    throw new Error('這個檔案裡沒有書籤資料');
+    throw new Error(tr('bm.err.fileNoBookmarks', '這個檔案裡沒有書籤資料'));
   }
 
   // ── 圖示 ──
@@ -624,9 +651,16 @@
   // 設定的聯盟排最前面是使用者裁定的(2026-08-14):書籤的聯盟由「聯盟」設定
   // 統一決定,書籤列不再有「自動/固定」切換鈕。書籤自己的 league 仍然保存
   // (從 PoE Trade Extension 匯入的固定聯盟不會被丟掉),只在設定為「自動」時才用。
+  //
+  // ⚠ 跨服(2026-09-21):書籤兩服共用,但**聯盟名是各服各自的**(台服是中文「亡焰咒海」)。
+  //   書籤自己存的聯盟只在「書籤出身的站 === 現在的站」時才採用,否則國際服的書籤到
+  //   台服會開到一個不存在的聯盟、而且完全無聲。settingLeague / lastLeague 由呼叫端
+  //   給**現在這個站**的那一份。`opts.site` 沒給 = 國際服(舊呼叫端的行為不變)。
   function resolveLeague(bookmark, href, opts) {
     const o = typeof opts === 'string' ? { lastLeague: opts } : (opts ?? {});
-    return o.settingLeague || bookmark?.league || leagueFromHref(href) || o.lastLeague || 'Standard';
+    const here = SITES.has(o.site) ? o.site : 'intl';
+    const own = bookmark?.league && (bookmark.site ?? 'intl') === here ? bookmark.league : null;
+    return o.settingLeague || own || leagueFromHref(href) || o.lastLeague || 'Standard';
   }
 
   function buildTradeUrl(origin, bookmark, league) {
@@ -640,7 +674,9 @@
     // 存查詢條件的書籤:官網吃 ?q=<url-encoded JSON>,會自己建立搜尋並換上 search id
     if (!bookmark?.searchId && bookmark?.query) {
       // 上次開過而且還是同一個聯盟 → 直接用記下來的編號,省掉「重建搜尋」那一趟
-      if (bookmark.cachedSearchId && bookmark.cachedLeague === (league || 'Standard')) {
+      // ⚠ 編號是某一服建的,另一服不認得 → 站不同就退回 ?q= 重建
+      if (bookmark.cachedSearchId && bookmark.cachedLeague === (league || 'Standard')
+        && (bookmark.cachedSite ?? 'intl') === siteOf(origin)) {
         return `${base}/${encodeURIComponent(bookmark.cachedSearchId)}`;
       }
       return `${base}?q=${encodeURIComponent(JSON.stringify(bookmark.query))}`;
@@ -655,7 +691,7 @@
   // sidebar 只負責把結果寫回去。
   //
   // 回 null = 什麼都不做;否則回
-  //   { kind: 'cache',   searchId, league }  帶條件的書籤:記下官網建好的編號
+  //   { kind: 'cache',   searchId, league, site }  帶條件的書籤:記下官網建好的編號(與建在哪一服)
   //   { kind: 'upgrade', searchId, name   }  舊短編號:換成新格式網址
   //   { kind: 'wait' }                        官網還沒把網址換成新格式,這一轪先別動
   //
@@ -663,15 +699,18 @@
   //   而升級靠的就是 pending —— 在官網 replaceState **之前**跑的那一次如果回 null,
   //   pending 就死在那裡,等網址真的換成新格式時已經沒東西可以對應,
   //   升級永遠不會發生(329.5.1 就是這樣壞的)。
-  function planSearchIdAdoption(bookmark, currentSearchId, pendingLeague) {
+  // `site` = 現在這一頁的站(沒給 = 國際服)。
+  function planSearchIdAdoption(bookmark, currentSearchId, pendingLeague, site) {
     const cur = String(currentSearchId ?? '').trim();
     if (!bookmark || !SEARCH_ID_RE.test(cur)) return null;
+    const here = SITES.has(site) ? site : 'intl';
 
     if (!bookmark.searchId && bookmark.query) {
       // 帶條件的書籤:把官網建好的編號記起來,省掉下次那一段往返。
-      // 已經是同一個編號與同一個聯盟就不必再寫一次。
-      if (bookmark.cachedSearchId === cur && bookmark.cachedLeague === pendingLeague) return null;
-      return { kind: 'cache', searchId: cur, league: pendingLeague ?? '' };
+      // 已經是同一個編號、同一個聯盟、同一服就不必再寫一次。
+      if (bookmark.cachedSearchId === cur && bookmark.cachedLeague === pendingLeague
+        && (bookmark.cachedSite ?? 'intl') === here) return null;
+      return { kind: 'cache', searchId: cur, league: pendingLeague ?? '', site: here };
     }
 
     if (isLegacySearchId(bookmark.searchId) && isLegacySearchId(cur)) {
@@ -773,9 +812,10 @@
   // 對到本擴充:league null(Auto)、realm ''、poeVersion 由 version 決定。
   const BT_SECTION = '--------------------';
   const BT_LINE_RE = /^(?:[23]:)?[A-Za-z0-9+/=]+$/;
-  // 它的圖示 slug → data/icons.json 的英文鍵(iconIndex 的鍵)。PoE2 那 35 張圖直接取自
-  // Better Trading(MIT,github.com/exile-center/better-trading)放在 icons/folder/,
-  // icons.json 的 PoE2 分區以「中文 (PoE2 · English)」命名,鍵就是「PoE2 · English」。
+  // 它的圖示 slug → data/icons.json 的英文鍵(iconIndex 的鍵)。icons.json 的 PoE2 分區以
+  // 「中文 (PoE2 · English)」命名,鍵就是「PoE2 · English」。
+  // 2026-09-23 起那一區的圖改用官方 CDN(通貨)與 poe2wiki(昇華,23 個),由 tools/gen-poe2-icons.mjs 產生;
+  // 原本取自 Better Trading(MIT)的 35 張本機檔仍留在 icons/folder/ —— 舊書籤存的是那個路徑。
   // PoE1 的 exalt / mirror / essence / 職業等本擴充沒有對應圖,落預設並列在 unknownIcons,不猜。
   const BT_ICON_MAP = {
     chaos: 'Chaos Orb', divine: 'Divine Orb', map: 'Map (Tier 16)',
@@ -823,10 +863,10 @@
     try {
       data = JSON.parse(json);
     } catch (_) {
-      throw new Error('不是 Better PathOfExile Trading 的資料夾匯出碼(內容不是 JSON)');
+      throw new Error(tr('bm.err.btNotJson', '不是 Better PathOfExile Trading 的資料夾匯出碼(內容不是 JSON)'));
     }
     if (!data || typeof data !== 'object' || !Array.isArray(data.trs)) {
-      throw new Error('不是 Better PathOfExile Trading 的資料夾匯出碼(沒有 trs)');
+      throw new Error(tr('bm.err.btNoTrs', '不是 Better PathOfExile Trading 的資料夾匯出碼(沒有 trs)'));
     }
     return { version, data };
   }
@@ -863,10 +903,10 @@
         poeVersion: String(ver) === '2' ? 'Poe2' : 'Poe1',
       });
     }
-    const name = String(data.tit ?? '').trim() || '未命名';
+    const name = String(data.tit ?? '').trim() || tr('bm.untitled', '未命名');
     const rawIcon = String(data.icn ?? '').trim();
     const raw = {
-      name: archived ? `${name}(封存)` : name,
+      name: archived ? tr('bm.archived', '{name}(封存)', { name }) : name,
       icon: '',
       collapsed: archived,
       bookmarks,
@@ -886,7 +926,7 @@
   function parseBetterTradingBackup(text, opts) {
     const iconIndex = opts?.iconIndex ?? null;
     const src = String(text ?? '').replace(/\r\n/g, '\n');
-    if (!src.trim()) throw new Error('沒有內容');
+    if (!src.trim()) throw new Error(tr('bm.err.empty', '沒有內容'));
     const [activePart, ...rest] = src.split(`\n${BT_SECTION}\n`);
     const archivedPart = rest.join(`\n${BT_SECTION}\n`);
     const pre = { unknownIcons: [] };
@@ -909,8 +949,8 @@
     eat(archivedPart, true);
     if (!rawFolders.length) {
       throw new Error(badLines.length
-        ? `這段文字不是 Better PathOfExile Trading 的匯出(${badLines[0].error})`
-        : '這份匯出裡沒有書籤資料');
+        ? tr('bm.err.btBad', '這段文字不是 Better PathOfExile Trading 的匯出({error})', { error: badLines[0].error })
+        : tr('bm.err.exportNoBookmarks', '這份匯出裡沒有書籤資料'));
     }
     // 圖示已經在上面對照成圖檔位址(或留空),importFolders 對空字串不再處理
     const { folders, report } = importFolders(rawFolders, { iconIndex });
@@ -959,6 +999,7 @@
     extractSearchState,
     encodeSearchQuery,
     defaultName,
+    siteOf,
     resolveLeague,
     buildTradeUrl,
   };

@@ -46,6 +46,7 @@ test('正常行映射:欄位齊全且 category 標記為傳入 type', () => {
     div: null, // 無 divineValue → null
     count: 12,
     variant: 'L1', // gemLevel 1 → 人話標示
+    corrupted: false, // 腐化旗標(標籤依介面語言由側邊欄附上)
   });
   assert.ok(out.every((i) => i.category === 'SkillGem'));
   // divineValue 原樣帶出,顯示與站方一致
@@ -53,8 +54,9 @@ test('正常行映射:欄位齊全且 category 標記為傳入 type', () => {
 });
 
 test('gemVariantLabel:等級/品質/腐化組人話標示', () => {
-  assert.equal(gemVariantLabel('SkillGem', { gemLevel: 20, gemQuality: 20, corrupted: true }), 'L20/Q20 腐');
-  assert.equal(gemVariantLabel('SkillGem', { gemLevel: 5, corrupted: true }), 'L5 腐');
+  // 腐化改由 mapItemLines 的 corrupted 旗標帶(標籤依介面語言在側邊欄附上)
+  assert.equal(gemVariantLabel('SkillGem', { gemLevel: 20, gemQuality: 20, corrupted: true }), 'L20/Q20');
+  assert.equal(gemVariantLabel('SkillGem', { gemLevel: 5, corrupted: true }), 'L5');
   assert.equal(gemVariantLabel('SkillGem', { gemLevel: 1 }), 'L1');
   assert.equal(gemVariantLabel('SkillGem', { gemLevel: 1, gemQuality: 23 }), 'L1/Q23');
   // 缺結構欄位退回原始 variant;ImbuedGem 一律用灌注名

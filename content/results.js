@@ -28,6 +28,8 @@
   }
   const TAG = GAME.label;
   const IS_POE2 = GAME.id === 'poe2';
+  // 站別(bootstrap.js 設;備援自算)。台服頁面本身就是中文 → 不翻
+  const SITE = globalThis.PMZ_SITE ?? (/(^|\.)pathofexile\.tw$/.test(location.hostname) ? 'tw' : 'intl');
   // storage 鍵:PoE2 一律 `2` 後綴(與 shared/games.js、bootstrap.js 同一組)
   const K = IS_POE2
     ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2', updated: 'updated2' }
@@ -620,6 +622,11 @@
   }
 
   async function processContainer(root) {
+    // 不翻譯(English 介面 / 關閉翻譯 / 台服站):只掛 ± 篩選按鈕,一個字都不改
+    if (!state.translate) {
+      globalThis.__pmzModRow?.(root, { translate: false });
+      return;
+    }
     // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
     // 物品名/天賦卡只需內建字典,各自獨立降級
     const mods = root.querySelectorAll(SELECTORS.mod);
@@ -728,14 +735,26 @@
     // 五張表一次 get 共 3.90 MB),而 `chrome.storage.local.get` 是跨程序搬運 ——
     // 每開一個交易站分頁都在開頁的關鍵路徑上付這個代價,偏偏交易站首頁
     // (還沒搜尋)一條詞綴都沒有。大表改成閒置時預載,見下方 preloadBigTables。
+    // 台服站、English 介面、關閉翻譯:三者都不翻,但 ± 篩選按鈕照掛(它與語言無關)。
+    // ⚠ 台服這條先判、而且**不讀任何翻譯表**(使用者 2026-09-21 裁定:台服不載任何詞綴)。
+    const pre = await chrome.storage.local.get(['language', 'uiLang']);
+    // 沒有 uiLang:有 language = 舊使用者(中文);連 language 都沒有 = 新安裝還沒選 → 不翻
+    // (字串表沒載入也不能讓整支結果列翻譯停擺 → 退回同一條內嵌規則)
+    const ui = globalThis.PMZ_I18N?.effectiveUiLang(pre.uiLang, pre.language)
+      ?? (pre.uiLang === 'zh' || pre.uiLang === 'en' ? pre.uiLang : pre.language !== undefined ? 'zh' : undefined);
+    globalThis.PMZ_I18N?.setLang(ui);
+    state.translate = SITE !== 'tw' && ui === 'zh' && pre.language === 'zh_tw';
+    if (!state.translate) {
+      window.__ptmInternals = { SELECTORS, newContainerIn };
+      waitForResults();
+      return;
+    }
     const got = await chrome.storage.local.get([
-      'language',
       K.itemMap, // 0.24 MB,物品名一進頁面就可能要用
       K.uniqueMap,
       K.updated, // 只用來判斷「這一款到底建置過沒有」
       'bilingualMods',
     ]);
-    if (got.language !== 'zh_tw') return;
     state.itemMap = got[K.itemMap] ?? null; // 內建字典即可提供
     state.uniqueMap = got[K.uniqueMap] ?? null;
     state.bilingualMods = got.bilingualMods === true;
