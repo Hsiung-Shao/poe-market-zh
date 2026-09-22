@@ -567,6 +567,16 @@ img.pmz-price-icon { width: 26px; height: 26px; object-fit: contain; flex-shrink
 }
 .pmz-seg-btn:hover { border-color: #c9a66b; }
 .pmz-seg-active { background: #33291d; color: #ffe8b8; border-color: #c9a66b; }
+/* 全新安裝還沒選語言時,每個分頁頂端的選擇列 */
+.pmz-lang-choose {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: #211b14;
+  border: 1px solid #c9a66b;
+  border-radius: 4px;
+}
+.pmz-lang-choose-title { margin-bottom: 8px; color: #ffe8b8; font-size: 13px; }
+.pmz-lang-choose .pmz-seg-btn { flex: 1; }
 .pmz-credit { margin-top: 14px; font-size: 11px; color: #7a6f5a; }
 
 /* ── 兩層資料夾:子資料夾縮排 + 左側連接線 ── */

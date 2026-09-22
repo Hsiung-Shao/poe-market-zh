@@ -45,12 +45,14 @@ function parseIndexState(data) {
   return leagues.length ? { leagues, latest: leagues[0] } : null;
 }
 
-// 變體標示轉人話:SkillGem 依 gemLevel/gemQuality/corrupted 組「L5/Q20 腐」,
-// ImbuedGem 的 variant 為灌注名照用;缺結構欄位時退回原始 variant 字串
+// 變體標示轉人話:SkillGem 依 gemLevel/gemQuality 組「L5/Q20」,
+// ImbuedGem 的 variant 為灌注名照用;缺結構欄位時退回原始 variant 字串。
+// ⚠ 腐化**不寫進這裡**(2026-09-21 起):這份結果會快取在 storage.session、介面語言可以
+//   隨時切換,所以只存語言無關的 `corrupted` 旗標,「腐 / Corrupted」由側邊欄依語言附上。
 function gemVariantLabel(type, line) {
   if (type !== 'SkillGem' || typeof line.gemLevel !== 'number') return line.variant ?? null;
   const quality = typeof line.gemQuality === 'number' ? `/Q${line.gemQuality}` : '';
-  return `L${line.gemLevel}${quality}${line.corrupted ? ' 腐' : ''}`;
+  return `L${line.gemLevel}${quality}`;
 }
 
 // stash item overview lines → 物價清單項目(只進 list 不進 rates:寶石不是通貨);
@@ -69,6 +71,7 @@ function mapItemLines(type, data) {
       div: typeof line.divineValue === 'number' ? line.divineValue : null,
       count: line.count,
       variant: gemVariantLabel(type, line),
+      corrupted: type === 'SkillGem' && typeof line.gemLevel === 'number' && line.corrupted === true,
     });
   }
   out.sort((a, b) => b.value - a.value);

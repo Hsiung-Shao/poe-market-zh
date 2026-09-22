@@ -57,6 +57,9 @@ export const GAMES = {
     snapshot: { us: 'api-us.json', tw: 'api-tw.json' },
     store: STORE_KEYS.poe1,
     ggpkDict: 'ggpk.json',
+    // PoB 匯入用的純英文 stat 索引(只抓國際服 stats,不含任何中文;見 bg/translation.js)。
+    // 刻意不放進 store:store 那組鍵有 bootstrap.js 的逐鍵交叉鎖,而這份 bootstrap 用不到。
+    enStatIndex: 'statIndexEn',
     passives: true, // 天賦卡(星團珠寶/塗油)只有 PoE1 有
     // 台服已有 97.4% 的 stat id,開跨群橋接只多 357 條卻會動到已驗證的行為,
     // 值得另開一次帶稽核的變更,不順手做。
@@ -69,6 +72,7 @@ export const GAMES = {
     snapshot: { us: 'api2-us.json', tw: 'api2-tw.json' },
     store: STORE_KEYS.poe2,
     ggpkDict: 'ggpk2.json',
+    enStatIndex: 'statIndexEn2',
     passives: false,
     // 台服 trade2 只有 71.6% 的 stat id 有譯文,缺口幾乎全在 crafted/fractured,
     // 而同一個 stat 的 explicit 版有翻。守門見 bg/translation.js 的 bridgeTwStats。
@@ -79,4 +83,5 @@ export const GAMES = {
 export const GAME_IDS = Object.keys(GAMES);
 
 // 全部 storage 鍵(popup 的「清除快取」要一次清乾淨)
-export const allStoreKeys = () => GAME_IDS.flatMap((id) => Object.values(GAMES[id].store));
+export const allStoreKeys = () =>
+  GAME_IDS.flatMap((id) => [...Object.values(GAMES[id].store), GAMES[id].enStatIndex]);

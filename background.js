@@ -1,7 +1,7 @@
 // Service Worker 入口:只做訊息路由,狀態一律放 chrome.storage,
 // SW 隨時休眠不影響功能。
 
-import { buildTranslation, handleTranslationMessage } from './bg/translation.js';
+import { buildTranslation, chineseDataAllowed, handleTranslationMessage, purgeChineseData } from './bg/translation.js';
 import { handleNinjaMessage } from './bg/ninja.js';
 
 // 要建哪幾款遊戲的資料:**依使用者實際開過的交易站決定**(使用者 2026-08-26 裁定)。
@@ -17,16 +17,33 @@ async function gamesToBuild() {
   return seen.length ? seen : ['poe1'];
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const defaults = await chrome.storage.local.get('language');
-  const language = defaults.language ?? 'zh_tw';
-  await chrome.storage.local.set({ language });
+chrome.runtime.onInstalled.addListener(async (details) => {
+  const defaults = await chrome.storage.local.get(['language', 'uiLang']);
   // 舊版(≤ 329.5.2)的遠端字典快取鍵:translate.json 已併入 ggpk.json 的 legacyItems,
   // 這個鍵沒有任何程式會再讀,不清會永久留 400 KB 在 storage 裡
   await chrome.storage.local.remove('dict:translate.json').catch(() => {});
-  // 安裝/更新後立即建置,使用者開啟交易頁時內建字典已就緒
-  if (language === 'zh_tw') for (const g of await gamesToBuild()) buildTranslation(g);
+  // 介面語言(使用者 2026-09-21 裁定):**不自動判斷,由使用者自己選**。
+  //   · 全新安裝:開語言選擇頁,選好之前不建任何資料(chineseDataAllowed 要求 uiLang === 'zh')
+  //   · 舊使用者更新:沒有 uiLang → 補成 'zh',行為與以前完全相同
+  if (defaults.uiLang !== 'zh' && defaults.uiLang !== 'en') {
+    if (details?.reason === 'install') {
+      openExtensionPage(LANG_ASK_URL);
+      return; // 物價權限在語言選擇頁選完之後一起問,不另開第二個分頁
+    }
+    await chrome.storage.local.set({ uiLang: 'zh', language: defaults.language ?? 'zh_tw' });
+  }
+  // 安裝/更新後立即建置,使用者開啟交易頁時內建字典已就緒(English / 不翻時守門會擋下)
+  if (await chineseDataAllowed()) for (const g of await gamesToBuild()) buildTranslation(g);
   maybeAskForNinja();
+});
+
+// 切到 English:把已經下載的中文資料清掉(使用者 2026-09-21 要求)。
+// 掛在 storage 變更上而不是各個按鈕裡 —— popup 與側邊欄都能切,這裡一處保證都會清。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.uiLang) return;
+  if (changes.uiLang.newValue === 'en' && changes.uiLang.oldValue !== 'en') {
+    purgeChineseData().catch((err) => console.warn('[PTM] 清除中文資料失敗:', err));
+  }
 });
 
 // 資料更新不再走每日 alarm(2026-09-08 使用者裁定,alarms 權限一併移除):
@@ -39,6 +56,12 @@ chrome.runtime.onInstalled.addListener(async () => {
 const NINJA_ORIGIN = 'https://poe.ninja/*';
 
 const NINJA_ASK_URL = 'popup/popup.html?ask=ninja';
+// 全新安裝的語言選擇頁(同一支 popup,選完語言接著問物價權限)
+const LANG_ASK_URL = 'popup/popup.html?ask=lang';
+
+function openExtensionPage(url) {
+  chrome.tabs.create({ url: chrome.runtime.getURL(url) }).catch(() => { /* 開不起來:使用者仍可從 popup 選 */ });
+}
 
 function handlePermissionMessage(msg) {
   if (msg.t === 'perm:ninja') {

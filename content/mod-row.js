@@ -169,11 +169,12 @@
     // 抽得到數值就帶下限進去,抽不到就純加入 —— 同一顆按鈕、同一個位置。
     // ⚠ 2026-08-31 使用者裁定**移除中間那顆「純加入(不帶數值)」**:多一顆選擇
     //   讓每一列都要多想一次,而下限填錯了在篩選面板上改比較快。不要再加回來。
+    const t = (k, v) => globalThis.PMZ_I18N?.t(k, v) ?? k;
     const specs = [
       value != null
-        ? ['+', false, 'pmz-add', `加入篩選並帶入下限 ${value}`, value]
-        : ['+', false, 'pmz-plain', '加入篩選(這條沒有數值)', null],
-      ['−', true, 'pmz-ex', '加入排除條件', null],
+        ? ['+', false, 'pmz-add', t('modrow.addMin', { value }), value]
+        : ['+', false, 'pmz-plain', t('modrow.addPlain'), null],
+      ['−', true, 'pmz-ex', t('modrow.exclude'), null],
     ];
     for (const [label, exclude, cls, tip, min] of specs) {
       const b = document.createElement('button');
@@ -202,7 +203,7 @@
     // 群組名:.lc.r 的內容整段包在 .d 裡
     const nameEl = mod.querySelector(SELECTORS.name);
     const nameInner = nameEl?.querySelector(SELECTORS.inner) ?? nameEl;
-    if (nameInner) {
+    if (nameInner && state.translate !== false) {
       const raw = nameInner.textContent;
       const zh = modNameZh(raw);
       if (zh) {
@@ -220,7 +221,9 @@
   }
 
   let loading = null;
-  function ensureModNames() {
+  function ensureModNames(translate) {
+    // 不翻譯(English 介面、關閉翻譯、台服站)→ 群組名字典一個字都不讀,只畫按鈕
+    if (!translate) { state.modNames ??= {}; return Promise.resolve(); }
     if (loading) return loading;
     loading = chrome.storage.local
       .get(K)
@@ -240,7 +243,7 @@
         `篩選按鈕 ${state.buttons ? `${stat.btn} 條` : '未掛上(找不到官網篩選面板)'}`);
       // 字典整個是空的:代表 storage 裡沒有 modNames(擴充更新後尚未重建),
       // 不是「這些詞綴剛好都查不到」。這兩件事的處置完全不同,要講清楚。
-      if (stat.nameMiss && !Object.keys(state.modNames ?? {}).length) {
+      if (state.translate && stat.nameMiss && !Object.keys(state.modNames ?? {}).length) {
         console.warn(`[PTM/${GAME.label}] 詞綴群組名字典是空的,群組名全部顯示英文。` +
           '請在擴充選單按「清除快取」再按「繁體中文化(ZH_TW)」重建一次翻譯資料;' +
           '若重建後仍是空的,代表手上的字典檔沒有這款遊戲的群組名(等遠端字典更新)。');
@@ -250,10 +253,13 @@
 
   // results.js 的 processContainer 會在翻完詞綴文字之後呼叫這支。
   // 它改的是 .lc.s,我們改 .lc.r,兩邊互不干擾。
-  globalThis.__pmzModRow = async (root) => {
+  // `translate: false` = 只畫篩選按鈕、不動群組名(English 介面 / 關閉翻譯 / 台服站)。
+  // 沒帶參數視同要翻(舊呼叫端與離線驗證腳本的行為不變)。
+  globalThis.__pmzModRow = async (root, { translate = true } = {}) => {
     const mods = root.querySelectorAll?.(SELECTORS.mod);
     if (!mods?.length) return;
-    await ensureModNames();
+    state.translate = translate;
+    await ensureModNames(translate);
     // 每一批都重新問一次官網篩選面板在不在(SPA 會整個重建畫面)。
     // 掛不上就只做中文化、不畫按鈕 —— 畫一顆按不動的按鈕比沒有按鈕更糟。
     state.buttons = filterReady();

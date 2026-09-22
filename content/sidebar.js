@@ -12,6 +12,21 @@
   //   頂層 const dbg,放外面會得到 "Identifier 'dbg' has already been declared",
   //   整支側邊欄一行都不會執行(2026-08-14 實測)。results.js 也是放 IIFE 內。
   const dbg = (...a) => console.info(...a);
+  // 介面字串一律走 shared/i18n-sidebar.js 的表;語言由 init() 讀完 storage 後設定,
+  // 所以**不可在載入時就取字串**(模組層常數只放鍵,render 時才 tr)。
+  const tr = (k, v) => globalThis.PMZ_I18N.t(k, v);
+  // 資料帶來的字(圖示分區名等):表裡有這個鍵就翻,沒有就照資料原樣顯示
+  const trOr = (k, fallback) => {
+    const I18N = globalThis.PMZ_I18N;
+    return I18N.tables[I18N.getLang()]?.[k] ?? fallback;
+  };
+  // 圖示名稱多是「中文 (English)」:不翻交易站的介面語言只取括號裡的英文;純英文名照原樣
+  const iconTitle = (name) => {
+    const s = String(name ?? '');
+    if (globalThis.PMZ_I18N.langInfo(globalThis.PMZ_I18N.getLang()).translatesSite) return s;
+    const m = /[㐀-鿿][^(]*\((.+)\)\s*$/.exec(s);
+    return m ? m[1] : s;
+  };
   const M = globalThis.pmzBookmarks;
   if (!M) {
     console.warn('[PTM] 書籤資料模型未載入,側邊欄停用');
@@ -46,6 +61,15 @@
     ?? (/^\/trade2(\/|$)/.test(location.pathname) ? { id: 'poe2', label: 'PoE2' } : { id: 'poe1', label: 'PoE1' });
   const IS_POE2 = GAME.id === 'poe2';
   const POE_VER = IS_POE2 ? 'Poe2' : 'Poe1'; // 書籤/歷史的 poeVersion 欄位用的字面值
+  // 站別(2026-09-21):國際服 / 台服。台服拔掉翻譯、雙語、poe.ninja 物價三項;
+  // 書籤與歷史兩服共用,但聯盟名各服各自(台服是中文),所以聯盟設定分站存。
+  const SITE = (globalThis.PMZ_SITE
+    ?? (/(^|\.)pathofexile\.tw$/.test(location.hostname) ? 'tw' : 'intl')) === 'tw' ? 'tw' : 'intl';
+  const IS_TW = SITE === 'tw';
+  // 聯盟設定鍵:`league` / `lastLeague`(PoE1 國際服,舊鍵不動)+ `2`(PoE2)+ `Tw`(台服)
+  const leagueKey = (poeVersion, kind) => `${kind}${poeVersion === 'Poe2' ? '2' : ''}${IS_TW ? 'Tw' : ''}`;
+  // 這一頁有沒有物價分頁:poe.ninja 只有 PoE1 國際服的資料(台服拔掉,使用者裁定)
+  const HAS_PRICES = !IS_POE2 && !IS_TW;
 
   const DEFAULT_SETTINGS = {
     autoInstantBuyout: false, // 開頁自動把狀態設為「即刻購買」
@@ -63,6 +87,11 @@
     dragHintDismissed: false, // 書籤分頁頂部「怎麼拖曳」提示條按過「知道了」
     lastLeague: '', // PoE1 最後看到的聯盟,設定為「自動」時當退路
     lastLeague2: '', // PoE2 同上
+    // 台服各一份(聯盟名是中文,與國際服不通用;空字串 = 自動)
+    leagueTw: '',
+    league2Tw: '',
+    lastLeagueTw: '',
+    lastLeague2Tw: '',
   };
 
   const state = {
@@ -79,6 +108,8 @@
     // (2026-08-16 使用者截圖回報:切一次中文化,下半部整組重複)。
     language: 'zh_tw',
     bilingualMods: false,
+    uiLang: 'zh', // 擴充介面語言(與 popup 共用 uiLang 鍵)
+    uiLangChosen: false, // 使用者選過語言沒有(沒選 = 全新安裝,顯示選擇列)
     history: [], // 最近開過的搜尋(只記有名字的)
     historyPickId: null, // 歷史列展開「加入書籤」的那一筆
     tab: 'bookmarks',
@@ -95,6 +126,69 @@
     pendingImport: null, // { folders, report, isBackup, settings, history, exportedAt, counts, name }
   };
 
+  // 介面語言:改 PMZ_I18N 的語言 + 重填外殼文字(rail / 標頭 / 分頁列)。
+  // 物價分頁的中文名對照依語言決定讀不讀,換語言就作廢重讀。
+  // ⚠ 語言**由使用者自己選**,不依瀏覽器判斷(使用者 2026-09-21 裁定)。
+  //   還沒選(全新安裝)→ 介面先用中文顯示、每個分頁頂端出現選擇列,選好之前不讀任何中文資料。
+  function setUiLang(v) {
+    state.uiLangChosen = globalThis.PMZ_I18N.isChosen(v);
+    state.uiLang = globalThis.PMZ_I18N.normalize(v);
+    globalThis.PMZ_I18N.setLang(state.uiLang);
+    state.itemMap = null;
+    if (panel) applyShellText();
+  }
+
+  // 使用者選了語言(設定分頁或頂端選擇列)。與 popup 同一個 uiLang 鍵:
+  // 選 English 時交易站一併還原英文,背景會把已下載的中文資料清掉(background.js);
+  // 選中文則套用中文化並建置。
+  function chooseUiLang(val) {
+    if (!globalThis.PMZ_I18N.isChosen(val) || (state.uiLangChosen && val === state.uiLang)) return;
+    // 會翻交易站的語言(目前只有中文)才開翻譯、建資料;其他語言交易站一律官方英文
+    const { translatesSite } = globalThis.PMZ_I18N.langInfo(val);
+    const language = translatesSite ? 'zh_tw' : 'us';
+    chrome.storage.local.set({ uiLang: val, language });
+    setUiLang(val);
+    state.language = language;
+    if (translatesSite && !IS_TW) chrome.runtime.sendMessage({ t: 'translation:build', game: GAME.id }).catch(() => {});
+    render();
+  }
+
+  // 顯示中文物品名的條件:選了中文介面 + 國際服 + 交易站翻譯開著。
+  // ⚠ English 介面「不載入任何中文資料」(使用者 2026-09-21 裁定)—— 不只不顯示,連讀都不讀。
+  function showZhNames() {
+    return state.uiLangChosen && state.uiLang === 'zh' && !IS_TW && state.language === 'zh_tw';
+  }
+
+  // 還沒選語言時,每個分頁頂端的選擇列。文字中英並列(看不懂中文的人也要看得懂)。
+  function renderLangChooser(body) {
+    if (state.uiLangChosen) return;
+    const box = el('div', 'pmz-lang-choose');
+    box.appendChild(el('div', 'pmz-lang-choose-title', '選擇介面語言 / Choose your language'));
+    box.appendChild(langSelect());
+    body.appendChild(box);
+  }
+
+  // 介面語言下拉:選項一律由 shared/i18n.js 的語言清單長出來(加語言不必動這裡;
+  // 使用者 2026-09-21 要求改下拉以保留擴充性)。語言名是 endonym,不隨介面語言翻。
+  // 還沒選時多一個「請選擇」佔位項。
+  function langSelect(inline = false) {
+    const sel = el('select', `pmz-select pmz-lang-select${inline ? ' pmz-select-inline' : ''}`);
+    if (!state.uiLangChosen) {
+      const ph = el('option', null, '— Choose —');
+      ph.value = '';
+      ph.disabled = true;
+      sel.appendChild(ph);
+    }
+    for (const l of globalThis.PMZ_I18N.langs()) {
+      const opt = el('option', null, l.name);
+      opt.value = l.id;
+      sel.appendChild(opt);
+    }
+    sel.value = state.uiLangChosen ? state.uiLang : '';
+    sel.addEventListener('change', () => { if (sel.value) chooseUiLang(sel.value); });
+    return sel;
+  }
+
   // ── URL 解析與 SPA 導航偵測 ──
   function currentSearch() {
     return M.parseSearchUrl(location.href);
@@ -102,10 +196,13 @@
 
   // 聯盟設定是 per-game 的,而且要看**書籤自己的**遊戲,不是目前頁面的 ——
   // 在 PoE1 頁面點一個 PoE2 書籤,套 PoE1 的聯盟就會開出空搜尋。
+  // 站也要看:台服的聯盟設定另存一份,書籤自己存的聯盟只在同一服才採用(見 resolveLeague)。
   function leagueOptsFor(poeVersion) {
-    return poeVersion === 'Poe2'
-      ? { settingLeague: state.settings.league2, lastLeague: state.settings.lastLeague2 }
-      : { settingLeague: state.settings.league, lastLeague: state.settings.lastLeague };
+    return {
+      settingLeague: state.settings[leagueKey(poeVersion, 'league')],
+      lastLeague: state.settings[leagueKey(poeVersion, 'lastLeague')],
+      site: SITE,
+    };
   }
 
   function leagueFor(bm) {
@@ -120,8 +217,25 @@
   }
 
   // 書籤/歷史是否屬於**目前選中的分頁**(不是目前頁面 —— 使用者可以手動切過去看)
+  // ⚠ 依網域只顯示這一站的(使用者 2026-09-23 要求):國際服建的書籤/歷史只在國際服出現、
+  //   台服建的只在台服出現。資料仍存在同一份 storage(備份一次帶走兩站),只是畫面過濾;
+  //   舊資料沒有 site = 國際服。被濾掉的數量要講出來(見 otherSiteNote)。
+  function onThisSite(entry) {
+    return (entry?.site ?? 'intl') === SITE;
+  }
   function inCurrentGame(entry) {
-    return (entry?.poeVersion ?? 'Poe1') === state.gameTab;
+    return onThisSite(entry) && (entry?.poeVersion ?? 'Poe1') === state.gameTab;
+  }
+  // 目前頁面所屬的空間(國際服/台服 × PoE1/PoE2)。新資料夾記下它,空資料夾只在建立的站+代顯示。
+  const SCOPE = { site: SITE, poeVersion: POE_VER };
+  // 資料夾自己的空間(對照的是分頁選中的那一代):新建的有記;沒記的(匯入、329.5.10 以前建的)只算國際服,兩代都可見
+  function folderInScope(folder) {
+    if (folder?.site || folder?.poeVersion) return folder.site === SITE && folder.poeVersion === state.gameTab;
+    return SITE === 'intl';
+  }
+  // 其他空間有幾筆:畫面上看不到的東西要講出來,不能默默少
+  function otherScopeNote(body, n, key) {
+    if (n) body.appendChild(el('div', 'pmz-hint', tr(key, { n })));
   }
 
   // ── 資料夾也依分頁過濾(使用者 2026-09-08 回報:PoE2 分頁看得到整排 PoE1 資料夾)──
@@ -132,7 +246,7 @@
   // game 預設是書籤分頁目前選的那款;「加入書籤」的資料夾下拉要用**書籤本身**那款
   // (目前頁面 POE_VER、歷史紀錄的 poeVersion),與分頁無關。
   function gameCountOf(folder, game = state.gameTab) {
-    return (folder?.bookmarks ?? []).filter((b) => (b?.poeVersion ?? 'Poe1') === game).length;
+    return (folder?.bookmarks ?? []).filter((b) => onThisSite(b) && (b?.poeVersion ?? 'Poe1') === game).length;
   }
   function folderGameTotal(folder, game = state.gameTab) {
     let n = gameCountOf(folder, game);
@@ -143,7 +257,8 @@
     const all = state.data.folders;
     const keep = new Set();
     for (const f of all) {
-      if (gameCountOf(f, game) > 0 || M.folderTotal(all, f) === 0) keep.add(f.id);
+      // 有這個空間的書籤 → 顯示;完全空的 → 只在它建立的那個空間顯示
+      if (gameCountOf(f, game) > 0 || (M.folderTotal(all, f) === 0 && folderInScope(f))) keep.add(f.id);
     }
     for (const f of all) if (f.parentId && keep.has(f.id)) keep.add(f.parentId);
     return all.filter((f) => keep.has(f.id));
@@ -186,13 +301,14 @@
       if (!bm) continue;
       // ⚠ 判斷一律走 planSearchIdAdoption(純函式、有離線鎖)——
       //   這裡只負責把結果寫回去。不要把判斷搬回這一層。
-      const plan = M.planSearchIdAdoption(bm, cur.searchId, pending.league);
+      const plan = M.planSearchIdAdoption(bm, cur.searchId, pending.league, SITE);
       // 官網還沒把網址換成新格式:**保留 pending**,等下一次網址變化。
       // 這一行不能拿掉 —— init() 那一次常常就跑在 replaceState 之前。
       if (plan?.kind === 'wait') return;
       if (plan?.kind === 'cache') {
         bm.cachedSearchId = plan.searchId;
         bm.cachedLeague = plan.league;
+        bm.cachedSite = plan.site; // 編號是這一服建的,另一服開時要重建
         persist();
         dbg(`[PTM] 書籤「${bm.name}」記下搜尋編號 ${plan.searchId}(${plan.league}),下次直接開`);
       } else if (plan?.kind === 'upgrade') {
@@ -220,14 +336,14 @@
   // 記住最後看到的聯盟:書籤存的是與聯盟無關的 search id,不在搜尋頁時要有退路
   function rememberLeague() {
     const league = M.leagueFromHref(location.href);
-    const key = IS_POE2 ? 'lastLeague2' : 'lastLeague';
+    const key = leagueKey(POE_VER, 'lastLeague');
     if (league && league !== state.settings[key]) {
       state.settings[key] = league;
       persistSettings();
     }
   }
 
-  // 網址換到另一款時,書籤/歷史的分頁自動跟著切過去(使用者要求「依 URL 自動辨別」)。
+  // 網址換到另一款時(官網 SPA 內導航),書籤/歷史的分頁自動跟著切過去。
   // ⚠ 只有**真的換款**才動:同一款內換聯盟/換搜尋不該把使用者手動切過去的分頁拉回來。
   function syncGameTab() {
     const now = /^\/trade2(\/|$)/.test(location.pathname)
@@ -325,7 +441,7 @@
   function updateRail() {
     const open = !!state.open;
     rail.classList.toggle('pmz-rail-full', open);
-    rail.title = open ? '' : '可拖曳調整位置';
+    rail.title = open ? '' : tr('sb.rail.dragHint');
     for (const k of RAIL_OPEN_ONLY) if (railBtns[k]) railBtns[k].hidden = !open;
     for (const tab of ['bookmarks', 'history', 'prices', 'settings']) {
       railBtns[tab]?.classList.toggle('pmz-rail-active', open && state.tab === tab);
@@ -339,9 +455,10 @@
   //   開關面板是很頻繁的動作,另立一個鍵。其他分頁改了**不即時同步**,下次載入才套用
   //   —— 同時開兩個交易站分頁時,一邊收合不該把另一邊也收起來。
   const UI_KEY = 'sidebarUi';
-  const PANEL_TABS = IS_POE2
-    ? [['bookmarks', '書籤'], ['history', '歷史'], ['settings', '⚙']]
-    : [['bookmarks', '書籤'], ['history', '歷史'], ['prices', '物價'], ['settings', '⚙']];
+  // 第二欄是字串表的鍵(不是字),render 時才取字 —— 語言在載入後才設定
+  const PANEL_TABS = !HAS_PRICES
+    ? [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['settings', 'sb.tab.settingsIcon']]
+    : [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['prices', 'sb.tab.prices'], ['settings', 'sb.tab.settingsIcon']];
 
   function persistUi() {
     chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab } });
@@ -451,10 +568,10 @@
     return svg;
   }
 
-  function railBtn(icon, title, onClick) {
+  function railBtn(icon, titleKey, onClick) {
     const btn = el('button', 'pmz-rail-btn');
     btn.type = 'button';
-    btn.title = title;
+    btn.dataset.pmzTitle = titleKey; // 字由 applyShellText() 依目前語言填
     btn.appendChild(railIcon(icon));
     btn.addEventListener('click', onClick);
     return btn;
@@ -475,19 +592,19 @@
 
   function buildRail() {
     rail = el('div', 'pmz-rail');
-    rail.title = '可拖曳調整位置';
+    rail.title = tr('sb.rail.dragHint');
     // 收合 ✕(只在開啟時顯示;對應標頭那顆 ✕,開啟時標頭的會被 CSS 藏起來)
-    railBtns.close = railBtn('close', '收合側邊欄', () => setOpen(false));
+    railBtns.close = railBtn('close', 'sb.rail.collapse', () => setOpen(false));
     // 書籤:關著 → 開到書籤;開著且在書籤 → 收合;開著在別頁 → 切到書籤
-    railBtns.bookmarks = railBtn('bookmark', '書籤', () => {
+    railBtns.bookmarks = railBtn('bookmark', 'sb.tab.bookmarks', () => {
       if (state.open && state.tab === 'bookmarks') setOpen(false);
       else showTab('bookmarks');
     });
-    railBtns.history = railBtn('history', '歷史', () => showTab('history'));
+    railBtns.history = railBtn('history', 'sb.tab.history', () => showTab('history'));
     // ⚠ 物價只有 PoE1(bg/ninja.js 打的是 poe.ninja/poe1),與面板內的分頁列同一條判斷
-    if (!IS_POE2) railBtns.prices = railBtn('prices', '物價', () => showTab('prices'));
+    if (HAS_PRICES) railBtns.prices = railBtn('prices', 'sb.tab.prices', () => showTab('prices'));
     // 設定:開到設定;已在設定 → 收合
-    railBtns.settings = railBtn('gear', '設定', () => {
+    railBtns.settings = railBtn('gear', 'sb.tab.settings', () => {
       if (state.open && state.tab === 'settings') setOpen(false);
       else showTab('settings');
     });
@@ -495,12 +612,12 @@
     if (railBtns.prices) rail.appendChild(railBtns.prices);
     // 分隔線只在收合時看得到;開啟(全高)時改由 spacer 把贊助/Discord 推到底部
     rail.append(railBtns.settings, el('div', 'pmz-rail-sep'), el('div', 'pmz-rail-spacer'));
-    for (const [icon, title, href] of [
-      ['coffee', '請我喝杯咖啡', RAIL_LINKS.coffee],
-      ['discord', 'Discord 社群', RAIL_LINKS.discord],
+    for (const [icon, titleKey, href] of [
+      ['coffee', 'sb.rail.coffee', RAIL_LINKS.coffee],
+      ['discord', 'sb.rail.discord', RAIL_LINKS.discord],
     ]) {
       // 開新分頁一律帶 noopener,不讓對方拿到 window.opener
-      rail.appendChild(railBtn(icon, title, () => window.open(href, '_blank', 'noopener')));
+      rail.appendChild(railBtn(icon, titleKey, () => window.open(href, '_blank', 'noopener')));
     }
     return rail;
   }
@@ -512,26 +629,29 @@
     const header = el('div', 'pmz-header');
     const headText = el('div', 'pmz-header-text');
     headText.appendChild(el('div', 'pmz-header-title', 'Poe Market Zh'));
-    headText.appendChild(el('div', 'pmz-header-sub', '交易站中文化'));
+    const headSub = el('div', 'pmz-header-sub');
+    headSub.dataset.pmzText = 'sb.header.sub';
+    headText.appendChild(headSub);
     header.appendChild(headText);
     // 版本資訊:只在設定分頁顯示(使用者 2026-09-14 指定「設定頁右上角」),由 render() 切換。
     // 一律讀 manifest,不寫死 —— 版號只有 manifest.json 一個真值(popup 也是這樣讀)。
     const versionTag = el('span', 'pmz-header-version', `v${chrome.runtime.getManifest().version}`);
-    versionTag.title = 'Poe Market Zh 目前版本';
+    versionTag.dataset.pmzTitle = 'sb.header.version';
     versionTag.hidden = true;
     header.appendChild(versionTag);
     const closeBtn = el('button', 'pmz-header-close', '✕');
-    closeBtn.title = '收合側邊欄';
+    closeBtn.dataset.pmzTitle = 'sb.rail.collapse';
     closeBtn.addEventListener('click', () => setOpen(false));
     header.appendChild(closeBtn);
     panel.appendChild(header);
     const tabs = el('div', 'pmz-tabs');
     // ⚠ 物價只有 PoE1(PANEL_TABS):bg/ninja.js 打的是 `poe.ninja/poe1/api/...`。
     //   在 PoE2 頁面顯示一個永遠載不出東西的分頁,比沒有這個分頁更糟。
-    for (const [id, label] of PANEL_TABS) {
-      const tab = el('button', 'pmz-tab', label);
+    for (const [id, labelKey] of PANEL_TABS) {
+      const tab = el('button', 'pmz-tab');
       tab.dataset.tab = id;
-      tab.title = id === 'settings' ? '設定' : label;
+      tab.dataset.pmzText = labelKey;
+      tab.dataset.pmzTitle = id === 'settings' ? 'sb.tab.settings' : labelKey;
       tab.addEventListener('click', () => showTab(id)); // 分頁列只在面板開著時看得到
       tabs.appendChild(tab);
     }
@@ -541,21 +661,31 @@
     applySide();
     applyTop();
     enableDrag();
+    applyShellText();
     updateRail();
+  }
+
+  // 外殼(rail / 標頭 / 分頁列)只建一次,字卻要跟著介面語言走:建的時候只記鍵,
+  // 這裡依目前語言填字。buildShell 與每次 render 都會叫。
+  function applyShellText() {
+    for (const root of [rail, panel]) {
+      root.querySelectorAll('[data-pmz-title]').forEach((n) => { n.title = tr(n.dataset.pmzTitle); });
+      root.querySelectorAll('[data-pmz-text]').forEach((n) => { n.textContent = tr(n.dataset.pmzText); });
+    }
   }
 
   // ── 確認對話框 ──
   // 不用瀏覽器原生 confirm:它會凍住整個官網分頁,樣式也跟側邊欄格格不入。
   // 蓋在 panel 上而不是整頁,才不會擋住使用者正在看的搜尋結果。
-  function confirmDialog({ title, message, okLabel = '繼續', onOk }) {
+  function confirmDialog({ title, message, okLabel = tr('common.continue'), onOk }) {
     const mask = el('div', 'pmz-modal-mask');
     const box = el('div', 'pmz-modal');
     box.appendChild(el('div', 'pmz-modal-title', title));
-    box.appendChild(el('div', 'pmz-modal-q', '確定嗎?'));
+    box.appendChild(el('div', 'pmz-modal-q', tr('sb.confirm.question')));
     box.appendChild(el('div', 'pmz-modal-msg', message));
     const btns = el('div', 'pmz-modal-btns');
     const close = () => mask.remove();
-    const cancel = el('button', 'pmz-modal-cancel', '取消');
+    const cancel = el('button', 'pmz-modal-cancel', tr('common.cancel'));
     cancel.addEventListener('click', close);
     const ok = el('button', 'pmz-modal-ok', okLabel);
     ok.addEventListener('click', () => {
@@ -695,12 +825,12 @@
       row.appendChild(btn);
     };
     for (const section of iconSectionsForGame()) {
-      wrap.appendChild(el('div', 'pmz-icon-section', section.label));
+      wrap.appendChild(el('div', 'pmz-icon-section', trOr(`sb.iconSec.${section.id}`, section.label)));
       const row = el('div', 'pmz-icon-row');
-      for (const { name, url } of section.icons) addBtn(row, url, name);
+      for (const { name, url } of section.icons) addBtn(row, url, iconTitle(name));
       wrap.appendChild(row);
     }
-    wrap.appendChild(el('div', 'pmz-icon-section', '符號'));
+    wrap.appendChild(el('div', 'pmz-icon-section', tr('sb.icon.symbols')));
     const emojiRow = el('div', 'pmz-icon-row');
     for (const icon of FOLDER_ICONS) addBtn(emojiRow, icon, icon);
     wrap.appendChild(emojiRow);
@@ -805,7 +935,7 @@
       markedHead?.classList.remove('pmz-drop-into', 'pmz-drop-invalid');
       slot = markedHead = null;
     }
-    function makeSlot(childLevel, variant = '', text = `「${nameOf(movedId)}」會放在這裡`) {
+    function makeSlot(childLevel, variant = '', text = tr('sb.drag.slotHere', { name: nameOf(movedId) })) {
       const node = el('div', `pmz-drop-slot${childLevel ? ' pmz-drop-slot-child' : ''}${variant ? ` pmz-drop-slot-${variant}` : ''}`, text);
       node.title = text; // 名稱太長時空位只顯示一行(高度固定才不會影響判定),完整文字放 title
       return node;
@@ -907,9 +1037,9 @@
         const wrap = hit.node.closest('.pmz-folder');
         const side = hit.kind === 'invalid' ? hit.side : hit.kind;
         if (hit.kind === 'inside') {
-          slot = makeSlot(true, 'into', `放進「${nameOf(hit.targetId)}」成為子資料夾`);
+          slot = makeSlot(true, 'into', tr('sb.drag.slotInto', { name: nameOf(hit.targetId) }));
         } else if (hit.kind === 'invalid') {
-          slot = makeSlot(true, 'invalid', `「${nameOf(movedId)}」底下還有資料夾,不能放進子層`);
+          slot = makeSlot(true, 'invalid', tr('sb.drag.slotInvalid', { name: nameOf(movedId) }));
         } else {
           slot = makeSlot(!!target?.parentId);
         }
@@ -1117,7 +1247,7 @@
 
   // ── 書籤分頁 ──
   function addFolder(parentId) {
-    const folder = M.newFolder(parentId ? '新子資料夾' : '新資料夾', M.DEFAULT_ICON, parentId ?? null);
+    const folder = M.newFolder(parentId ? tr('sb.folder.newSub') : tr('sb.folder.new'), M.DEFAULT_ICON, parentId ?? null, SCOPE);
     if (parentId) {
       // 插在父的最後一個子資料夾之後,走訪序才會緊跟著父
       const kids = M.childFolders(state.data.folders, parentId);
@@ -1138,14 +1268,14 @@
     const kids = M.childFolders(state.data.folders, folder.id);
     const total = folder.bookmarks.length + kids.reduce((n, f) => n + f.bookmarks.length, 0);
     const what = kids.length
-      ? `「${folder.name}」底下還有 ${kids.length} 個子資料夾、${total} 個書籤,會一起刪掉。`
+      ? tr('sb.folder.deleteWithKids', { name: folder.name, kids: kids.length, total })
       : total
-        ? `「${folder.name}」裡的 ${total} 個書籤會一起刪掉。`
-        : `要刪除「${folder.name}」。`;
+        ? tr('sb.folder.deleteWithBookmarks', { name: folder.name, total })
+        : tr('sb.common.deleteNamed', { name: folder.name });
     // 一律確認:✕ 就在標題列上,和收合/改名擠在一起,誤觸的代價是刪掉整個資料夾
     confirmDialog({
-      title: '刪除資料夾',
-      message: `${what}\n此操作將永久刪除資料。`,
+      title: tr('sb.folder.delete'),
+      message: `${what}\n${tr('sb.common.permanentDelete')}`,
       onOk: () => {
         const doomed = new Set([folder.id, ...kids.map((f) => f.id)]);
         state.data.folders = state.data.folders.filter((f) => !doomed.has(f.id));
@@ -1164,9 +1294,10 @@
       league: null,
       type: cur.type,
       poeVersion: cur.poeVersion,
+      site: SITE,
     });
     if (!bm) {
-      state.dataMsg = { ok: false, text: '這個網址看不出搜尋編號,沒有存進書籤' };
+      state.dataMsg = { ok: false, text: tr('sb.bm.noSearchId') };
       render();
       return;
     }
@@ -1179,7 +1310,7 @@
   function buildAddForm(cur) {
     const form = el('div', 'pmz-form');
     const nameInput = el('input', 'pmz-input');
-    nameInput.placeholder = '書籤名稱';
+    nameInput.placeholder = tr('sb.bm.namePlaceholder');
     nameInput.value = guessSearchName() ?? cur.searchId;
     form.appendChild(nameInput);
 
@@ -1188,11 +1319,11 @@
     const folderChoices = visibleFolders(POE_VER);
     const folderSelect = el('select', 'pmz-select');
     for (const { folder, depth } of M.orderedFolders(folderChoices)) {
-      const opt = el('option', null, `${depth ? '　└ ' : ''}${isImageIcon(folder.icon) ? '📁' : folder.icon} ${folder.name}`);
+      const opt = el('option', null, `${depth ? tr('sb.folder.childIndent') : ''}${isImageIcon(folder.icon) ? '📁' : folder.icon} ${folder.name}`);
       opt.value = folder.id;
       folderSelect.appendChild(opt);
     }
-    const optNew = el('option', null, '➕ 新資料夾…');
+    const optNew = el('option', null, tr('sb.folder.newOption'));
     optNew.value = '__new__';
     folderSelect.appendChild(optNew);
     form.appendChild(folderSelect);
@@ -1201,7 +1332,7 @@
     newFolderArea.hidden = folderChoices.length > 0;
     if (folderChoices.length === 0) folderSelect.value = '__new__';
     const folderNameInput = el('input', 'pmz-input');
-    folderNameInput.placeholder = '資料夾名稱';
+    folderNameInput.placeholder = tr('sb.folder.namePlaceholder');
     let pickedIcon = iconSectionsForGame()[0]?.icons[0]?.url ?? FOLDER_ICONS[0];
     newFolderArea.appendChild(folderNameInput);
     newFolderArea.appendChild(iconPicker(pickedIcon, (i) => { pickedIcon = i; }));
@@ -1212,11 +1343,11 @@
     });
 
     const btnRow = el('div', 'pmz-form-btns');
-    const okBtn = el('button', 'pmz-primary', '儲存書籤');
+    const okBtn = el('button', 'pmz-primary', tr('sb.bm.save'));
     okBtn.addEventListener('click', () => {
       let folder;
       if (folderSelect.value === '__new__') {
-        folder = M.newFolder(folderNameInput.value.trim() || '新資料夾', pickedIcon, null);
+        folder = M.newFolder(folderNameInput.value.trim() || tr('sb.folder.new'), pickedIcon, null, SCOPE);
         state.data.folders.push(folder);
       } else {
         folder = findFolderById(folderSelect.value);
@@ -1225,7 +1356,7 @@
       state.addFormOpen = false;
       saveCurrentSearch(folder, cur, nameInput.value.trim());
     });
-    const cancelBtn = el('button', 'pmz-act', '取消');
+    const cancelBtn = el('button', 'pmz-act', tr('common.cancel'));
     cancelBtn.addEventListener('click', () => {
       state.addFormOpen = false;
       render();
@@ -1263,20 +1394,20 @@
     onActivate(item, () => openBookmark(bm));
     // 兩行:上面整行給名稱(側邊欄窄,名稱不該和按鈕搶寬度),下面一行放操作鈕
     const nameRow = el('div', 'pmz-item-top');
-    nameRow.appendChild(gripHandle('拖曳調整順序;拖到資料夾標題上可移進該資料夾'));
+    nameRow.appendChild(gripHandle(tr('sb.bm.dragGrip')));
     if (bm.pinned) nameRow.appendChild(svgIcon('pin', 'pmz-pinned-mark'));
     const name = el('span', 'pmz-item-name', (bm.type === 'exchange' ? '⇄ ' : '') + bm.name);
-    name.title = `${bm.searchId ? bm.searchId : '自訂搜尋條件'} / ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'}`;
+    name.title = `${bm.searchId ? bm.searchId : tr('sb.bm.customQuery')} / ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'}`;
     nameRow.appendChild(name);
     item.appendChild(nameRow);
 
     const acts = el('div', 'pmz-item-acts');
-    acts.appendChild(iconBtn('pin', bm.pinned ? '取消釘選' : '釘選置頂', () => {
+    acts.appendChild(iconBtn('pin', bm.pinned ? tr('sb.bm.unpin') : tr('sb.bm.pin'), () => {
       bm.pinned = !bm.pinned;
       persist();
       render();
     }, bm.pinned ? 'pmz-on' : ''));
-    acts.appendChild(iconBtn('pencil', '重新命名(直接在標題編輯)', () => {
+    acts.appendChild(iconBtn('pencil', tr('sb.bm.rename'), () => {
       startInlineEdit(name, bm.name, (v) => {
         bm.name = v;
         persist();
@@ -1291,24 +1422,22 @@
       const sameGame = cur && (cur.poeVersion ?? 'Poe1') === (bm.poeVersion ?? 'Poe1');
       const canReplace = !!cur && sameGame && cur.searchId !== bm.searchId;
       const why = !cur
-        ? '開啟一個搜尋後才能取代'
+        ? tr('sb.bm.replace.needSearch')
         : !sameGame
-          ? `目前是 ${cur.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'} 的搜尋,不能取代 ${bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1'} 的書籤`
+          ? tr('sb.bm.replace.otherGame', { cur: cur.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1', bm: bm.poeVersion === 'Poe2' ? 'PoE2' : 'PoE1' })
           : cur.searchId === bm.searchId
-            ? '這個書籤就是目前的搜尋'
-            : '以目前的搜尋取代(名稱不變)';
+            ? tr('sb.bm.replace.same')
+            : tr('sb.bm.replace.hint');
       const repBtn = iconBtn('replace', why, () => {
         if (!canReplace) return;
         confirmDialog({
-          title: '取代書籤的搜尋',
-          message: `「${bm.name}」的搜尋會換成目前這一個。
-${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
-名稱與所在位置不變,原本的搜尋不會留下。`,
-          okLabel: '取代',
+          title: tr('sb.bm.replace.title'),
+          message: tr('sb.bm.replace.msg', { name: bm.name, from: bm.searchId || tr('sb.bm.customQuery'), to: cur.searchId }),
+          okLabel: tr('sb.bm.replace.ok'),
           onOk: () => {
             const next = M.replaceBookmarkSearch(bm, cur);
             if (!next) {
-              state.dataMsg = { ok: false, text: '目前這個網址看不出搜尋編號,沒有取代' };
+              state.dataMsg = { ok: false, text: tr('sb.bm.replace.noSearchId') };
               render();
               return;
             }
@@ -1316,7 +1445,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
             if (i < 0) return;
             folder.bookmarks[i] = next;
             persist();
-            state.dataMsg = { ok: true, text: `已把「${next.name}」換成目前的搜尋` };
+            state.dataMsg = { ok: true, text: tr('sb.bm.replace.done', { name: next.name }) };
             render();
           },
         });
@@ -1324,10 +1453,10 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       repBtn.disabled = !canReplace;
       acts.appendChild(repBtn);
     }
-    acts.appendChild(iconBtn('trash', '刪除', () => {
+    acts.appendChild(iconBtn('trash', tr('sb.bm.delete'), () => {
       confirmDialog({
-        title: '刪除書籤',
-        message: `要刪除「${bm.name}」。\n此操作將永久刪除資料。`,
+        title: tr('sb.bm.deleteTitle'),
+        message: `${tr('sb.common.deleteNamed', { name: bm.name })}\n${tr('sb.common.permanentDelete')}`,
         onOk: () => {
           folder.bookmarks = folder.bookmarks.filter((b) => b.id !== bm.id);
           persist();
@@ -1353,7 +1482,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     makeDraggable(head, { type: 'folder', folderId: folder.id }, (ctx, node, pos, hit) => {
       if (hit?.targetId) dropFolderOn(ctx, hit.targetId, pos);
     }, ['folder'], 'folder', folderDragPreview(folder.id));
-    head.appendChild(gripHandle('拖曳調整順序;拖到其他資料夾標題的中間可變成它的子資料夾'));
+    head.appendChild(gripHandle(tr('sb.folder.dragGrip')));
     head.appendChild(el('span', 'pmz-caret', folder.collapsed ? '▸' : '▾'));
     // 圖示平時只是圖示:點下去跟點標題一樣是展開/收合。要換圖示請按 ✎(見下方)
     const iconWrap = el('span', 'pmz-folder-iconbtn');
@@ -1394,13 +1523,13 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     }
     head.appendChild(el('span', 'pmz-folder-count', String(folderGameTotal(folder)))); // 只算目前分頁那一款
     if (!depth) {
-      head.appendChild(iconBtn('plus', '在這個資料夾底下新增子資料夾', () => addFolder(folder.id)));
+      head.appendChild(iconBtn('plus', tr('sb.folder.addSub'), () => addFolder(folder.id)));
     }
-    head.appendChild(iconBtn(editing ? 'check' : 'pencil', editing ? '完成' : '重新命名並更換圖示', () => {
+    head.appendChild(iconBtn(editing ? 'check' : 'pencil', editing ? tr('sb.folder.done') : tr('sb.folder.editHint'), () => {
       state.editingFolderId = editing ? null : folder.id;
       render();
     }, editing ? 'pmz-on' : ''));
-    head.appendChild(iconBtn('trash', '刪除資料夾', () => deleteFolder(folder), 'pmz-danger'));
+    head.appendChild(iconBtn('trash', tr('sb.folder.delete'), () => deleteFolder(folder), 'pmz-danger'));
     onActivate(head, () => {
       if (state.editingFolderId === folder.id) return; // 改名中不要順手把資料夾收起來
       folder.collapsed = !folder.collapsed;
@@ -1411,7 +1540,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
 
     if (editing) {
       const pop = el('div', 'pmz-form');
-      pop.appendChild(el('div', 'pmz-icon-title', '更改圖示'));
+      pop.appendChild(el('div', 'pmz-icon-title', tr('sb.folder.changeIcon')));
       // 選了圖示只換圖示,不重畫整個側邊欄 —— 重畫會把還沒按 Enter 的名稱吃掉
       pop.appendChild(iconPicker(folder.icon, (icon) => {
         folder.icon = icon;
@@ -1429,9 +1558,9 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       const visible = folder.bookmarks.filter(inCurrentGame);
       // 手動拖曳順序為主,釘選的穩定浮到最上面(組內維持手動順序)
       const sorted = [...visible].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-      if (!sorted.length && !childCount) list.appendChild(el('div', 'pmz-empty', '(空)'));
+      if (!sorted.length && !childCount) list.appendChild(el('div', 'pmz-empty', tr('sb.folder.empty')));
       for (const bm of sorted) list.appendChild(renderBookmarkItem(folder, bm));
-      const saveBtn = el('button', 'pmz-folder-save', '儲存目前搜尋');
+      const saveBtn = el('button', 'pmz-folder-save', tr('sb.folder.saveCurrent'));
       saveBtn.disabled = !cur;
       saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1443,13 +1572,14 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     body.appendChild(wrap);
   }
 
-  // 書籤/歷史共用的遊戲分頁列。數量直接標在標籤上 —— 使用者一眼就知道另一款
-  // 有沒有東西,不必再靠「另有 N 個」那種事後補說明。
+  // 書籤/歷史頂部的 PoE1/PoE2 分頁(使用者 2026-09-23 裁定):
+  //   · **站與站互不相見** —— 國際服只看國際服的、台服只看台服的,不能切到另一站;
+  //   · **站內兩代可以切** —— 預設跟著目前頁面那一代,分頁上的數量只算這一站。
+  // 另一站的數量用 otherScopeNote 講出來。
   function renderGameTabs(body, counts) {
     const seg = el('div', 'pmz-seg pmz-gametabs');
     for (const [val, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
-      const n = counts[val] ?? 0;
-      const btn = el('button', 'pmz-seg-btn', `${label} (${n})`);
+      const btn = el('button', 'pmz-seg-btn', `${label} (${counts[val] ?? 0})`);
       if (state.gameTab === val) btn.classList.add('pmz-seg-active');
       btn.addEventListener('click', () => {
         state.gameTab = val;
@@ -1460,11 +1590,18 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     }
     body.appendChild(seg);
   }
+  const countSiteByGame = (list) => {
+    const out = { Poe1: 0, Poe2: 0 };
+    for (const x of list) if (onThisSite(x)) out[x?.poeVersion === 'Poe2' ? 'Poe2' : 'Poe1']++;
+    return out;
+  };
 
   function renderBookmarks(body) {
-    renderGameTabs(body, M.countByGame(state.data.folders));
+    const all = state.data.folders.flatMap((f) => f.bookmarks ?? []);
+    renderGameTabs(body, countSiteByGame(all));
+    otherScopeNote(body, all.filter((b) => !onThisSite(b)).length, 'sb.bm.otherScope');
     const cur = currentSearch();
-    const addBtn = el('button', 'pmz-primary', cur ? '＋ 將目前搜尋加入書籤' : '(開啟一個搜尋後可加入書籤)');
+    const addBtn = el('button', 'pmz-primary', cur ? tr('sb.bm.addCurrent') : tr('sb.bm.addDisabled'));
     addBtn.disabled = !cur;
     addBtn.addEventListener('click', () => {
       state.addFormOpen = !state.addFormOpen;
@@ -1473,7 +1610,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     body.appendChild(addBtn);
     if (state.addFormOpen && cur) body.appendChild(buildAddForm(cur));
 
-    const newFolderBtn = el('button', 'pmz-secondary', '＋ 新資料夾');
+    const newFolderBtn = el('button', 'pmz-secondary', tr('sb.folder.newButton'));
     newFolderBtn.addEventListener('click', () => addFolder(null));
     body.appendChild(newFolderBtn);
 
@@ -1482,14 +1619,14 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     }
 
     if (!state.data.folders.length) {
-      body.appendChild(el('div', 'pmz-empty', '尚無書籤 —— 可在 ⚙ 設定分頁貼上 PoE Trade Extension 的匯出碼匯入'));
+      body.appendChild(el('div', 'pmz-empty', tr('sb.bm.emptyAll')));
       return;
     }
 
     // 走訪序:第一層照順序,子資料夾緊跟在父後面(父收合時整包收起);只列目前分頁那一款
     const shown = visibleFolders();
     if (!shown.length) {
-      body.appendChild(el('div', 'pmz-empty', `${state.gameTab === 'Poe2' ? 'PoE2' : 'PoE1'} 目前沒有書籤`));
+      body.appendChild(el('div', 'pmz-empty', tr('sb.bm.noneForGame', { game: state.gameTab === 'Poe2' ? 'PoE2' : 'PoE1' })));
       return;
     }
     if (state.settings.dragHintDismissed !== true) body.appendChild(buildDragHint());
@@ -1505,10 +1642,10 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     const tip = el('div', 'pmz-tip');
     tip.appendChild(svgIcon('grip', 'pmz-tip-icon'));
     const text = el('div', 'pmz-tip-text');
-    text.appendChild(el('div', 'pmz-tip-title', '拖曳左側把手即可調整順序'));
-    text.appendChild(el('div', null, '書籤拖到資料夾標題上會移進去;資料夾拖到另一個資料夾標題的中間會變成子資料夾'));
+    text.appendChild(el('div', 'pmz-tip-title', tr('sb.tip.title')));
+    text.appendChild(el('div', null, tr('sb.tip.body')));
     tip.appendChild(text);
-    const ok = el('button', 'pmz-act', '知道了');
+    const ok = el('button', 'pmz-act', tr('sb.tip.gotIt'));
     ok.type = 'button';
     ok.addEventListener('click', () => {
       state.settings.dragHintDismissed = true;
@@ -1549,6 +1686,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       league: entry.league,
       type: entry.type,
       poeVersion: entry.poeVersion,
+      site: entry.site ?? SITE,
       name: entry.name,
       at: Date.now(),
     });
@@ -1560,30 +1698,29 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
   function timeLabel(ts) {
     const d = new Date(ts);
     const diff = Date.now() - ts;
-    if (diff < 60_000) return '剛剛';
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分鐘前`;
+    if (diff < 60_000) return tr('sb.time.justNow');
+    if (diff < 3_600_000) return tr('sb.time.minutesAgo', { n: Math.floor(diff / 60_000) });
     const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    if (new Date().toDateString() === d.toDateString()) return `今天 ${hhmm}`;
+    if (new Date().toDateString() === d.toDateString()) return tr('sb.time.today', { time: hhmm });
     return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
   }
 
   function renderHistory(body) {
-    const counts = { Poe1: 0, Poe2: 0 };
-    for (const h of state.history) counts[h?.poeVersion === 'Poe2' ? 'Poe2' : 'Poe1']++;
-    renderGameTabs(body, counts);
+    renderGameTabs(body, countSiteByGame(state.history));
+    otherScopeNote(body, state.history.filter((h) => !onThisSite(h)).length, 'sb.hist.otherScope');
     // 與書籤同一條規則:依頂部選中的分頁過濾
     const shown = state.history.filter(inCurrentGame);
     if (!state.history.length) {
-      body.appendChild(el('div', 'pmz-hint', '開過的搜尋會記在這裡(只記搜尋框有填東西的那些)。'));
-      body.appendChild(el('div', 'pmz-empty', '還沒有紀錄'));
+      body.appendChild(el('div', 'pmz-hint', tr('sb.hist.hint')));
+      body.appendChild(el('div', 'pmz-empty', tr('sb.hist.empty')));
       return;
     }
     const bar = el('div', 'pmz-btnrow');
-    const clear = el('button', 'pmz-secondary', `清空全部(${state.history.length})`);
+    const clear = el('button', 'pmz-secondary', tr('sb.hist.clearAll', { n: state.history.length }));
     clear.addEventListener('click', () => {
       confirmDialog({
-        title: '清空搜尋紀錄',
-        message: `會刪掉 ${state.history.length} 筆搜尋紀錄。\n此操作將永久刪除資料。`,
+        title: tr('sb.hist.clearTitle'),
+        message: `${tr('sb.hist.clearMsg', { n: state.history.length })}\n${tr('sb.common.permanentDelete')}`,
         onOk: () => {
           state.history = [];
           chrome.storage.local.set({ searchHistory: [] });
@@ -1593,7 +1730,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     });
     bar.appendChild(clear);
     body.appendChild(bar);
-    if (!shown.length) body.appendChild(el('div', 'pmz-empty', '這一款還沒有紀錄'));
+    if (!shown.length) body.appendChild(el('div', 'pmz-empty', tr('sb.hist.emptyForGame')));
 
     for (const h of shown) {
       const item = el('div', 'pmz-item');
@@ -1608,11 +1745,11 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
 
       const acts = el('div', 'pmz-item-acts');
       acts.appendChild(el('span', 'pmz-history-time', timeLabel(h.at)));
-      acts.appendChild(iconBtn('star', '加入書籤', () => {
+      acts.appendChild(iconBtn('star', tr('sb.hist.addBookmark'), () => {
         state.historyPickId = state.historyPickId === h.searchId ? null : h.searchId;
         render();
       }));
-      acts.appendChild(iconBtn('trash', '從紀錄移除', () => {
+      acts.appendChild(iconBtn('trash', tr('sb.hist.remove'), () => {
         state.history = state.history.filter((x) => x.searchId !== h.searchId);
         chrome.storage.local.set({ searchHistory: state.history });
         render();
@@ -1625,20 +1762,20 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         const sel = el('select', 'pmz-select');
         // 只列這筆紀錄那一款的資料夾(與加入書籤的下拉同一條規則)
         for (const { folder, depth } of M.orderedFolders(visibleFolders(h.poeVersion ?? 'Poe1'))) {
-          const opt = el('option', null, `${depth ? '　└ ' : ''}${folder.name}`);
+          const opt = el('option', null, `${depth ? tr('sb.folder.childIndent') : ''}${folder.name}`);
           opt.value = folder.id;
           sel.appendChild(opt);
         }
-        const optNew = el('option', null, '➕ 新資料夾…');
+        const optNew = el('option', null, tr('sb.folder.newOption'));
         optNew.value = '__new__';
         sel.appendChild(optNew);
         form.appendChild(sel);
         const btns = el('div', 'pmz-form-btns');
-        const ok = el('button', 'pmz-primary', '加入');
+        const ok = el('button', 'pmz-primary', tr('sb.hist.add'));
         ok.addEventListener('click', () => {
           let folder;
           if (sel.value === '__new__') {
-            folder = M.newFolder('新資料夾', M.DEFAULT_ICON, null);
+            folder = M.newFolder(tr('sb.folder.new'), M.DEFAULT_ICON, null, SCOPE);
             state.data.folders.push(folder);
           } else {
             folder = findFolderById(sel.value);
@@ -1650,15 +1787,16 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
             league: null,
             type: h.type,
             poeVersion: h.poeVersion,
+            site: h.site,
           });
           if (bm) folder.bookmarks.unshift(bm);
           folder.collapsed = false;
           state.historyPickId = null;
-          state.dataMsg = { ok: true, text: `已把「${h.name}」加進「${folder.name}」` };
+          state.dataMsg = { ok: true, text: tr('sb.hist.added', { name: h.name, folder: folder.name }) };
           persist();
           render();
         });
-        const cancel = el('button', 'pmz-act', '取消');
+        const cancel = el('button', 'pmz-act', tr('common.cancel'));
         cancel.addEventListener('click', () => {
           state.historyPickId = null;
           render();
@@ -1675,21 +1813,13 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
   }
 
   // ── 物價分頁(poe.ninja 經濟 API 快查)──
-  // key 為 exchange API 回傳的 item.category
-  const PRICE_CATEGORY_ZH = {
-    Currency: '通貨',
-    Fragments: '碎片與聖甲蟲',
-    Oils: '聖油',
-    Essences: '精髓',
-    Delve: '化石與鑄新儀',
-    DeliriumOrbs: '譫妄玉',
-    Catalysts: '催化劑',
-    Ancestor: '刺青與預兆',
-    Keepers: '亡者通貨',
-    Runegrafts: '符文刻印',
-    SkillGem: '技能寶石',
-    ImbuedGem: '灌注寶石',
-  };
+  // key 為 exchange API 回傳的 item.category;顯示名在字串表 sb.price.cat.<category>,
+  // 不在清單裡的分類照 API 原名顯示
+  const PRICE_CATEGORIES = new Set([
+    'Currency', 'Fragments', 'Oils', 'Essences', 'Delve', 'DeliriumOrbs',
+    'Catalysts', 'Ancestor', 'Keepers', 'Runegrafts', 'SkillGem', 'ImbuedGem',
+  ]);
+  const priceCategoryLabel = (cat) => (PRICE_CATEGORIES.has(cat) ? tr(`sb.price.cat.${cat}`) : cat);
 
   function formatChaos(v) {
     if (v >= 100) return String(Math.round(v));
@@ -1730,14 +1860,16 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     const league = state.settings.league || ninja?.latest || 'Standard';
     try {
       if (!state.itemMap) {
-        const { itemMap } = await chrome.storage.local.get('itemMap');
-        state.itemMap = itemMap ?? {};
+        // 中文物品名只在「中文介面 + 交易站翻譯開著」時讀 —— English 介面不載任何中文資料
+        state.itemMap = showZhNames()
+          ? ((await chrome.storage.local.get('itemMap')).itemMap ?? {})
+          : {};
       }
       const res = await chrome.runtime.sendMessage({ t: 'ninja:rates', league, force });
       if (res?.ok && Array.isArray(res.list)) {
         state.prices = { ...state.prices, league, list: res.list, at: Date.now(), error: null };
       } else {
-        state.prices = { ...state.prices, league, error: res?.error ?? '取得失敗' };
+        state.prices = { ...state.prices, league, error: res?.error ?? tr('sb.price.fetchFailed') };
       }
     } catch (err) {
       state.prices = { ...state.prices, league, error: String(err?.message ?? err) };
@@ -1756,14 +1888,16 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       row.appendChild(img);
     }
     const name = el('span', 'pmz-item-name', zh || item.name);
-    name.title = item.variant ? `${item.name} · ${item.variant}` : item.name;
+    name.title = item.variant ? `${item.name} · ${item.variant}${item.corrupted ? ` ${tr('sb.price.corrupted')}` : ''}` : item.name;
     row.appendChild(name);
     // 寶石等變體項目:名稱後附灰色小字標示(等級/品質/腐化或灌注名)
-    if (item.variant) row.appendChild(el('span', 'pmz-price-variant', item.variant));
+    // 腐化是 bg/ninja.js 帶的語言無關旗標,標籤依介面語言在這裡附上
+    const variant = [item.variant, item.corrupted ? tr('sb.price.corrupted') : ''].filter(Boolean).join(' ');
+    if (variant) row.appendChild(el('span', 'pmz-price-variant', variant));
     // 中信心(樣本 5-9)標警示;低信心(<5)已在 bg 過濾
     if (typeof item.count === 'number' && item.count < 10) {
       const warn = el('span', 'pmz-conf', '⚠');
-      warn.title = `樣本數 ${item.count},價格參考性較低`;
+      warn.title = tr('sb.price.lowSample', { n: item.count });
       row.appendChild(warn);
     }
     const val = el('span', 'pmz-price-val', priceText(item, divRate));
@@ -1786,7 +1920,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       byCat.get(cat).push(item);
     }
     if (!byCat.size) {
-      wrap.appendChild(el('div', 'pmz-empty', '沒有符合的通貨'));
+      wrap.appendChild(el('div', 'pmz-empty', tr('sb.price.noMatch')));
       return;
     }
     for (const [cat, items] of byCat) {
@@ -1794,7 +1928,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       const drawer = el('div', 'pmz-drawer');
       const head = el('div', 'pmz-drawer-head');
       head.appendChild(el('span', 'pmz-caret', open ? '▾' : '▸'));
-      head.appendChild(el('span', 'pmz-drawer-name', PRICE_CATEGORY_ZH[cat] ?? cat));
+      head.appendChild(el('span', 'pmz-drawer-name', priceCategoryLabel(cat)));
       head.appendChild(el('span', 'pmz-folder-count', String(items.length)));
       head.addEventListener('click', () => {
         if (state.prices.openCats.has(cat)) state.prices.openCats.delete(cat);
@@ -1824,8 +1958,8 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
   }
 
   function renderNinjaPermissionNotice(body) {
-    body.appendChild(el('div', 'pmz-hint', '物價分頁要讀 poe.ninja 的公開匯率,預設沒有開啟。'));
-    const ask = el('button', 'pmz-primary', '開啟物價查詢(需要授權 poe.ninja)');
+    body.appendChild(el('div', 'pmz-hint', tr('sb.price.permHint')));
+    const ask = el('button', 'pmz-primary', tr('sb.price.permAsk'));
     ask.addEventListener('click', async () => {
       // ⚠ sendMessage 必須是點擊後的第一個非同步動作:background 靠這個手勢直接跳權限對話框
       const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => null);
@@ -1833,7 +1967,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       render();
     });
     body.appendChild(ask);
-    const retry = el('button', 'pmz-secondary', '我已開啟,重新檢查');
+    const retry = el('button', 'pmz-secondary', tr('sb.price.permRecheck'));
     retry.addEventListener('click', () => {
       state.ninjaPerm = null;
       render();
@@ -1848,17 +1982,17 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     if (res?.direct) {
       state.ninjaPerm = res.granted === true;
       state.dataMsg = res.granted
-        ? { ok: true, text: '已開啟物價查詢' }
-        : { ok: false, text: '你在對話框按了拒絕,物價查詢維持關閉' };
+        ? { ok: true, text: tr('sb.price.permGranted') }
+        : { ok: false, text: tr('sb.price.permDenied') };
       if (res.granted) state.prices = { ...state.prices, list: [], at: 0, error: null };
     } else {
-      state.dataMsg = { ok: true, text: '已開啟授權頁,允許之後回到這裡按「重新檢查」' };
+      state.dataMsg = { ok: true, text: tr('sb.price.permPageOpened') };
     }
   }
 
   function renderPrices(body) {
     if (state.ninjaPerm === null) {
-      body.appendChild(el('div', 'pmz-empty', '檢查權限中…'));
+      body.appendChild(el('div', 'pmz-empty', tr('sb.price.checking')));
       checkNinjaPermission().then(() => {
         if (state.tab === 'prices') render();
       });
@@ -1871,23 +2005,23 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     const { league, list, filter, error } = state.prices;
     const bar = el('div', 'pmz-form-btns');
     const search = el('input', 'pmz-input');
-    search.placeholder = '搜尋名稱(中/英)…';
+    search.placeholder = tr('sb.price.searchPlaceholder');
     search.value = filter;
     search.addEventListener('input', () => {
       state.prices.filter = search.value;
       renderPriceList(listWrap);
     });
     const refresh = el('button', 'pmz-act', '↻');
-    refresh.title = '重新抓取 poe.ninja 匯率';
+    refresh.title = tr('sb.price.refresh');
     refresh.addEventListener('click', () => loadPrices(true));
     bar.append(search, refresh);
     body.appendChild(bar);
-    body.appendChild(el('div', 'pmz-hint', `聯盟:${league ?? '—'}${state.settings.league ? '(手動設定)' : '(最新聯盟)'} · 單位:chaos(資料:poe.ninja,快取 15 分鐘)· 可在 ⚙ 設定切換聯盟`));
-    if (error) body.appendChild(el('div', 'pmz-empty', `讀取失敗:${error}`));
+    body.appendChild(el('div', 'pmz-hint', tr('sb.price.info', { league: league ?? '—', mode: state.settings.league ? tr('sb.price.leagueManual') : tr('sb.price.leagueLatest') })));
+    if (error) body.appendChild(el('div', 'pmz-empty', tr('sb.price.loadFailed', { error })));
     const listWrap = el('div');
     body.appendChild(listWrap);
     if (!list.length && !error) {
-      body.appendChild(el('div', 'pmz-empty', '載入中…'));
+      body.appendChild(el('div', 'pmz-empty', tr('sb.price.loading')));
       loadPrices();
       return;
     }
@@ -1924,11 +2058,11 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     state.dataMsg = {
       ok: true,
       text: all
-        ? `已匯出完整備份:${n} 個書籤、${state.history.length} 筆歷史,含目前設定`
-        : `已匯出 ${scope === 'Poe2' ? 'PoE2' : 'PoE1'} 書籤 ${n} 個(不含設定與歷史;匯入時是附加)`,
+        ? tr('sb.data.exportedFull', { n, history: state.history.length })
+        : tr('sb.data.exportedGame', { game: scope === 'Poe2' ? 'PoE2' : 'PoE1', n }),
     };
     if (!all && !n) {
-      state.dataMsg = { ok: false, text: `目前沒有 ${scope === 'Poe2' ? 'PoE2' : 'PoE1'} 的書籤可以匯出` };
+      state.dataMsg = { ok: false, text: tr('sb.data.exportNone', { game: scope === 'Poe2' ? 'PoE2' : 'PoE1' }) };
     }
     render();
   }
@@ -1937,20 +2071,20 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
   // (取代式匯入太容易一鍵清空,而且 id 已在模型層重新產生,不會撞。)
   function applyImport(result, source) {
     if (!result.folders.length) {
-      state.dataMsg = { ok: false, text: `${source}裡沒有可用的書籤` };
+      state.dataMsg = { ok: false, text: tr('sb.data.importNoBookmarks', { source }) };
       render();
       return;
     }
     state.data.folders = state.data.folders.concat(result.folders);
     const r = result.report;
     const notes = [];
-    if (r.droppedBookmarks.length) notes.push(`略過 ${r.droppedBookmarks.length} 筆壞掉的書籤`);
-    if (r.orphanFolders) notes.push(`${r.orphanFolders} 個資料夾的上層不在匯出裡,已放到第一層`);
-    if (r.flattened) notes.push(`${r.flattened} 個第三層資料夾已收到第二層`);
-    if (r.unknownIcons.length) notes.push(`${r.unknownIcons.length} 種圖示沒有對應(${r.unknownIcons.slice(0, 4).join('、')}),已用預設`);
+    if (r.droppedBookmarks.length) notes.push(tr('sb.data.note.dropped', { n: r.droppedBookmarks.length }));
+    if (r.orphanFolders) notes.push(tr('sb.data.note.orphan', { n: r.orphanFolders }));
+    if (r.flattened) notes.push(tr('sb.data.note.flattened', { n: r.flattened }));
+    if (r.unknownIcons.length) notes.push(tr('sb.data.note.unknownIcons', { n: r.unknownIcons.length, list: r.unknownIcons.slice(0, 4).join(tr('sb.data.listSep')) }));
     state.dataMsg = {
       ok: true,
-      text: `已從 ${source} 匯入 ${r.folders} 個資料夾、${r.bookmarks} 個書籤${notes.length ? `\n${notes.join(';')}` : ''}`,
+      text: `${tr('sb.data.imported', { source, folders: r.folders, bookmarks: r.bookmarks })}${notes.length ? `\n${notes.join(';')}` : ''}`,
     };
     if (r.droppedBookmarks.length) {
       dbg('[PTM] 匯入時略過的書籤:', r.droppedBookmarks);
@@ -1968,27 +2102,33 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     const n = M.countBookmarks(picked);
     state.pendingImport = null;
     if (!n) {
-      state.dataMsg = { ok: false, text: `這個檔裡沒有 ${label} 的書籤` };
+      state.dataMsg = { ok: false, text: tr('sb.data.fileNoGame', { game: label }) };
       render();
       return;
     }
     applyImport(
       { folders: picked, report: { ...result.report, folders: picked.length, bookmarks: n } },
-      `檔案的 ${label} 部分`
+      tr('sb.data.sourceFilePart', { game: label })
     );
   }
 
   // 完整備份的「還原」:取代目前內容(含設定與歷史)
   function restoreBackup(result) {
     const inFile = M.countByGame(result.folders);
-    const when = result.exportedAt ? `(${result.exportedAt.slice(0, 10)} 匯出)` : '';
+    const when = result.exportedAt ? tr('sb.data.exportedOn', { date: result.exportedAt.slice(0, 10) }) : '';
     confirmDialog({
-      title: '還原備份',
-      message: `備份${when}裡有 ${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤`
-        + `(PoE1 ${inFile.Poe1}、PoE2 ${inFile.Poe2})、${result.history.length} 筆歷史。\n`
-        + `目前的 ${state.data.folders.length} 個資料夾、${M.countBookmarks(state.data.folders)} 個書籤與設定會被取代。\n`
-        + '此操作將永久刪除資料。',
-      okLabel: '還原',
+      title: tr('sb.data.restoreTitle'),
+      message: `${tr('sb.data.restoreMsg', {
+        when,
+        folders: result.report.folders,
+        bookmarks: result.report.bookmarks,
+        poe1: inFile.Poe1,
+        poe2: inFile.Poe2,
+        history: result.history.length,
+        curFolders: state.data.folders.length,
+        curBookmarks: M.countBookmarks(state.data.folders),
+      })}\n${tr('sb.common.permanentDelete')}`,
+      okLabel: tr('sb.data.restoreOk'),
       onOk: () => {
         state.data = { version: M.VERSION, folders: result.folders };
         state.settings = { ...DEFAULT_SETTINGS, ...result.settings };
@@ -2002,7 +2142,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         applyPseudoHighlight();
         state.dataMsg = {
           ok: true,
-          text: `已還原備份:${result.report.folders} 個資料夾、${result.report.bookmarks} 個書籤、${result.history.length} 筆歷史,設定也一併套用`,
+          text: tr('sb.data.restored', { folders: result.report.folders, bookmarks: result.report.bookmarks, history: result.history.length }),
         };
         render();
       },
@@ -2031,7 +2171,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         };
         state.dataMsg = null;
       } catch (err) {
-        state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+        state.dataMsg = { ok: false, text: tr('sb.data.importFailed', { error: String(err?.message ?? err) }) };
       }
       render();
       return;
@@ -2043,7 +2183,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         historyMax: HISTORY_MAX,
       });
       if (!result.folders.length) {
-        state.dataMsg = { ok: false, text: '這個檔案裡沒有可用的書籤' };
+        state.dataMsg = { ok: false, text: tr('sb.data.fileNoBookmarks') };
         render();
         return;
       }
@@ -2056,39 +2196,44 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       render();
     } catch (err) {
       // 行內錯誤訊息,不用 alert 阻斷官網頁面
-      state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      state.dataMsg = { ok: false, text: tr('sb.data.importFailed', { error: String(err?.message ?? err) }) };
       render();
     }
   }
 
   // ── 從 PoB code 匯入 ──
   // 一份流派 → 一個資料夾,底下依部位分五個子資料夾(使用者裁定的結構)。
-  // 詞綴要對到官方詞綴代碼,得先拿到翻譯建置產生的 statIdMap。
+  // 詞綴要對到官方詞綴代碼:用**純英文**的 stat 索引(bg/translation.js 的 enStatIndex,
+  // 只抓國際服 stats),English 介面與台服站都能用。拿不到才退回中文建置的 statIdMap。
   async function importPobCode(text) {
     const PB = globalThis.pmzPobImport;
     if (!PB) {
-      state.dataMsg = { ok: false, text: 'PoB 匯入模組沒有載入' };
+      state.dataMsg = { ok: false, text: tr('sb.pob.notLoaded') };
       render();
       return;
     }
     try {
-      const { statIdMap } = await chrome.storage.local.get('statIdMap');
+      const idx = await chrome.runtime.sendMessage({ t: 'translation:enStatIndex', game: 'poe1' }).catch(() => null);
+      let statIdMap = idx?.ok ? (await chrome.storage.local.get(idx.key))[idx.key]?.map : null;
       if (!statIdMap || !Object.keys(statIdMap).length) {
-        state.dataMsg = { ok: false, text: '詞綴對照表還沒建好(先在 popup 套用中文化),稀有裝備的條件會帶不出來' };
+        statIdMap = showZhNames() ? (await chrome.storage.local.get('statIdMap')).statIdMap : null;
+      }
+      if (!statIdMap || !Object.keys(statIdMap).length) {
+        state.dataMsg = { ok: false, text: tr('sb.pob.noStatMap') };
         render();
         return;
       }
       const xml = await PB.decodePobCode(text);
       const build = PB.parsePobBuild(xml);
       const plan = PB.buildBookmarkPlan(build, PB.buildStatIndex(statIdMap));
-      if (!plan.groups.length) throw new Error('這份 PoB 存檔裡沒有裝備');
+      if (!plan.groups.length) throw new Error(tr('sb.pob.noItems'));
 
-      const parent = M.newFolder(plan.buildName, state.iconIndex?.get('Chaos Orb') ?? M.DEFAULT_ICON, null);
+      const parent = M.newFolder(plan.buildName, state.iconIndex?.get('Chaos Orb') ?? M.DEFAULT_ICON, null, SCOPE);
       const added = [parent];
       for (const group of plan.groups) {
-        const child = M.newFolder(group.category, M.DEFAULT_ICON, parent.id);
+        const child = M.newFolder(group.label ?? group.category, M.DEFAULT_ICON, parent.id, SCOPE);
         for (const item of group.items) {
-          const bm = M.sanitizeBookmark({ name: item.name, query: item.query, league: null, type: 'search' });
+          const bm = M.sanitizeBookmark({ name: item.name, query: item.query, league: null, type: 'search', site: SITE });
           if (bm) child.bookmarks.push(bm);
         }
         if (child.bookmarks.length) added.push(child);
@@ -2097,18 +2242,18 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
 
       const r = plan.report;
       const notes = [];
-      if (r.unmatchedMods.length) notes.push(`${r.unmatchedMods.length} 條詞綴沒有對應的官方代碼(星團珠寶與藥水的詞綴交易站本來就搜不到),那幾條沒有加進條件`);
-      if (r.noBase.length) notes.push(`${r.noBase.length} 件魔法物品沒有基底名(通常是藥水),只帶詞綴`);
+      if (r.unmatchedMods.length) notes.push(tr('sb.pob.note.unmatched', { n: r.unmatchedMods.length }));
+      if (r.noBase.length) notes.push(tr('sb.pob.note.noBase', { n: r.noBase.length }));
       state.dataMsg = {
         ok: true,
-        text: `已匯入「${plan.buildName}」${added.length - 1} 個分類、${M.countBookmarks(added)} 件裝備${notes.length ? `\n${notes.join(';')}` : ''}`,
+        text: `${tr('sb.pob.imported', { name: plan.buildName, categories: added.length - 1, items: M.countBookmarks(added) })}${notes.length ? `\n${notes.join(';')}` : ''}`,
       };
       state.codeBoxOpen = null;
       dbg('[PTM] PoB 匯入:', plan.buildName, r);
       persist();
       render();
     } catch (err) {
-      state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      state.dataMsg = { ok: false, text: tr('sb.data.importFailed', { error: String(err?.message ?? err) }) };
       render();
     }
   }
@@ -2121,7 +2266,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       applyImport(M.parseExtensionCode(text, { iconIndex: state.iconIndex }), 'PoE Trade Extension');
       state.codeBoxOpen = false;
     } catch (err) {
-      state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      state.dataMsg = { ok: false, text: tr('sb.data.importFailed', { error: String(err?.message ?? err) }) };
       render();
     }
   }
@@ -2136,13 +2281,13 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       const result = M.parseBetterTradingBackup(text, { iconIndex: state.iconIndex });
       applyImport(result, 'Better PathOfExile Trading');
       const extra = [];
-      if (result.report.archivedFolders) extra.push(`含封存資料夾 ${result.report.archivedFolders} 個(已收合)`);
-      if (result.report.badLines.length) extra.push(`略過 ${result.report.badLines.length} 行解不開的內容`);
+      if (result.report.archivedFolders) extra.push(tr('sb.bt.note.archived', { n: result.report.archivedFolders }));
+      if (result.report.badLines.length) extra.push(tr('sb.bt.note.badLines', { n: result.report.badLines.length }));
       if (extra.length && state.dataMsg?.ok) state.dataMsg.text += `\n${extra.join(';')}`;
       state.codeBoxOpen = false;
       render();
     } catch (err) {
-      state.dataMsg = { ok: false, text: `匯入失敗:${String(err?.message ?? err)}` };
+      state.dataMsg = { ok: false, text: tr('sb.data.importFailed', { error: String(err?.message ?? err) }) };
       render();
     }
   }
@@ -2175,9 +2320,9 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     const folders = state.data.folders.length;
     const marks = M.countBookmarks(state.data.folders);
     confirmDialog({
-      title: '清除所有書籤',
-      message: `會刪掉 ${folders} 個資料夾、${marks} 個書籤。\n搜尋紀錄與設定不受影響。\n此操作將永久刪除資料。`,
-      okLabel: '清除',
+      title: tr('sb.data.clearTitle'),
+      message: `${tr('sb.data.clearMsg', { folders, bookmarks: marks })}\n${tr('sb.common.permanentDelete')}`,
+      okLabel: tr('sb.data.clearOk'),
       onOk: () => {
         state.data = { version: M.VERSION, folders: [] };
         // 這三個都指著剛剛被刪掉的東西,不清會留著不存在的 id
@@ -2186,7 +2331,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         state.historyPickId = null;
         try { sessionStorage.removeItem(PENDING_KEY); } catch (_) { /* 無痕或配額問題:留著也只是個過期的 id */ }
         persist();
-        state.dataMsg = { ok: true, text: `已清除 ${folders} 個資料夾、${marks} 個書籤` };
+        state.dataMsg = { ok: true, text: tr('sb.data.cleared', { folders, bookmarks: marks }) };
         render();
       },
     });
@@ -2218,12 +2363,13 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     body.appendChild(row);
     return seg;
   }
-  const ON_OFF = [[true, '開'], [false, '關']];
+  // 開/關兩段鈕:render 時才取字(語言在載入後才設定)
+  const onOff = () => [[true, tr('common.on')], [false, tr('common.off')]];
 
   // settings 裡的布林鍵:state.settings 已與 DEFAULT_SETTINGS 合併,必有值;
   // 寫回同一個鍵、同樣 persist,after 是即時生效的副作用(可省)。
   function settingToggle(body, key, label, after) {
-    segRow(body, label, ON_OFF,
+    segRow(body, label, onOff(),
       (val) => (state.settings[key] !== false) === val,
       (val) => {
         state.settings[key] = val;
@@ -2234,11 +2380,11 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
   }
 
   function renderSettings(body) {
-    body.appendChild(el('div', 'pmz-hint', '標示 ↻ 的項目需重新整理頁面後生效'));
+    body.appendChild(el('div', 'pmz-hint', tr('sb.set.reloadHint')));
 
     // ── 1. 側邊欄 ──
-    body.appendChild(el('div', 'pmz-section-title', '側邊欄'));
-    segRow(body, '位置', [['left', '左'], ['right', '右']],
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.sidebar')));
+    segRow(body, tr('sb.set.position'), [['left', tr('sb.set.left')], ['right', tr('sb.set.right')]],
       (val) => state.settings.sidebarSide === val,
       (val) => {
         state.settings.sidebarSide = val;
@@ -2248,36 +2394,46 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       });
     // 關掉 = 回到舊行為:每次開頁面板都是收合的。開關本身存 settings(偏好),
     // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
-    settingToggle(body, 'keepPanelOpen', '常駐維持展開(換頁後不自動收合)');
-    settingToggle(body, 'autoInstantBuyout', '開啟頁面自動將狀態設為「即刻購買」 ↻');
+    settingToggle(body, 'keepPanelOpen', tr('sb.set.keepPanelOpen'));
+    settingToggle(body, 'autoInstantBuyout', tr('sb.set.autoInstantBuyout'));
 
     // ── 2. 顯示 ──
     // 中文化與雙語詞綴:與 popup 共用同一組 storage 鍵,兩邊改都算數。
     // ⚠ 一律從 state 畫,不要在這裡 `chrome.storage.local.get().then(…)` 再 append ——
     //   render 是「清空 body 再重畫」,非同步 append 會在兩次 render 交錯時畫出兩份
     //   (切一次中文化就會多一組「中文化 + 備份與匯入」;2026-08-16 使用者截圖回報)。
-    body.appendChild(el('div', 'pmz-section-title', '顯示'));
-    segRow(body, '介面與詞綴中文化 ↻', [['zh_tw', '開'], ['us', '關']],
-      (val) => state.language === val,
-      (val) => {
-        state.language = val;
-        chrome.storage.local.set({ language: val });
-        if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build' }).catch(() => {});
-        render();
-      });
-    segRow(body, '結果列附英文原文', ON_OFF,
-      (val) => state.bilingualMods === val,
-      (val) => {
-        state.bilingualMods = val;
-        chrome.storage.local.set({ bilingualMods: val });
-        render();
-      });
-    settingToggle(body, 'highlightPseudo', '結果列的偽屬性(合計)詞綴高亮', applyPseudoHighlight); // 即時生效,不必重整
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.display')));
+    // 介面語言(與 popup 同一個 uiLang 鍵)。English = 交易站不翻、不載任何中文資料
+    // 語言名一律用該語言自己的寫法(endonym),不隨介面語言翻 —— 看不懂目前語言的人才找得到
+    const langRow = el('div', 'pmz-setting-row');
+    langRow.appendChild(el('span', null, tr('sb.set.uiLang')));
+    langRow.appendChild(langSelect(true));
+    body.appendChild(langRow);
+    // 翻譯與雙語:台服頁面本身就是中文(拔掉,使用者裁定);English 與還沒選語言時也不翻
+    if (!IS_TW && state.uiLangChosen && state.uiLang === 'zh') {
+      segRow(body, tr('sb.set.translate'), [['zh_tw', tr('common.on')], ['us', tr('common.off')]],
+        (val) => state.language === val,
+        (val) => {
+          state.language = val;
+          chrome.storage.local.set({ language: val });
+          // ⚠ 要帶 game:沒帶的舊訊息會被當成 PoE1,PoE2 頁面按了等於沒建
+          if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build', game: GAME.id }).catch(() => {});
+          render();
+        });
+      segRow(body, tr('sb.set.bilingual'), onOff(),
+        (val) => state.bilingualMods === val,
+        (val) => {
+          state.bilingualMods = val;
+          chrome.storage.local.set({ bilingualMods: val });
+          render();
+        });
+    }
+    settingToggle(body, 'highlightPseudo', tr('sb.set.highlightPseudo'), applyPseudoHighlight); // 即時生效,不必重整
     // 詞綴 ＋/− 按鈕的顯示由 mod-row.js 監聽 storage 的 settings 即時切換,這裡只負責存
-    settingToggle(body, 'modFilterButtons', '結果列的詞綴篩選按鈕(＋/−)');
+    settingToggle(body, 'modFilterButtons', tr('sb.set.modFilterButtons'));
 
     // ── 3. 資料來源 ──
-    body.appendChild(el('div', 'pmz-section-title', '資料來源'));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data')));
 
     // ⚠ 書籤/歷史的遊戲切換已改成**分頁頂部的 PoE1/PoE2 標籤**(依網址自動切),
     //   這裡不再有那個設定 —— 同一件事有兩個入口只會讓人不知道哪個說了算。
@@ -2285,12 +2441,13 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     // 聯盟:物價與書籤共用。空字串 = 自動(物價用 poe.ninja 最新、書籤用目前頁面)
     // ⚠ **每款一份**:兩款的聯盟名不同,共用一個欄位會讓另一款開出空搜尋。
     //   這個下拉改的是**目前頁面那一款**的設定,標題也寫清楚是哪一款。
-    const LKEY = IS_POE2 ? 'league2' : 'league';
-    const LLAST = IS_POE2 ? 'lastLeague2' : 'lastLeague';
+    // ⚠ 台服另一份(聯盟名是中文,見 leagueKey)
+    const LKEY = leagueKey(POE_VER, 'league');
+    const LLAST = leagueKey(POE_VER, 'lastLeague');
     const leagueRow = el('div', 'pmz-setting-row');
-    leagueRow.appendChild(el('span', null, `聯盟(${GAME.label})`));
+    leagueRow.appendChild(el('span', null, tr('sb.set.league', { game: GAME.label })));
     const leagueSel = el('select', 'pmz-select pmz-select-inline');
-    const autoOpt = el('option', null, `自動(目前:${(IS_POE2 ? null : state.ninjaLeagues?.latest) ?? (state.settings[LLAST] || '…')})`);
+    const autoOpt = el('option', null, tr('sb.set.leagueAuto', { league: (HAS_PRICES ? state.ninjaLeagues?.latest : null) ?? (state.settings[LLAST] || '…') }));
     autoOpt.value = '';
     leagueSel.appendChild(autoOpt);
     const manual = state.settings[LKEY];
@@ -2298,7 +2455,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     // ⚠ poe.ninja 的聯盟清單是 PoE1 的,不要餵給 PoE2 的下拉。
     const known = new Set([
       ...(manual ? [manual] : []),
-      ...(IS_POE2 ? [] : (state.ninjaLeagues?.leagues ?? [])),
+      ...(HAS_PRICES ? (state.ninjaLeagues?.leagues ?? []) : []),
       ...(state.settings[LLAST] ? [state.settings[LLAST]] : []),
     ]);
     for (const name of known) {
@@ -2316,7 +2473,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     });
     // 沒授權 poe.ninja 就不要白打請求(清單抓不到,下拉維持「自動」)。
     // PoE2 頁面根本不用它的清單,更不必打。
-    if (!IS_POE2 && !state.ninjaLeagues && state.ninjaPerm === true) {
+    if (HAS_PRICES && !state.ninjaLeagues && state.ninjaPerm === true) {
       loadNinjaLeagues().then((leagues) => {
         if (leagues && state.tab === 'settings') render(); // 清單到位後補全選項
       });
@@ -2326,9 +2483,10 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
 
     // 物價查詢(poe.ninja 選用權限):開 = 已授權。授權必須在擴充頁面按下(見 background.js),
     // 所以這裡點「開」是去開授權頁;點「關」則由 background 直接收回。
-    // ⚠ 只有 PoE1:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`,PoE2 頁面連物價分頁都沒有。
-    if (!IS_POE2) {
-      const ninjaSeg = segRow(body, '物價查詢(poe.ninja)', ON_OFF,
+    // ⚠ 只有 PoE1 國際服:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`,PoE2 頁面連物價分頁都沒有;
+    //   台服拔掉物價(使用者 2026-09-21 裁定)。
+    if (HAS_PRICES) {
+      const ninjaSeg = segRow(body, tr('sb.set.ninja'), onOff(),
         (val) => state.ninjaPerm === val,
         async (val) => {
           if (val === state.ninjaPerm) return;
@@ -2343,7 +2501,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
           }
           render();
         });
-      const recheck = el('button', 'pmz-act', '重新檢查');
+      const recheck = el('button', 'pmz-act', tr('sb.set.recheck'));
       recheck.addEventListener('click', async () => {
         await checkNinjaPermission();
         render();
@@ -2355,17 +2513,17 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     // ── 4. 備份與匯入 ──
     // ⚠ 直觀優先:匯出是**三顆各自寫清楚做什麼的鈕**(不必先選再按);
     //   匯入是**先開檔、把裡面有什麼攤出來**,再按對應的鈕(開檔前根本不知道有什麼)。
-    body.appendChild(el('div', 'pmz-section-title', '備份與匯入'));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.backup')));
     const have = M.countByGame(state.data.folders);
 
-    body.appendChild(el('div', 'pmz-sub-title', '匯出'));
-    const expFull = el('button', 'pmz-primary', '完整備份(設定 + 全部書籤 + 歷史)');
+    body.appendChild(el('div', 'pmz-sub-title', tr('sb.set.export')));
+    const expFull = el('button', 'pmz-primary', tr('sb.set.exportFull'));
     expFull.addEventListener('click', () => exportBackup('all'));
     body.appendChild(expFull);
     const expRow = el('div', 'pmz-btnrow');
     for (const [game, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
       const n = have[game];
-      const btn = el('button', 'pmz-secondary', `只匯出 ${label} 書籤(${n})`);
+      const btn = el('button', 'pmz-secondary', tr('sb.set.exportGame', { game: label, n }));
       btn.disabled = !n;
       btn.addEventListener('click', () => exportBackup(game));
       expRow.appendChild(btn);
@@ -2373,42 +2531,46 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     body.appendChild(expRow);
     body.appendChild(el('div', 'pmz-hint',
       // ⚠ 這是 DOM 文字不是 markdown,不要寫 ** ** —— 會原樣顯示成星號
-      '完整備份還原時會「取代」目前內容;單款檔只有書籤(不含設定與歷史),匯入時是「附加」。'));
+      tr('sb.set.exportHint')));
 
-    body.appendChild(el('div', 'pmz-sub-title', '匯入'));
+    body.appendChild(el('div', 'pmz-sub-title', tr('sb.set.import')));
     const pend = state.pendingImport;
     if (pend) {
       // 檔案已經解析好:把內容攤開,讓使用者看著數字決定
       const card = el('div', 'pmz-import-card');
       card.appendChild(el('div', 'pmz-import-name', pend.name));
-      const when = pend.exportedAt ? `,${pend.exportedAt.slice(0, 10)} 匯出` : '';
+      const when = pend.exportedAt ? tr('sb.set.pend.exportedOn', { date: pend.exportedAt.slice(0, 10) }) : '';
       card.appendChild(el('div', 'pmz-hint',
-        `${pend.isBackup ? '完整備份' : '書籤檔'}${when}:`
-        + `PoE1 ${pend.counts.Poe1} 個、PoE2 ${pend.counts.Poe2} 個書籤`
-        + (pend.isBackup ? `、${pend.history.length} 筆歷史` : '')));
+        tr('sb.set.pend.summary', {
+          kind: pend.isBackup ? tr('sb.set.pend.fullBackup') : tr('sb.set.pend.bookmarkFile'),
+          when,
+          poe1: pend.counts.Poe1,
+          poe2: pend.counts.Poe2,
+        })
+        + (pend.isBackup ? tr('sb.set.pend.history', { n: pend.history.length }) : '')));
       const acts = el('div', 'pmz-btnrow');
       for (const [game, label] of [['Poe1', 'PoE1'], ['Poe2', 'PoE2']]) {
-        const btn = el('button', 'pmz-primary', `只加入 ${label}(${pend.counts[game]})`);
+        const btn = el('button', 'pmz-primary', tr('sb.set.pend.addGame', { game: label, n: pend.counts[game] }));
         btn.disabled = !pend.counts[game];
         btn.addEventListener('click', () => importOneGame(pend, game));
         acts.appendChild(btn);
       }
       card.appendChild(acts);
       const acts2 = el('div', 'pmz-btnrow');
-      const addAll = el('button', 'pmz-secondary', '兩款都加入(附加)');
+      const addAll = el('button', 'pmz-secondary', tr('sb.set.pend.addBoth'));
       addAll.addEventListener('click', () => {
         const r = pend;
         state.pendingImport = null;
-        applyImport({ folders: r.folders, report: r.report }, '檔案');
+        applyImport({ folders: r.folders, report: r.report }, tr('sb.data.sourceFile'));
       });
       acts2.appendChild(addAll);
       if (pend.isBackup) {
         // 只有完整備份才給「還原」—— 單款檔拿去取代會把另一款刪光,那條路不開
-        const restore = el('button', 'pmz-secondary pmz-danger', '還原備份(取代目前內容)');
+        const restore = el('button', 'pmz-secondary pmz-danger', tr('sb.set.pend.restore'));
         restore.addEventListener('click', () => restoreBackup(pend));
         acts2.appendChild(restore);
       }
-      const cancel = el('button', 'pmz-secondary', '取消');
+      const cancel = el('button', 'pmz-secondary', tr('common.cancel'));
       cancel.addEventListener('click', () => {
         state.pendingImport = null;
         render();
@@ -2417,7 +2579,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       card.appendChild(acts2);
       body.appendChild(card);
     } else {
-      const importBtn = el('button', 'pmz-primary', '選擇備份 / 書籤檔…');
+      const importBtn = el('button', 'pmz-primary', tr('sb.set.chooseFile'));
       const importInput = el('input');
       importInput.type = 'file';
       importInput.accept = 'application/json,.json,.txt'; // .txt = Better PathOfExile Trading 的備份
@@ -2429,7 +2591,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       });
       importBtn.addEventListener('click', () => importInput.click());
       body.append(importBtn, importInput);
-      body.appendChild(el('div', 'pmz-hint', '選好檔案後會先顯示裡面有什麼,再決定要匯入哪些。'));
+      body.appendChild(el('div', 'pmz-hint', tr('sb.set.chooseFileHint')));
     }
 
     // ⚠ **PoB code 匯入是 PoE1 專屬,PoE2 不顯示**(使用者 2026-08-26 裁定)。
@@ -2437,12 +2599,8 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     //   `tradeHashes` + `weightKey` 判 local/global —— PoE2 沒有任何一份對應資料,
     //   硬給只會產出查不到東西的搜尋(而且是 0 筆那種無聲的失敗)。
     const CODE_SOURCES = [
-      ['ext', '從 PoE Trade Extension 匯入…',
-        '在 PoE Trade Extension 按「匯出設定」(匯出碼會複製到剪貼簿),貼進下面的框。只會讀取書籤,它的其他設定不會被讀取,也不會寫回去。',
-        '在這裡貼上匯出碼…', importExtensionCode],
-      ['pob', '從 Path of Building code 匯入…',
-        '貼上 PoB code(pobb.in、poe.ninja 的 build 頁面都能複製)。會照部位建資料夾:傳奇用「傳奇名 + 基底」搜,稀有用「基底 + 全部詞綴」搜,到交易站再自己取消不要的條件。',
-        '在這裡貼上 PoB code…', importPobCode],
+      ['ext', tr('sb.set.ext.label'), tr('sb.set.ext.hint'), tr('sb.set.ext.placeholder'), importExtensionCode],
+      ['pob', tr('sb.set.pob.label'), tr('sb.set.pob.hint'), tr('sb.set.pob.placeholder'), importPobCode],
     ].filter(([key]) => !(IS_POE2 && key === 'pob'));
     for (const [key, label] of CODE_SOURCES) {
       const btn = el('button', 'pmz-secondary', label);
@@ -2463,9 +2621,9 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
       area.rows = 4;
       form.appendChild(area);
       const btns = el('div', 'pmz-form-btns');
-      const okBtn = el('button', 'pmz-primary', '匯入');
+      const okBtn = el('button', 'pmz-primary', tr('sb.set.import'));
       okBtn.addEventListener('click', () => handler(area.value));
-      const cancelBtn = el('button', 'pmz-act', '取消');
+      const cancelBtn = el('button', 'pmz-act', tr('common.cancel'));
       cancelBtn.addEventListener('click', () => {
         state.codeBoxOpen = null;
         render();
@@ -2476,21 +2634,19 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     }
 
     // ── 5. 進階 ──
-    body.appendChild(el('div', 'pmz-section-title', '進階'));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.advanced')));
     // 舊網址(只在真的有舊書籤時才出現)
     const legacy = legacyBookmarks();
     if (legacy.length) {
       body.appendChild(el(
         'div',
         'pmz-hint',
-        `還有 ${legacy.length} 個書籤存的是舊的搜尋編號。官網已經不再產生那種編號,` +
-          '新網址改把搜尋條件直接寫在裡面。舊書籤目前還開得起來,' +
-          '開一次就會自動換成新網址,不用重新存一遍。'
+        tr('sb.set.legacyNotice', { n: legacy.length })
       ));
     }
     // 清除資料:匯入三條路都是「附加」,沒有一鍵歸零的入口;匯入錯一次就得手動刪十幾個資料夾。
-    body.appendChild(el('div', 'pmz-hint', '想留底請先按上面的「匯出備份」。搜尋紀錄與設定不受影響。'));
-    const clearBtn = el('button', 'pmz-secondary pmz-danger', `清除所有書籤(${M.countBookmarks(state.data.folders)})`);
+    body.appendChild(el('div', 'pmz-hint', tr('sb.set.clearHint')));
+    const clearBtn = el('button', 'pmz-secondary pmz-danger', tr('sb.set.clearAll', { n: M.countBookmarks(state.data.folders) }));
     clearBtn.disabled = !state.data.folders.length;
     clearBtn.addEventListener('click', clearAllBookmarks);
     body.appendChild(clearBtn);
@@ -2500,17 +2656,19 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
     }
 
     // 頁尾只留資料來源;贊助 / Discord 連結已搬到 rail 上(2026-09-08)
-    body.appendChild(el('div', 'pmz-credit', '資料來源:GGG 官方 API 與遊戲檔、poe.ninja、poewiki.net'));
+    body.appendChild(el('div', 'pmz-credit', tr('sb.set.credit')));
   }
 
   function render() {
     panel.querySelectorAll('.pmz-tab').forEach((t) => {
       t.classList.toggle('pmz-tab-active', t.dataset.tab === state.tab);
     });
+    applyShellText(); // 介面語言可能在外殼建好後才切換
     updateRail(); // 面板內切分頁時 rail 的高亮也要跟著走
     panel.querySelector('.pmz-header-version').hidden = state.tab !== 'settings';
     const body = panel.querySelector('.pmz-body');
     body.textContent = '';
+    renderLangChooser(body);
     if (state.tab === 'bookmarks') renderBookmarks(body);
     else if (state.tab === 'history') renderHistory(body);
     else if (state.tab === 'prices') renderPrices(body);
@@ -2543,7 +2701,7 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
 
   // ── 啟動 ──
   async function init() {
-    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, [UI_KEY]: savedUi } =
+    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, uiLang, [UI_KEY]: savedUi } =
       await chrome.storage.local.get([
         'bookmarkData',
         'settings',
@@ -2551,8 +2709,12 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         'sidebarEnabled',
         'language',
         'bilingualMods',
+        'uiLang',
         UI_KEY,
       ]);
+    // ⚠ 一定要在建任何資料(預設資料夾名會存進 storage)與第一次 render 之前設好語言
+    // 沒有 uiLang 但有 language = 舊使用者 → 中文(更新後不跳選擇列、不變英文)
+    setUiLang(globalThis.PMZ_I18N.effectiveUiLang(uiLang, language));
     // 上限下修後,舊的超量紀錄在開頁時就裁掉(否則要等下一次搜尋才會生效);
     // 只在真的超量時才寫回,不要每次開頁都動 storage。
     const rawHistory = Array.isArray(searchHistory) ? searchHistory : [];
@@ -2623,6 +2785,15 @@ ${bm.searchId || '自訂搜尋條件'} → ${cur.searchId}
         if (changes.language) state.language = changes.language.newValue ?? 'zh_tw';
         if (changes.bilingualMods) state.bilingualMods = changes.bilingualMods.newValue === true;
         if (state.open && state.tab === 'settings') render();
+      }
+      // 介面語言(popup 或另一個分頁改的):整個重畫成新語言
+      // ⚠ 「還沒選 → 選了中文」語言字面上沒變,但選擇列要收起來,所以也要比 chosen
+      const nextLang = changes.uiLang?.newValue;
+      if (changes.uiLang && (globalThis.PMZ_I18N.normalize(nextLang) !== state.uiLang
+        || globalThis.PMZ_I18N.isChosen(nextLang) !== state.uiLangChosen)) {
+        if (changes.language) state.language = changes.language.newValue ?? 'zh_tw';
+        setUiLang(changes.uiLang.newValue);
+        if (state.open) render();
       }
       if (!changes.bookmarkData) return;
       const incoming = changes.bookmarkData.newValue;

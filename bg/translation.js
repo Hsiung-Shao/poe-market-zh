@@ -677,6 +677,39 @@ let buildChain = Promise.resolve();
 // 台服官方用語強化,失敗只降級不影響第一階段成果。
 export function buildTranslation(game = 'poe1') {
   if (!GAMES[game]) return Promise.resolve({ ok: false, error: `unknown game: ${game}` });
+  // ⚠ 中央守門:所有觸發點(安裝、bootstrap、popup、側邊欄)都經過這裡。
+  //   English 介面或關閉翻譯時**一個中文字典、一個台服請求都不發**(使用者 2026-09-21 裁定)。
+  return chineseDataAllowed().then((allowed) =>
+    allowed ? startBuild(game) : { ok: false, game, skipped: true, error: 'translation disabled' }
+  );
+}
+
+// 只有「使用者選了中文介面 + 交易站翻譯開著」才建中文資料。
+// ⚠ uiLang 沒有值 = 新安裝還沒選語言(使用者 2026-09-21 裁定:不自動判斷,由使用者自己選)
+//   → 也不建。舊使用者在更新時由 background.js onInstalled 補成 'zh',不受影響。
+export async function chineseDataAllowed() {
+  const { language, uiLang } = await chrome.storage.local.get(['language', 'uiLang']);
+  // 與 shared/i18n.js 的 effectiveUiLang 同一條規則:沒有 uiLang 但有 language = 舊使用者 = 中文
+  const ui = uiLang === 'zh' || uiLang === 'en' ? uiLang : language !== undefined ? 'zh' : undefined;
+  return ui === 'zh' && (language ?? 'zh_tw') === 'zh_tw';
+}
+
+// 切到 English 時把中文資料整批清掉(使用者 2026-09-21 要求:選過中文再改 English → 清理)。
+// 清的是翻譯建置產物、天賦卡、遠端字典快取與來源狀態;**PoB 用的純英文 stat 索引留著**
+// (它不含中文,English 照樣要用)。官網頁面的 lscache 覆寫由 bootstrap.js 在下次開頁時清。
+export async function purgeChineseData() {
+  const keys = [
+    ...GAME_IDS.flatMap((id) => Object.values(GAMES[id].store)),
+    'passives',
+    'statGroups',
+    'dictStatus',
+  ];
+  await chrome.storage.local.remove(keys);
+  await clearDictCache();
+  return { ok: true, removed: keys.length };
+}
+
+function startBuild(game) {
   if (building.has(game)) return building.get(game);
   const p = buildChain.then(() => buildOne(game)).finally(() => building.delete(game));
   buildChain = p.then(() => {}, () => {});
@@ -934,8 +967,56 @@ async function buildOne(game) {
   }
 }
 
+// ── PoB 匯入用的純英文 stat 索引 ──
+// PoB 匯入只需要「官方 id ↔ 英文模板」,原本借用中文建置產出的 statIdMap —— 那份只收
+// 有中文的條目,而且依賴台服 API,English 介面與台服站都拿不到。這裡只抓國際服的
+// stats 端點,**不讀任何中文字典、不連台服**。形狀與 statIdMap 相同({ id: { en } }),
+// pob-import.js 的 buildStatIndex 直接吃。
+const EN_INDEX_TTL = 6 * 60 * 60 * 1000;
+
+export function buildEnStatIndex(usStats) {
+  const map = {};
+  for (const group of usStats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      // 與 buildStatIdMap 同一套取捨:帶選項的(option.options)不收、同 id 第一筆為準
+      if (!entry?.id || !entry.text || entry.option?.options) continue;
+      if (!map[entry.id]) map[entry.id] = { en: entry.text };
+    }
+  }
+  return map;
+}
+
+async function ensureEnStatIndex(game) {
+  const CFG = GAMES[game];
+  if (!CFG) return { ok: false, error: `unknown game: ${game}` };
+  const key = CFG.enStatIndex;
+  const cur = (await chrome.storage.local.get(key))[key];
+  if (cur?.at && Date.now() - cur.at < EN_INDEX_TTL && Object.keys(cur.map ?? {}).length) {
+    return { ok: true, key, cached: true };
+  }
+  let stats = null;
+  try {
+    stats = await fetchKind(CFG.api.us, 'stats');
+  } catch (err) {
+    // 國際服 API 被擋 → 退遠端的**英文**快照(api-us.json,純官方英文回應)
+    stats = (await loadApiSnapshot(CFG.snapshot.us))?.stats ?? null;
+    if (!stats) {
+      // 過期的舊索引總比沒有好
+      if (Object.keys(cur?.map ?? {}).length) return { ok: true, key, stale: true };
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+  const map = buildEnStatIndex(stats);
+  await chrome.storage.local.set({ [key]: { at: Date.now(), map } });
+  return { ok: true, key };
+}
+
 export async function handleTranslationMessage(msg) {
   switch (msg.t) {
+    case 'translation:purgeZh':
+      return purgeChineseData();
+    case 'translation:enStatIndex':
+      return ensureEnStatIndex(msg.game ?? 'poe1');
     case 'translation:build':
       // 呼叫端(bootstrap.js / background.js / popup)一律帶 game;
       // 沒帶就是舊訊息,當 PoE1
@@ -972,7 +1053,7 @@ export async function handleTranslationMessage(msg) {
     case 'translation:clear': {
       // 沒指定 game 就是兩款一起清(popup 的「清除快取」)
       const targets = msg.game ? [msg.game] : GAME_IDS;
-      const keys = targets.flatMap((id) => Object.values(GAMES[id].store));
+      const keys = targets.flatMap((id) => [...Object.values(GAMES[id].store), GAMES[id].enStatIndex]);
       // statGroups 是 0.3.x 合併選單的產物,功能移除後一併清掉舊資料;
       // passives 是 PoE1 專屬的共用鍵
       if (targets.includes('poe1')) keys.push('passives', 'statGroups');

@@ -22,7 +22,12 @@
     globalThis.PMZ_GAME ??
     (/^\/trade2(\/|$)/.test(location.pathname) ? { id: 'poe2' } : { id: 'poe1' });
   if (GAME.id !== 'poe2') return;
+  // ⚠ 台服先不做(2026-09-21):台服 API 的物品 JSON 是中文,而 item-text.js 的段落標籤
+  //   寫死英文(Rarity / Requires / Item Level),組出來會半中半英、PoB 也吃不下。
+  //   台服遊戲內 Ctrl+C 的中文格式沒有實際文字可以對答案,不能用猜的 —— 拿到真實樣本再另案做。
+  if (/(^|\.)pathofexile\.tw$/.test(location.hostname)) return;
 
+  const t = (k, v) => globalThis.PMZ_I18N?.t(k, v) ?? k;
   const IT = globalThis.pmzItemText;
   if (!IT) { console.warn('[PTM] item-text.js 沒載入,PoE2 複製物品鈕不啟用'); return; }
 
@@ -69,8 +74,8 @@
     const text = IT.itemTextFor(item, { game: 'poe2' });
     if (!text) return;
     navigator.clipboard.writeText(text).then(
-      () => flash(btn, '已複製物品文字(可貼進 Path of Building)'),
-      (err) => { console.warn('[PTM] 複製失敗:', err); flash(btn, '複製失敗'); }
+      () => flash(btn, t('copy.done')),
+      (err) => { console.warn('[PTM] 複製失敗:', err); flash(btn, t('copy.failed')); }
     );
   }
 
