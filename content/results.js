@@ -528,19 +528,48 @@
     if (!name) return null;
     const out = lines.map(() => null);
     const render = (text) => {
+      // 整句原樣就是鍵(沒有待填數值、數字都是寫死的,例:`Remove a Curse after Channelling for 2 seconds`)
+      if (typeof statMap?.[text] === 'string' && !statMap[text].includes('#')) return statMap[text];
       const hit = statMap ? lookupStat(text, statMap) : null;
-      return hit ? fillTemplate(hit.tpl, text.match(hit.numRe) ?? []) : null;
+      if (hit) return fillTemplate(hit.tpl, text.match(hit.numRe) ?? []);
+      return statMap ? renderKeepingLiterals(text, statMap) : null;
     };
     for (let i = 0; i < lines.length; i++) {
       if (!lines[i]) continue;
       const one = render(lines[i]);
-      if (one && !one.includes('\n')) { out[i] = one; continue; }
+      // 畫面上一行、模板是兩行(官網把 \n 印在同一行裡):中文兩行接成一行寫回
+      if (one) { out[i] = one.replace(/\s*\n\s*/g, ''); continue; }
       if (i + 1 < lines.length && lines[i + 1]) {
         const two = render(`${lines[i]}\n${lines[i + 1]}`)?.split('\n');
         if (two?.length === 2) { out[i] = two[0]; out[i + 1] = two[1]; i++; }
       }
     }
     return { name, lines: out };
+  }
+
+  // 模板裡**寫死的數字**(`…in the past 2 seconds`)會被 lookupStat 一起換成 `#`,
+  // 而那種鍵在字典裡被刻意排除了(字面數與佔位符在中英語序不同,照順序填會錯位)。
+  // 字典另外收了保留字面數的原樣模板(`…in the past 2 seconds` → `過去2秒內…增加#%`),
+  // 所以這裡逐一試「保留其中幾個數字」的鍵:命中的鍵只有真正的佔位符是 `#`,照順序填不會錯。
+  // 數字最多 4 個(2^4 種組合),超過就不試。
+  function renderKeepingLiterals(text, map) {
+    const nums = [...text.matchAll(NUM_RE)];
+    if (nums.length < 2 || nums.length > 4) return null;
+    const full = (1 << nums.length) - 1;
+    for (let mask = full - 1; mask > 0; mask--) { // mask 的位元 = 這個數字換成 #;全換的已在 lookupStat 試過
+      let key = '';
+      let last = 0;
+      const fill = [];
+      nums.forEach((m, i) => {
+        key += text.slice(last, m.index) + ((mask >> i) & 1 ? '#' : m[0]);
+        if ((mask >> i) & 1) fill.push(m[0]);
+        last = m.index + m[0].length;
+      });
+      key += text.slice(last);
+      const tpl = map[key];
+      if (tpl && (tpl.match(/#/g) ?? []).length === fill.length) return fillTemplate(tpl, fill);
+    }
+    return null;
   }
 
   // 認得出是天賦說明區才回英文天賦名:第一個子元素是 <span>、緊接 <br>、且名字查得到
