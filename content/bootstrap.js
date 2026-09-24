@@ -40,6 +40,7 @@ const PMZ_TABLE = {
       buildStatus: 'buildStatus',
       lscacheError: 'lscacheError',
       modNames: 'modNames',
+      passiveMap: 'passiveMap',
     },
     lscache: {
       items: 'lscache-tradeitems',
@@ -63,6 +64,7 @@ const PMZ_TABLE = {
       buildStatus: 'buildStatus2',
       lscacheError: 'lscacheError2',
       modNames: 'modNames2',
+      passiveMap: 'passiveMap2',
     },
     lscache: {
       items: 'lscache-trade2items',

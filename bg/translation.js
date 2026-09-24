@@ -626,6 +626,8 @@ async function loadGgpk(failed, file = 'ggpk.json') {
     // 詞綴群組名(Mods.Name)英→繁,結果卡右欄那一格用。目前只有 PoE1 的
     // ggpk.json 有(PoE2 走另一支管線),PoE2 拿到的是空表 → 那一格顯示英文。
     modNames: g?.modNames ?? {},
+    // 天賦名(passiveskills.Name)英→繁,結果卡「天賦說明」區用;只有 PoE2 的 ggpk2.json 有
+    passives: g?.passives ?? {},
     meta: g?.meta ?? null,
   };
 }
@@ -933,6 +935,7 @@ async function buildOne(game) {
         [K.uiExtra]: uiExtra,
         // 純內建字典,不受官方 API 成敗影響,所以不走 keep()
         [K.modNames]: ggpk.modNames,
+        [K.passiveMap]: ggpk.passives,
         [K.updated]: updated,
         [K.buildStatus]: { state: 'done', msg: doneMsg, at: updated },
       });

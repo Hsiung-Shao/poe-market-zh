@@ -73,7 +73,7 @@ const EXT_VERSION = (() => {
 //   (3.39 MB 是舊檔,新的是 3.62 MB)。
 //   遠端索引宣告的 `version` 大於這個值時才代表「遠端真的比較新」。
 //   推新字典到 dict 分支時,索引的 version 要一併調高才會被採用。
-const BUNDLED_DICT_VERSION = 7;
+const BUNDLED_DICT_VERSION = 8;
 const INDEX_KEY = 'dictIndex'; // 最後一次成功取得的遠端索引(診斷用)
 const STATUS_KEY = 'dictStatus'; // 給 popup 顯示「這份字典是哪來的」
 // 索引宣告的大小若超過這個值就不下載 —— 四個字典最大的 ggpk.json 約 3.9MB,
