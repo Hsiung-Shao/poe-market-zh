@@ -259,7 +259,21 @@
 
 /* 拖曳排序:長按 350ms 才進拖曳模式(平時整塊是可點的) */
 .pmz-dragging { opacity: 0.35; }
-.pmz-drop-target { outline: 1px dashed #c9a66b; outline-offset: -1px; }
+/* 書籤拖曳的即時讓位(sidebar.js bookmarkDragPreview):被拖的那列藏起來,原地換成同高空位,
+   其他書籤滑開讓位。空位的高度由 JS 設成被拖那列的高度,margin 要與 .pmz-item 相同,
+   否則空位換邊時下一列不是剛好移一整格,游標會落到別的東西上 */
+.pmz-item.pmz-bm-source { display: none; }
+.pmz-bm-slot {
+  box-sizing: border-box;
+  margin: 3px 0;
+  border: 1px dashed #c9a66b;
+  border-radius: 4px;
+  background: rgba(201, 166, 107, 0.08);
+}
+/* 停在資料夾標題上(放進那個資料夾最後面):空位留在原地只是變淡,不移走,清單才不會跳 */
+.pmz-bm-slot.pmz-bm-slot-idle { border-color: #4a3f2f; background: transparent; }
+/* 空資料夾的「沒有書籤」提示:空位進來時讓出位置 */
+.pmz-folder-body:has(> .pmz-bm-slot) > .pmz-empty { display: none; }
 .pmz-drag-ghost {
   position: fixed;
   z-index: 10000;

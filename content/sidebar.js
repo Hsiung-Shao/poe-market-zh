@@ -870,14 +870,22 @@
     return state.data.folders.find((f) => f.id === id);
   }
 
-  function moveBookmark(ctx, targetFolderId, beforeBookmarkId) {
+  // before / after 擇一(都沒有 = 移到末端)。after 是給「排在某一群最後面」用的:
+  // 下一列是另一群(釘選/未釘選)時不能插在它前面,見 bookmarkDragPreview 的 slotTarget
+  function moveBookmark(ctx, targetFolderId, beforeBookmarkId, afterBookmarkId = null) {
     const src = findFolderById(ctx.folderId);
     const dst = findFolderById(targetFolderId);
     if (!src || !dst) return;
     const from = src.bookmarks.findIndex((b) => b.id === ctx.bookmarkId);
     if (from < 0) return;
     const [bm] = src.bookmarks.splice(from, 1);
-    let at = beforeBookmarkId ? dst.bookmarks.findIndex((b) => b.id === beforeBookmarkId) : -1;
+    let at = -1;
+    if (afterBookmarkId) {
+      at = dst.bookmarks.findIndex((b) => b.id === afterBookmarkId);
+      if (at >= 0) at += 1;
+    } else if (beforeBookmarkId) {
+      at = dst.bookmarks.findIndex((b) => b.id === beforeBookmarkId);
+    }
     if (at < 0) at = dst.bookmarks.length; // 丟到資料夾標題 → 移到末端
     dst.bookmarks.splice(at, 0, bm);
     dst.collapsed = false;
@@ -900,11 +908,6 @@
     render();
     // 放開後書籤又展開回來,剛放下的資料夾可能被推到畫面外
     panel.querySelector(`.pmz-folder-head[data-pmz-id="${ctx.folderId}"]`)?.scrollIntoView({ block: 'nearest' });
-  }
-
-  // 書籤拖曳的落點框(資料夾拖曳改用下面的讓位預覽,不用這個)
-  function clearDropMarks() {
-    panel.querySelectorAll('.pmz-drop-target').forEach((n) => n.classList.remove('pmz-drop-target'));
   }
 
   // ── 資料夾拖曳:讓位預覽 ──
@@ -1062,6 +1065,137 @@
     };
   }
 
+  // ── 書籤拖曳:即時讓位 ──
+  // 2026-09-24 使用者給了示意影片(PoE Trade Extension 那種):被拖的書籤跟著游標走,
+  // 其他書籤**即時上下滑開**讓出位置,放開就落在那格空位。以前只在目標書籤上亮一圈虛線,
+  // 放開才知道結果。
+  //   · 被拖的那一列藏起來、原地換成一格**同高**的空位(沒拖到別處就放開 = 不動)
+  //   · 游標在某列上半 → 空位排到它前面、下半 → 後面;可以跨資料夾
+  //   · 停在資料夾標題上 = 放進那個資料夾最後面(收合的、空的資料夾只能靠這個):
+  //     標題金框、空位原地變淡但**不移走**(移走的話下面整片往上跳,游標底下換成別的東西)
+  //   · 離開清單:空位回到原位,放開不動
+  // ⚠ 空位高度 = 被拖那一列的高度:空位從 X 前面換到 X 後面時 X 剛好往上一整格,
+  //   游標會落在空位上(KEEP_HIT),不會在兩個位置之間來回跳。
+  // ⚠ 釘選的永遠浮在最上面(renderFolder 的排序),所以空位只在**同一群**裡移動 ——
+  //   預覽的位置就是放開後真正出現的位置。
+  const REDUCE_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const SLIDE_MS = 120;
+
+  function bookmarkDragPreview(source, pinned) {
+    let slot = null;
+    let markedHead = null;
+    let origin = null; // [父節點, 下一個節點]:離開清單時放回去
+    const bodyEl = () => panel.querySelector('.pmz-body');
+    const itemsIn = (list) => [...list.children].filter((n) => n.classList.contains('pmz-item') && n !== source);
+    const rows = () => [...bodyEl().querySelectorAll('.pmz-item, .pmz-folder-head, .pmz-folder-save, .pmz-empty, .pmz-bm-slot')]
+      .filter((n) => n !== source);
+
+    // 動一下 DOM,再讓位置有變的列從舊位置滑過去(FLIP)。中途被下一次移動打斷也對:
+    // 舊位置量的是含 transform 的畫面位置,新位置先清掉 transform 再量
+    function slide(mutate) {
+      const before = new Map(rows().map((n) => [n, n.getBoundingClientRect().top]));
+      mutate();
+      if (REDUCE_MOTION) return;
+      for (const [n, top] of before) {
+        n.style.transition = 'none';
+        n.style.transform = '';
+        const dy = top - n.getBoundingClientRect().top;
+        if (Math.abs(dy) < 1) continue;
+        n.style.transform = `translateY(${dy}px)`;
+        void n.offsetHeight;
+        n.style.transition = `transform ${SLIDE_MS}ms ease`;
+        n.style.transform = '';
+      }
+    }
+    function unmark() {
+      markedHead?.classList.remove('pmz-drop-into');
+      markedHead = null;
+      slot?.classList.remove('pmz-bm-slot-idle');
+    }
+    // 空位移到 list 的第 index 列前面,先夾進自己那一群;位置沒變就不動(免得動畫一直重播)
+    function place(list, index) {
+      const items = itemsIn(list);
+      const pinnedCount = items.filter((n) => n.dataset.pmzPinned).length;
+      const i = pinned ? Math.min(index, pinnedCount) : Math.max(index, pinnedCount);
+      const ref = items[i] ?? list.querySelector(':scope > .pmz-folder-save');
+      let next = slot.nextElementSibling;
+      if (next === source) next = next.nextElementSibling;
+      if (slot.parentElement === list && next === ref) return;
+      slide(() => list.insertBefore(slot, ref));
+    }
+    // 放開時要交給 moveBookmark 的東西(endDrag 會先還原清單再呼叫 onDrop,所以在 show 裡先算好)
+    function slotTarget() {
+      const folderId = slot.parentElement?.closest('.pmz-folder')?.dataset.pmzWrap;
+      const sib = (dir) => {
+        let n = slot[dir];
+        while (n && (n === source || !n.classList.contains('pmz-item'))) n = n[dir];
+        return n;
+      };
+      const next = sib('nextElementSibling');
+      const prev = sib('previousElementSibling');
+      const noop = slot.nextElementSibling === source || slot.previousElementSibling === source;
+      if (next && !!next.dataset.pmzPinned === pinned) return { folderId, beforeId: next.dataset.pmzId, noop };
+      // 下一列是另一群(或沒有下一列):排在上一列後面,插在另一群前面的話釘選排序會把它搬走
+      if (prev) return { folderId, afterId: prev.dataset.pmzId, noop };
+      return { folderId, beforeId: next?.dataset.pmzId ?? null, noop };
+    }
+
+    return {
+      begin() {
+        slot = el('div', 'pmz-bm-slot');
+        slot.style.height = `${source.offsetHeight}px`;
+        origin = [source.parentElement, source];
+        source.before(slot);
+        source.classList.add('pmz-bm-source');
+      },
+      hitAt(x, y) {
+        const under = document.elementFromPoint(x, y);
+        if (!under || !bodyEl()?.contains(under)) return null;
+        // 空位上:平常維持原判定;標題亮著時回到空位 = 改回「放在這格」
+        if (under.closest('.pmz-bm-slot')) return markedHead ? { kind: 'here' } : KEEP_HIT;
+        const row = under.closest('.pmz-item');
+        const list = under.closest('.pmz-folder-body');
+        if (row && list && row.parentElement === list) {
+          const r = row.getBoundingClientRect();
+          return { kind: 'slot', list, index: itemsIn(list).indexOf(row) + (y > r.top + r.height / 2 ? 1 : 0) };
+        }
+        const head = under.closest('.pmz-folder-head');
+        if (head?.dataset.pmzId) return { kind: 'into', node: head, folderId: head.dataset.pmzId };
+        // 清單最後面(「儲存目前搜尋」鈕、空資料夾的提示)= 排到這個資料夾最後
+        if (list && under.closest('.pmz-folder-save, .pmz-empty')) return { kind: 'slot', list, index: Infinity };
+        return KEEP_HIT;
+      },
+      show(hit) {
+        unmark();
+        if (!hit) {
+          const [parent, ref] = origin;
+          if (slot.nextElementSibling !== ref) slide(() => parent.insertBefore(slot, ref));
+          return;
+        }
+        if (hit.kind === 'into') {
+          markedHead = hit.node;
+          markedHead.classList.add('pmz-drop-into');
+          slot.classList.add('pmz-bm-slot-idle');
+          return;
+        }
+        if (hit.kind === 'slot') place(hit.list, hit.index);
+        hit.node = slot.parentElement;
+        Object.assign(hit, slotTarget());
+      },
+      end() {
+        unmark();
+        slot?.remove();
+        slot = null;
+        source.classList.remove('pmz-bm-source');
+        if (!bodyEl()) return;
+        for (const n of rows()) {
+          n.style.transition = '';
+          n.style.transform = '';
+        }
+      },
+    };
+  }
+
   // ── 拖曳 ──
   // 用 pointer 事件自己做,不用 HTML5 的 draggable:draggable 一開就是「按住就拖」,
   // 整塊沒辦法同時當按鈕用。什麼時候算開始拖,依輸入裝置分開:
@@ -1088,35 +1222,19 @@
     clearInterval(drag.scrollTimer);
     ghost?.remove();
     source?.classList.remove('pmz-dragging');
-    clearDropMarks();
-    preview?.end(); // 先把清單還原,onDrop 沒有 render 的路徑(放回原位)才不會留著空位
+    preview.end(); // 先把清單還原,onDrop 沒有 render 的路徑(放回原位)才不會留著空位
     document.body.style.userSelect = '';
     const finished = drag;
     drag = null;
     if (apply && hit && hit.kind !== 'invalid') finished.onDrop(finished.ctx, hit.node, hit.position, hit);
   }
 
-  // 書籤拖曳:游標底下可以放的目標(ghost 有 pointer-events:none,不會擋住 elementFromPoint)。
-  // 放到書籤 = 插到它前面、放到資料夾標題 = 移進去,都只有一種放法。
-  function hitTest(x, y, accepts) {
-    const el0 = document.elementFromPoint(x, y);
-    const node = el0?.closest('[data-pmz-drop]');
-    if (!node || !panel.contains(node)) return null;
-    if (!accepts.includes(node.dataset.pmzDrop)) return null;
-    return { node, position: 'inside' };
-  }
-
+  // 落點一律由 preview 算(ghost 有 pointer-events:none,不會擋住它裡面的 elementFromPoint)
   function updateHit(x, y) {
-    if (drag.preview) {
-      const hit = drag.preview.hitAt(x, y);
-      if (hit === KEEP_HIT) return;
-      drag.hit = hit;
-      drag.preview.show(hit);
-      return;
-    }
-    clearDropMarks();
-    drag.hit = hitTest(x, y, drag.accepts);
-    if (drag.hit && drag.hit.node !== drag.source) drag.hit.node.classList.add('pmz-drop-target');
+    const hit = drag.preview.hitAt(x, y);
+    if (hit === KEEP_HIT) return;
+    drag.hit = hit;
+    drag.preview.show(hit);
   }
 
   // 拖到清單上下緣自動捲動:書籤一多,放的位置常常不在同一個畫面裡。
@@ -1143,8 +1261,8 @@
     }, 16) : null;
   }
 
-  // preview(可省):資料夾拖曳的讓位預覽,見 folderDragPreview
-  function makeDraggable(node, ctx, onDrop, accepts, kind, preview) {
+  // preview:落點判定與讓位預覽(folderDragPreview / bookmarkDragPreview),{ begin, hitAt, show, end }
+  function makeDraggable(node, ctx, onDrop, kind, preview) {
     node.dataset.pmzDrop = kind;
     // 瀏覽器原生的拖曳(資料夾圖示是 <img>、或按在已選取的文字上)一啟動就會發
     // pointercancel,把我們的拖曳整個取消掉 —— 一律擋掉,拖曳只走下面這套。
@@ -1175,11 +1293,11 @@
         document.body.style.userSelect = 'none';
         window.getSelection()?.removeAllRanges(); // 滑鼠按著移動的那幾 px 可能已經選到字
         drag = {
-          ctx, ghost, source: node, onDrop, accepts, preview: preview ?? null,
+          ctx, ghost, source: node, onDrop, preview,
           offsetX: startX - rect.left, offsetY: startY - rect.top, hit: null,
           lastX: startX, lastY: startY, scrollDir: 0, scrollTimer: null, scrollArmed: false,
         };
-        drag.preview?.begin();
+        drag.preview.begin();
       };
       let timer = setTimeout(beginDrag, LONG_PRESS_MS);
 
@@ -1370,26 +1488,17 @@
     const item = el('div', 'pmz-item');
     item.dataset.pmzId = bm.id;
     item.dataset.pmzFolder = folder.id;
-    // 拖曳:放到另一個書籤上 = 插到它前面;放到資料夾標題 = 移到該資料夾末端
-    // (空的、收合的資料夾沒有書籤可以對準,只能靠標題 —— 所以 accepts 一定要有 'folder')
-    makeDraggable(item, { type: 'bookmark', folderId: folder.id, bookmarkId: bm.id }, (ctx, node) => {
-      if (node.dataset.pmzDrop === 'folder') {
-        if (node.dataset.pmzId) moveBookmark(ctx, node.dataset.pmzId, null);
+    if (bm.pinned) item.dataset.pmzPinned = '1'; // 讓位預覽靠它把空位留在同一群(釘選/未釘選)
+    // 拖曳:其他書籤即時讓位,放開落在空位(見 bookmarkDragPreview);
+    // 放到資料夾標題 = 移到該資料夾末端(空的、收合的資料夾沒有書籤可以對準,只能靠標題)
+    makeDraggable(item, { type: 'bookmark', folderId: folder.id, bookmarkId: bm.id }, (ctx, node, pos, hit) => {
+      if (hit.kind === 'into') {
+        moveBookmark(ctx, hit.folderId, null);
         return;
       }
-      const targetId = node.dataset.pmzId;
-      const targetFolderId = node.dataset.pmzFolder;
-      if (!targetId || ctx.bookmarkId === targetId) return;
-      const target = findFolderById(targetFolderId)?.bookmarks.find((b) => b.id === targetId);
-      let beforeId = targetId;
-      const dragged = findFolderById(ctx.folderId)?.bookmarks.find((b) => b.id === ctx.bookmarkId);
-      if (target?.pinned && dragged && !dragged.pinned) {
-        // 未釘選項拖到釘選項上:釘選永遠浮頂,插在它前面沒有視覺意義,
-        // 改視為「移到未釘選群組最前」讓結果可見
-        beforeId = findFolderById(targetFolderId)?.bookmarks.find((b) => !b.pinned && b.id !== ctx.bookmarkId)?.id ?? null;
-      }
-      moveBookmark(ctx, targetFolderId, beforeId);
-    }, ['bookmark', 'folder'], 'bookmark');
+      if (hit.noop || !hit.folderId) return;
+      moveBookmark(ctx, hit.folderId, hit.beforeId ?? null, hit.afterId ?? null);
+    }, 'bookmark', bookmarkDragPreview(item, !!bm.pinned));
     // 整塊都能點開搜尋(按鈕自己會擋掉冒泡,剛拖完的那一下也不算)
     onActivate(item, () => openBookmark(bm));
     // 兩行:上面整行給名稱(側邊欄窄,名稱不該和按鈕搶寬度),下面一行放操作鈕
@@ -1476,12 +1585,11 @@
     if (folder.parentId) wrap.dataset.pmzParent = folder.parentId;
     const head = el('div', 'pmz-folder-head');
     head.dataset.pmzId = folder.id;
-    // ⚠ onDrop 是**被拖的那一個**的回呼(見 endDrag),accepts 是它能放到哪些目標。
-    //   資料夾拖曳的落點由 folderDragPreview 算(hit 帶 targetId),accepts 只剩書籤拖曳在用。
-    //   書籤拖到資料夾標題的處理在 renderBookmarkItem。
+    // ⚠ onDrop 是**被拖的那一個**的回呼(見 endDrag),落點由 folderDragPreview 算(hit 帶 targetId)。
+    //   書籤拖到資料夾標題的處理在 bookmarkDragPreview / renderBookmarkItem。
     makeDraggable(head, { type: 'folder', folderId: folder.id }, (ctx, node, pos, hit) => {
       if (hit?.targetId) dropFolderOn(ctx, hit.targetId, pos);
-    }, ['folder'], 'folder', folderDragPreview(folder.id));
+    }, 'folder', folderDragPreview(folder.id));
     head.appendChild(gripHandle(tr('sb.folder.dragGrip')));
     head.appendChild(el('span', 'pmz-caret', folder.collapsed ? '▸' : '▾'));
     // 圖示平時只是圖示:點下去跟點標題一樣是展開/收合。要換圖示請按 ✎(見下方)
