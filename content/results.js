@@ -32,8 +32,8 @@
   const SITE = globalThis.PMZ_SITE ?? (/(^|\.)pathofexile\.tw$/.test(location.hostname) ? 'tw' : 'intl');
   // storage 鍵:PoE2 一律 `2` 後綴(與 shared/games.js、bootstrap.js 同一組)
   const K = IS_POE2
-    ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2', updated: 'updated2' }
-    : { statMap: 'statMap', statIdMap: 'statIdMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap', updated: 'updated' };
+    ? { statMap: 'statMap2', statIdMap: 'statIdMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2', updated: 'updated2', passiveMap: 'passiveMap2' }
+    : { statMap: 'statMap', statIdMap: 'statIdMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap', updated: 'updated', passiveMap: 'passiveMap' };
   // ⚠ 這張表少一個鍵不會有任何人抗議:`K.漏掉的` 是 undefined,
   //   `chrome.storage.local.get([… , undefined])` 在實機直接拋 TypeError,
   //   init 的 catch 只印一行 warn —— **整支結果列翻譯靜默停擺**。
@@ -66,6 +66,10 @@
     // 兩條既有路徑都必然落空,因此改走逐個名稱 span 的專用路徑。
     // 傭兵契約書是 PoE1 3.29 的東西;PoE2 沒有這個區塊,選擇器留著也不會命中
     mercenaryBlock: '.item-mod--mercenary',
+    // PoE2 珠寶「配置某天賦」時卡片下方的天賦說明區(2026-09-24 活站實測):
+    //   <div>(沒有任何 class)<span>天賦名</span><br>效果行<br>效果行</div>,一個天賦一個 div。
+    //   對應官方 API 的 notableProperties。選擇器只是候選,真正認定在 passiveBlockName()。
+    passiveBlock: IS_POE2 ? '.item-popup__content > div:not([class])' : null,
     // ── 物品名 ──
     // 兩款現在是**同一套**結構(PoE2 自 2026-08-26 實測;PoE1 於 2026-09-21 活站實測
     // 發現官網已換成同一套,舊的 `.itemName` 一個都不剩 —— 使用者回報 PoE1 基底名全英文):
@@ -108,6 +112,7 @@
     itemMap: null, // 基底名 / 寶石名
     uniqueMap: null, // 傳奇名(獨立一張,見 SELECTORS.uniqueCard 的說明)
     passives: null, // { clusterJewel, passivesNotable }(PoE1 專屬)
+    passiveMap: null, // 天賦名英→繁(PoE2 天賦說明區,ggpk2.json 的 passives)
     bilingualMods: false, // 詞綴雙語顯示(中文下附英文原文小字)
   };
 
@@ -118,6 +123,7 @@
     noField: 0, // 有 .item-mod 但抓不到 data-field(官網改版的警訊)
     reattach: 0, // 結果容器被 SPA 重建後重新掛載監聽的次數
     merc: 0, mercMiss: 0, // 傭兵契約書:譯出的名稱數 / 查無的名稱數
+    passive: 0, passiveLineMiss: 0, // 天賦說明區:譯出的天賦數 / 查不到而保留英文的效果行
     mercMissSamples: [],
     missSamples: [], dirtySamples: [],
   };
@@ -316,18 +322,18 @@
   const stripLocalZh = (s) => String(s ?? '').replace(LOCAL_ZH_RE, '');
 
   // 回傳 { tpl, numRe }:命中的中文模板與應使用的數值抓取規則
-  function lookupStat(text) {
+  function lookupStat(text, map = state.statMap) {
     const key = text.replace(NUM_RE, '#');
-    let tpl = state.statMap[key] ?? state.statMap[`${key} (Local)`];
+    let tpl = map[key] ?? map[`${key} (Local)`];
     if (tpl) return { tpl, numRe: NUM_RE };
     const signedKey = text.replace(SIGNED_NUM_RE, '#');
-    tpl = state.statMap[signedKey] ?? state.statMap[`${signedKey} (Local)`];
+    tpl = map[signedKey] ?? map[`${signedKey} (Local)`];
     if (tpl) return { tpl, numRe: SIGNED_NUM_RE };
     // 多行模板的鍵可能帶「換行前空白」(字典側 bg/translation.js 建置時已補 lineTrim 別名,
     // 這裡再從畫面側試一次:畫面文字 trim 過,鍵可能沒有)
     if (key.includes('\n')) {
       const t = lineTrim(key);
-      tpl = state.statMap[t] ?? state.statMap[`${t} (Local)`];
+      tpl = map[t] ?? map[`${t} (Local)`];
       if (tpl) return { tpl: lineTrim(tpl), numRe: NUM_RE };
     }
     return null;
@@ -507,6 +513,106 @@
     mod.dataset.ptmDone = '1';
   }
 
+  // ── PoE2 天賦說明區(2026-09-24 使用者回報:「妄想症」鑽石底下整塊英文)──
+  // 珠寶/詞綴「配置 X」時,卡片下方會列出那個天賦的名字與效果:
+  //   <div><span>Zarokh's Gift</span><br>Sinister Jewel Socket</div>
+  // 天賦名查 passiveMap(GGPK passiveskills.Name),效果行走與詞綴相同的 statMap 模板。
+  //
+  // 純函式,離線可測(verify-poe2 G 段):給英文天賦名與各效果行,回傳要寫回的中文;
+  // 天賦名查不到回 null(整塊不動 —— 不是天賦說明區,或是撞名不收的天賦)。
+  // 效果行查不到的那一行是 null(保留英文,不湊半中半英)。
+  // ⚠ GGPK 有跨兩行的模板(`…if you've\nDeflected no Hits Recently`),畫面上是兩行 —— 單行查不到
+  //   就試「這行 + 下一行」,中文模板同樣以 \n 分兩行寫回。
+  function planPassiveBlock(nameEn, lines, passiveMap = state.passiveMap, statMap = state.statMap) {
+    const name = passiveMap?.[nameEn];
+    if (!name) return null;
+    const out = lines.map(() => null);
+    const render = (text) => {
+      // 整句原樣就是鍵(沒有待填數值、數字都是寫死的,例:`Remove a Curse after Channelling for 2 seconds`)
+      if (typeof statMap?.[text] === 'string' && !statMap[text].includes('#')) return statMap[text];
+      const hit = statMap ? lookupStat(text, statMap) : null;
+      if (hit) return fillTemplate(hit.tpl, text.match(hit.numRe) ?? []);
+      return statMap ? renderKeepingLiterals(text, statMap) : null;
+    };
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i]) continue;
+      const one = render(lines[i]);
+      // 畫面上一行、模板是兩行(官網把 \n 印在同一行裡):中文兩行接成一行寫回
+      if (one) { out[i] = one.replace(/\s*\n\s*/g, ''); continue; }
+      if (i + 1 < lines.length && lines[i + 1]) {
+        const two = render(`${lines[i]}\n${lines[i + 1]}`)?.split('\n');
+        if (two?.length === 2) { out[i] = two[0]; out[i + 1] = two[1]; i++; }
+      }
+    }
+    return { name, lines: out };
+  }
+
+  // 模板裡**寫死的數字**(`…in the past 2 seconds`)會被 lookupStat 一起換成 `#`,
+  // 而那種鍵在字典裡被刻意排除了(字面數與佔位符在中英語序不同,照順序填會錯位)。
+  // 字典另外收了保留字面數的原樣模板(`…in the past 2 seconds` → `過去2秒內…增加#%`),
+  // 所以這裡逐一試「保留其中幾個數字」的鍵:命中的鍵只有真正的佔位符是 `#`,照順序填不會錯。
+  // 數字最多 4 個(2^4 種組合),超過就不試。
+  function renderKeepingLiterals(text, map) {
+    const nums = [...text.matchAll(NUM_RE)];
+    if (nums.length < 2 || nums.length > 4) return null;
+    const full = (1 << nums.length) - 1;
+    for (let mask = full - 1; mask > 0; mask--) { // mask 的位元 = 這個數字換成 #;全換的已在 lookupStat 試過
+      let key = '';
+      let last = 0;
+      const fill = [];
+      nums.forEach((m, i) => {
+        key += text.slice(last, m.index) + ((mask >> i) & 1 ? '#' : m[0]);
+        if ((mask >> i) & 1) fill.push(m[0]);
+        last = m.index + m[0].length;
+      });
+      key += text.slice(last);
+      const tpl = map[key];
+      if (tpl && (tpl.match(/#/g) ?? []).length === fill.length) return fillTemplate(tpl, fill);
+    }
+    return null;
+  }
+
+  // 認得出是天賦說明區才回英文天賦名:第一個子元素是 <span>、緊接 <br>、且名字查得到
+  function passiveBlockName(div) {
+    const first = div.firstElementChild;
+    if (first?.tagName !== 'SPAN' || first.nextElementSibling?.tagName !== 'BR') return null;
+    const name = first.textContent.trim();
+    return state.passiveMap?.[name] ? name : null;
+  }
+
+  function translatePassiveBlock(div) {
+    if (div.dataset.ptmPassive) return;
+    const nameEn = passiveBlockName(div);
+    if (!nameEn) return;
+    div.dataset.ptmPassive = '1';
+    const lineNodes = textLines(div); // 第 0 行 = 天賦名(span 裡),其後每個 <br> 一行
+    const texts = lineNodes.map((nodes) => nodes.map((n) => n.textContent).join('').trim());
+    const plan = planPassiveBlock(nameEn, texts.slice(1));
+    if (!plan) return;
+    const original = texts.filter(Boolean).join('\n');
+    // 與 setModText 同一原則:只改既有文字節點,不增刪(Vue 管的節點)
+    const write = (nodes, zh) => {
+      if (!nodes.length || zh == null) return;
+      nodes[0].textContent = zh;
+      for (let k = 1; k < nodes.length; k++) nodes[k].textContent = '';
+    };
+    write(lineNodes[0], plan.name);
+    plan.lines.forEach((zh, i) => {
+      if (zh == null && texts[i + 1]) stat.passiveLineMiss++;
+      write(lineNodes[i + 1], zh);
+    });
+    stat.passive++;
+    if (state.bilingualMods) {
+      const orig = document.createElement('div');
+      orig.className = 'ptm-orig';
+      orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;white-space:pre-line;';
+      orig.textContent = original;
+      div.appendChild(orig);
+    } else {
+      div.title = original; // 英文原文 hover 可查
+    }
+  }
+
   // 這一行是不是「傳奇卡的第一行(= 傳奇名)」。PoE2 的傳奇卡兩行都是
   // .item-popup__header-line:第一行傳奇名、第二行基底名。
   function isUniqueNameLine(el) {
@@ -636,6 +742,15 @@
     }
     if (state.itemMap) {
       root.querySelectorAll(SELECTORS.itemName).forEach(translateNameElement);
+    }
+    // PoE2 天賦說明區:候選 div 很常見(沒有 class 的 div),先看有沒有 span+br 開頭的再載字典
+    if (SELECTORS.passiveBlock) {
+      const blocks = [...root.querySelectorAll(SELECTORS.passiveBlock)]
+        .filter((d) => d.firstElementChild?.tagName === 'SPAN' && d.firstElementChild.nextElementSibling?.tagName === 'BR');
+      if (blocks.length) {
+        await Promise.all([ensureStatTables(), loadTable('passiveMap', K.passiveMap, (v) => { state.passiveMap = v; })]);
+        if (state.passiveMap) blocks.forEach(translatePassiveBlock);
+      }
     }
     // 天賦卡只有 PoE1 有(PoE2 結果列沒有 .notableProperty),選擇器為 null 就整段跳過
     if (SELECTORS.notable) {
@@ -774,6 +889,7 @@
       newContainerIn,
       buildMercenaryNames,
       tierText,
+      planPassiveBlock,
       loadTable,
     };
     waitForResults();

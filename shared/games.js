@@ -31,6 +31,8 @@ const STORE_KEYS = {
     // 詞綴群組名英→繁(結果卡右欄那一格)。只有 PoE1 的 ggpk.json 有這份資料,
     // PoE2 走另一支管線 → 空表 → 那一格照原樣顯示英文
     modNames: 'modNames',
+    // 天賦名英→繁(結果卡「天賦說明」區)。只有 PoE2 的 ggpk2.json 有;PoE1 寫空表
+    passiveMap: 'passiveMap',
   },
   poe2: {
     translation: 'translation2',
@@ -43,6 +45,7 @@ const STORE_KEYS = {
     buildStatus: 'buildStatus2',
     lscacheError: 'lscacheError2',
     modNames: 'modNames2',
+    passiveMap: 'passiveMap2',
   },
 };
 
