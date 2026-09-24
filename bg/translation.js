@@ -410,6 +410,35 @@ function addLineTrimAliases(statMap) {
   return added;
 }
 
+// 天賦名英→繁(結果卡「天賦說明」區)。**台服 trade2 為準,遊戲檔墊底**(使用者 2026-09-24 裁定:
+// 遊戲檔的天賦表混著天賦樹、輿圖等同名資料,台服有就以台服為準)。
+// 對接鍵是天賦節點編號:國際服 `…stat_2954116742|<節點>` 的「Allocates X」對台服同一個 id 的「配置Y」,
+// 不靠文字比對。同一個英文名在台服對到兩種以上譯名就不採台服(交給遊戲檔,遊戲檔也歧義就保留英文)。
+const ALLOCATES_STAT = 'stat_2954116742|';
+function buildPassiveMap(usStats, twStats, ggpkPassives = {}) {
+  const twIndex = indexStatEntries(twStats);
+  const byEn = new Map();
+  for (const group of usStats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      if (!String(entry.id).includes(ALLOCATES_STAT)) continue;
+      const tw = twIndex.get(entry.id);
+      const en = /^Allocates (.+)$/.exec(entry.text ?? '')?.[1]?.trim();
+      const zh = /^配置(.+)$/.exec(tw?.text ?? '')?.[1]?.trim();
+      if (!en || !zh || !/[一-鿿]/.test(zh)) continue; // 台服沒翻(照英文)就不收
+      if (!byEn.has(en)) byEn.set(en, new Set());
+      byEn.get(en).add(zh);
+    }
+  }
+  const map = { ...ggpkPassives };
+  let fromTrade = 0;
+  for (const [en, zhs] of byEn) {
+    if (zhs.size !== 1) continue;
+    map[en] = [...zhs][0];
+    fromTrade++;
+  }
+  return { map, fromTrade };
+}
+
 function buildStatMap(usStats, twStats) {
   const map = {};
   const twIndex = indexStatEntries(twStats);
@@ -654,6 +683,7 @@ export const _test = {
   translateStatic,
   translateFilters,
   buildStatMap,
+  buildPassiveMap,
   addLineTrimAliases,
   buildStatIdMap,
   gateTwStat,
@@ -864,7 +894,7 @@ async function buildOne(game) {
         statsUsable && !dictFailed.size
           ? {}
           : await chrome.storage.local.get([
-              K.translation, K.statMap, K.statIdMap, K.itemMap, K.uniqueMap, K.uiExtra,
+              K.translation, K.statMap, K.statIdMap, K.itemMap, K.uniqueMap, K.uiExtra, K.passiveMap,
             ]);
 
       // 字典降級時不得用縮水的結果蓋掉上一輪的完整資料;但如果從來沒有過舊值,
@@ -910,6 +940,10 @@ async function buildOne(game) {
         prev[K.itemMap]
       );
       const uniqueMap = keep(itemsDictOk, buildUniqueMap(ggpk.uniques), prev[K.uniqueMap]);
+      // 天賦名:台服 trade2 為準、遊戲檔墊底;stats 不可用時沿用上次(沒有上次就只有遊戲檔)
+      const passiveMap = statsUsable
+        ? buildPassiveMap(us.stats, twStats, ggpk.passives).map
+        : (prev[K.passiveMap] ?? ggpk.passives);
       // 內建繁中字典優先。
       // 介面字串只剩內建的 translate.zh_TW.json(兩款共用);社群層已於 2026-09-08 移除
       const uiExtra = keep(uiDictOk, { ...bundledUI }, prev[K.uiExtra]);
@@ -935,7 +969,7 @@ async function buildOne(game) {
         [K.uiExtra]: uiExtra,
         // 純內建字典,不受官方 API 成敗影響,所以不走 keep()
         [K.modNames]: ggpk.modNames,
-        [K.passiveMap]: ggpk.passives,
+        [K.passiveMap]: passiveMap,
         [K.updated]: updated,
         [K.buildStatus]: { state: 'done', msg: doneMsg, at: updated },
       });
