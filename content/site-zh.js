@@ -94,7 +94,7 @@
     return s.endsWith(suffix) ? s.slice(0, -suffix.length) : s;
   };
 
-  // sources: { siteNames:{passives,ascendancies,classes,panel}, itemMap, uniqueMap, statMap }
+  // sources: { siteNames:{passives,ascendancies,classes,panel,stats}, itemMap, uniqueMap, passiveMap, statMap }
   // 回傳 { names: Map, lower: Map, gems: Map, statMap, conflicts: [] }
   function buildSiteDict(sources) {
     const names = new Map();
@@ -113,7 +113,10 @@
     const sn = sources.siteNames ?? {};
     for (const [en, zh] of Object.entries(sn.ascendancies ?? {})) add(en, zh, 'ascendancy');
     for (const [en, zh] of Object.entries(sn.classes ?? {})) add(en, zh, 'class');
-    for (const [en, zh] of Object.entries(sn.passives ?? {})) add(en, zh, 'passive');
+    // 天賦名:交易站建好的 passiveMap(台服 trade「配置 X」為準、遊戲檔墊底 —— 2026-09-25 裁定,
+    // 見 bg/translation.js buildPassiveMap)先蓋過名稱表;交易站配置不到的天賦(昇華、精通、小天賦)才用名稱表的 GGPK 譯名。
+    const passives = { ...(sn.passives ?? {}), ...(sources.passiveMap ?? {}) };
+    for (const [en, zh] of Object.entries(passives)) add(en, zh, 'passive');
     for (const [en, zh] of Object.entries(sources.uniqueMap ?? {})) add(en, stripBilingual(en, zh), 'unique');
     const gems = new Map();
     for (const [en, zh] of Object.entries(sources.itemMap ?? {})) {
@@ -427,8 +430,8 @@
 
   // ── 字典 ──
   const KEYS = {
-    poe1: { statMap: 'statMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap' },
-    poe2: { statMap: 'statMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2' },
+    poe1: { statMap: 'statMap', itemMap: 'itemMap', uniqueMap: 'uniqueMap', passiveMap: 'passiveMap' },
+    poe2: { statMap: 'statMap2', itemMap: 'itemMap2', uniqueMap: 'uniqueMap2', passiveMap: 'passiveMap2' },
   };
   let buildAsked = false;
 
@@ -437,7 +440,7 @@
     dict = null;
     if (!game) return;
     const K = KEYS[game];
-    const got = await chrome.storage.local.get([K.statMap, K.itemMap, K.uniqueMap, 'siteNames']);
+    const got = await chrome.storage.local.get([K.statMap, K.itemMap, K.uniqueMap, K.passiveMap, 'siteNames']);
     let siteNames = got.siteNames;
     if (!siteNames?.[game]) {
       // 名稱表由背景從擴充內建的 data/sitenames.json 寫進 storage(開關打開時就會做,這裡是保底)
@@ -453,6 +456,7 @@
       siteNames: siteNames?.[game],
       itemMap: got[K.itemMap],
       uniqueMap: got[K.uniqueMap],
+      passiveMap: got[K.passiveMap],
       statMap: got[K.statMap],
     });
     dbg(`[PMZ/site] ${SITE} ${game}:名稱 ${dict.names.size}、介面/面板 ${dict.lower.size}、` +
@@ -506,7 +510,7 @@
     if (changes.siteZh || changes.language || changes.uiLang) { apply(); return; }
     // 交易站資料建好 / 更新了 → 重載字典再翻一次(已翻的節點會被略過)
     const K = dictGame && KEYS[dictGame];
-    if (enabled && K && (changes[K.itemMap] || changes[K.statMap] || changes.siteNames)) {
+    if (enabled && K && (changes[K.itemMap] || changes[K.statMap] || changes[K.passiveMap] || changes.siteNames)) {
       dictGame = undefined;
       schedule(document.body);
     }
