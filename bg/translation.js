@@ -735,6 +735,7 @@ export async function purgeChineseData() {
     'passives',
     'statGroups',
     'dictStatus',
+    'siteNames', // pobb.in / poe.ninja 用的天賦與職業名稱表(bg/sites.js)
   ];
   await chrome.storage.local.remove(keys);
   await clearDictCache();

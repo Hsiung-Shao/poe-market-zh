@@ -44,6 +44,10 @@ I18N.register({
     'pop.st.fetchErr': '無法取得狀態:{error}',
     'pop.sidebarToggled': '已{state}側邊欄,重新整理交易頁生效',
     'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁生效',
+    'pop.site.pobbin': 'pobb.in 中文化',
+    'pop.site.ninja': 'poe.ninja 中文化(角色 / 物價頁)',
+    'pop.siteToggled': '已{state} {site} 中文化,重新整理該網站生效',
+    'pop.siteDenied': '沒有取得 {site} 的網站存取權限,無法開啟',
     'pop.opened': '開啟',
     'pop.closed': '關閉',
     'pop.ninjaAsk': '側邊欄的「物價」分頁要讀 poe.ninja 的公開匯率。\n要用的話請按上面的「物價查詢(poe.ninja)」允許存取;不需要就直接關掉這一頁。',
@@ -92,6 +96,10 @@ I18N.register({
     'pop.st.fetchErr': 'Could not read status: {error}',
     'pop.sidebarToggled': 'Sidebar {state}. Reload the trade page to apply',
     'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page to apply',
+    'pop.site.pobbin': 'Chinese on pobb.in',
+    'pop.site.ninja': 'Chinese on poe.ninja (builds / economy)',
+    'pop.siteToggled': 'Chinese on {site} {state}. Reload that site to apply',
+    'pop.siteDenied': 'Access to {site} was not granted, so it cannot be enabled',
     'pop.opened': 'enabled',
     'pop.closed': 'disabled',
     'pop.ninjaAsk': 'The sidebar "Prices" tab reads public exchange rates from poe.ninja.\nTo use it, click "Price check (poe.ninja)" above and allow access. Otherwise just close this page.',
@@ -328,6 +336,7 @@ async function init() {
   renderBilingual(bilingualMods === true);
   const { sidebarEnabled } = await chrome.storage.local.get('sidebarEnabled');
   renderSidebar(sidebarEnabled !== false);
+  await renderSites();
   const granted = await ninjaGranted();
   renderNinja(granted);
   // 安裝/更新後 background 會把這頁開成分頁(?ask=ninja)問一次物價權限,
@@ -416,6 +425,47 @@ $('#bilingualToggle').addEventListener('click', async () => {
   showStatus(t('pop.bilingualToggled', { state: t(next ? 'pop.opened' : 'pop.closed') }));
 });
 
+// ── pobb.in / poe.ninja 中文化(bg/sites.js 依 siteZh 與授權動態註冊 content/site-zh.js)──
+// 兩站都是選用權限:打開時在這裡要權限(permissions.request 只能從擴充頁面、而且要是
+// click handler 裡的**第一個**呼叫 —— Firefox 的規定,見 ninjaOn 的說明)。
+// 關掉只改開關、不收回權限:poe.ninja 那條權限物價查詢也在用。
+const SITE_ZH = {
+  pobbin: { btn: '#sitePobbin', state: '#sitePobbinState', label: 'pobb.in', origins: ['https://pobb.in/*'] },
+  ninja: { btn: '#siteNinja', state: '#siteNinjaState', label: 'poe.ninja', origins: ['https://poe.ninja/*'] },
+};
+const siteOn = { pobbin: false, ninja: false };
+
+function renderSite(site, on) {
+  siteOn[site] = on === true;
+  $(SITE_ZH[site].btn).classList.toggle('on', siteOn[site]);
+  $(SITE_ZH[site].state).textContent = t(siteOn[site] ? 'common.on' : 'common.off');
+}
+
+async function renderSites() {
+  const { siteZh } = await chrome.storage.local.get('siteZh');
+  for (const [site, cfg] of Object.entries(SITE_ZH)) {
+    let granted = false;
+    try { granted = await chrome.permissions.contains({ origins: cfg.origins }); } catch (_) { /* 當作沒有 */ }
+    renderSite(site, siteZh?.[site] === true && granted);
+  }
+}
+
+async function toggleSite(site) {
+  const cfg = SITE_ZH[site];
+  const next = !siteOn[site];
+  // ⚠ request 必須是第一個呼叫(前面不能有 await)
+  if (next && !(await chrome.permissions.request({ origins: cfg.origins }).catch(() => false))) {
+    showStatus(t('pop.siteDenied', { site: cfg.label }), true);
+    return;
+  }
+  const { siteZh } = await chrome.storage.local.get('siteZh');
+  await chrome.storage.local.set({ siteZh: { ...(siteZh ?? {}), [site]: next } });
+  renderSite(site, next);
+  showStatus(t('pop.siteToggled', { site: cfg.label, state: t(next ? 'pop.opened' : 'pop.closed') }));
+}
+$('#sitePobbin').addEventListener('click', () => toggleSite('pobbin'));
+$('#siteNinja').addEventListener('click', () => toggleSite('ninja'));
+
 $('#clearCache').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ t: 'translation:clear' }).catch(() => {});
   renderDictInfo(null); // 字典快取與來源狀態一起被清掉了
@@ -431,6 +481,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.language) renderLang(changes.language.newValue ?? 'zh_tw');
   if (changes.bilingualMods) renderBilingual(changes.bilingualMods.newValue === true);
   if (changes.sidebarEnabled) renderSidebar(changes.sidebarEnabled.newValue !== false);
+  if (changes.siteZh) renderSites();
 });
 
 // init 任何一步失敗都不該讓 popup 停在半成品(語系、字典狀態全都不顯示)

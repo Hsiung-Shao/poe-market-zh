@@ -19,7 +19,8 @@
   },
   "permissions": [
     "storage",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "scripting"
   ],
   "host_permissions": [
     "https://www.pathofexile.com/*",
@@ -28,7 +29,8 @@
     "https://raw.githubusercontent.com/*"
   ],
   "optional_host_permissions": [
-    "https://poe.ninja/*"
+    "https://poe.ninja/*",
+    "https://pobb.in/*"
   ],
   "web_accessible_resources": [
     {
