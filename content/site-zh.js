@@ -748,15 +748,31 @@
     for (const r of roots) if (r.isConnected) translatePlaceholders(r);
   }
 
+  // 小量新增(滑到物品上才生出來的浮窗、切換分頁的一小塊)當場翻:MutationObserver 的回呼在瀏覽器繪製前執行,
+  // 使用者第一眼就是中文。延後 60ms 的話浮窗會先以英文畫出 4 幀左右、換成中文後大小改變、浮窗重新定位 → 畫面抖動
+  // (實測:ninja 裝備浮窗英文 65~72ms 後才變中文)。大量新增(整頁載入、SPA 換頁)仍合併後批次處理。
+  const SYNC_MAX_TEXT = 400;
   const observer = new MutationObserver((muts) => {
+    const roots = [];
     for (const m of muts) {
       if (m.type === 'characterData') {
         // 自己的寫入不理;框架把字改回英文才再翻
-        if (written.get(m.target) !== m.target.data) schedule(m.target);
+        if (written.get(m.target) !== m.target.data) roots.push(m.target);
       } else {
-        for (const n of m.addedNodes) schedule(n);
+        for (const n of m.addedNodes) roots.push(n);
       }
     }
+    if (!roots.length) return;
+    if (dict && !timer && dictGame === detectGame()) {
+      const nodes = [];
+      for (const r of roots) { collectText(r, nodes); if (nodes.length > SYNC_MAX_TEXT) break; }
+      if (nodes.length <= SYNC_MAX_TEXT) {
+        processTextNodes(nodes);
+        for (const r of roots) if (r.nodeType === Node.ELEMENT_NODE && r.isConnected) translatePlaceholders(r);
+        return;
+      }
+    }
+    for (const r of roots) schedule(r);
   });
 
   // ── 字典 ──
