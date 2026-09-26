@@ -161,10 +161,21 @@
     }
     for (const [en, zh] of classNames) if (!zh) classNames.delete(en);
     // 數值格式(`{0} (Max)` →「{0}（最高等級）」):轉成擷取正則
-    const formats = Object.entries(sn.formats ?? {}).map(([en, zh]) => ({
-      re: new RegExp(`^${en.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace('\\{0\\}', '(\\S+)')}$`),
-      zh,
-    }));
+    // 物品浮窗的格式字串(`Recovers {0} Life over {1} Seconds` →「{1} 秒內回復 {0} 生命」):
+    // 英文轉成擷取正則,記下每個擷取群組是第幾號佔位符 —— 中文依編號填,不依位置(中英語序不同)。
+    // 字面越長的越先試(越具體)。
+    const PH = /\{(\d+)(?::[^}]*)?\}/;
+    const formats = Object.entries(sn.formats ?? {}).map(([en, zh]) => {
+      const order = [];
+      const src = en.split(/(\{\d+(?::[^}]*)?\})/).map((part) => {
+        const m = PH.exec(part);
+        if (m && m[0] === part) { order.push(m[1]); return '(.+?)'; }
+        return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ +/g, '\\s+');
+      }).join('');
+      let re = null;
+      try { re = new RegExp(`^${src}$`); } catch (_) { /* 轉不成正則的格式不用 */ }
+      return { re, order, zh, weight: en.replace(/\{\d+(?::[^}]*)?\}/g, '').length };
+    }).filter((f) => f.re).sort((a, b) => b.weight - a.weight);
     // 聯盟名一律不翻(使用者 2026-09-26 裁定:ninja 是國際服在用,聯盟名維持英文)
     const leagues = new Set((sources.leagues ?? []).map((l) => String(l).toLowerCase()));
     return { names: flat, uiExact, lower, gems, classNames, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
@@ -189,13 +200,14 @@
       let key = '';
       let last = 0;
       const vals = [];
+      const at = [];
       nums.forEach((m, i) => {
         const hole = (mask >> i) & 1;
         key += text.slice(last, m.index) + (hole ? '#' : m[0]);
-        if (hole) vals.push(m[0]);
+        if (hole) { vals.push(m[0]); at.push(m.index); }
         last = m.index + m[0].length;
       });
-      out.push({ key: key + text.slice(last), vals });
+      out.push({ key: key + text.slice(last), vals, at });
     }
     return out;
   }
@@ -208,6 +220,20 @@
     for (const { key, vals } of maskedKeys(text)) {
       const zh = tpl[key];
       if (typeof zh === 'string') return zh.replace(/\{(\d+)\}/g, (_m, k) => vals[Number(k)] ?? '');
+    }
+    // 負值:遊戲檔的帶號模板是 `{0:+d}`(鍵裡是 `+#`,中文是 `+{0}`),畫面印的是 `-1%`。
+    // 把數字前的負號當成正號去比對,命中後那一格的「+值」換成「-值」(符號跟著數值走,不改字)
+    if (/(^|[\s(])-\d/.test(text)) {
+      const neg = new Set();
+      const flipped = text.replace(/(^|[\s(])-(?=\d)/g, (m, pre, off) => { neg.add(off + pre.length + 1); return `${pre}+`; });
+      for (const { key, vals, at } of maskedKeys(flipped)) {
+        const zh = tpl[key];
+        if (typeof zh !== 'string') continue;
+        return zh.replace(/(\+?)\{(\d+)\}/g, (_m, plus, k) => {
+          const i = Number(k);
+          return neg.has(at[i]) ? `-${vals[i]}` : `${plus}${vals[i] ?? ''}`;
+        });
+      }
     }
     return null;
   }
@@ -263,28 +289,46 @@
     };
     // 數值欄:數字 + 單位(`13 Mana`、`0.75 sec`)或數值格式(`20 (Max)`)。
     // 每一段英文字都要在介面字表查得到才換,缺一段就不換
-    const value = (x) => {
-      if (!/[A-Za-z]/.test(x)) return x;
+    // 物品浮窗格式字串:每個擷取值若含英文字就要翻得出來(內層詞綴 / 名稱 / 數值單位),否則照原樣(數字)
+    const formatted = (x) => {
       for (const f of D.formats ?? []) {
         const m = f.re.exec(x);
-        if (m) { const inner = value(m[1]); if (inner != null) return f.zh.replace('{0}', inner); }
+        if (!m) continue;
+        // 含英文字的擷取值必須本身是一條完整的名稱 / 詞綴 / 格式(`{0} (Max)` 裡的 `20` 除外都是數字);
+        // 不做單位逐字替換 —— 否則 `{0}% of base` 會把「Attack Speed: 300」整段當成數值吃進去
+        const vals = m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) : c));
+        if (vals.some((v) => v == null)) continue;
+        return f.zh.replace(/\{(\d+)(?::[^}]*)?\}/g, (_m, n) => vals[f.order.indexOf(n)] ?? '');
       }
+      return null;
+    };
+    const value = (x) => {
+      if (!/[A-Za-z]/.test(x)) return x;
+      const fmt = formatted(x);
+      if (fmt) return fmt;
       // 值本身是一條詞綴 / 名稱(`Helmets: Gain Guard equal to 10% …`、`Grants Skill: Raise Shield`)
       const whole = one(x);
       if (whole || !/\d/.test(x)) return whole;
       let ok = true;
       const out = x.replace(/[A-Za-z][A-Za-z' ]*[A-Za-z]|[A-Za-z]/g, (w) => {
-        const z = D.lower.get(w.toLowerCase());
+        // 整段查不到才逐字(`Requires Level 64` → 需要 等級 64);逐字時每個字都要是介面字
+        let z = D.lower.get(w.toLowerCase());
+        if (!z && w.includes(' ')) {
+          const parts = w.split(' ').map((p) => D.lower.get(p.toLowerCase()));
+          if (parts.every(Boolean)) z = parts.join(' ');
+        }
         if (!z) ok = false;
         return z ?? w;
       });
       return ok ? out : null;
     };
     let zh = one(t);
+    if (!zh) zh = formatted(t);
     if (!zh && /\d/.test(t)) zh = value(t);
     // 「標籤: 數值」(`Cost: 13 Mana`、`Cast Time: Instant`、`Grants Skill: Raise Shield`)
     if (!zh) {
-      const m = /^([A-Za-z][A-Za-z &'\/-]*?):\s*(.+)$/.exec(t);
+      // 標籤可以帶括號(觸媒品質「Quality (Attribute Modifiers): +20%」)
+      const m = /^([A-Za-z][A-Za-z &'\/()-]*?):\s*(.+)$/.exec(t);
       if (m) {
         const lab = one(m[1]);
         const val = lab && value(m[2]);
@@ -455,13 +499,40 @@
 
   function translateNode(node) {
     const en = englishOf(node);
-    if (written.get(node) === node.data) return; // 已是我們的譯文
-    if (hasOtherWords(node)) return;
+    if (written.get(node) === node.data) return true; // 已是我們的譯文
+    if (hasOtherWords(node)) return false;
     const zh = translateText(en, dict);
-    if (!zh) return;
+    if (!zh) return false;
     setText(node, zh);
     addTitle(node.parentElement, en.trim());
     stat.nodes++;
+    return true;
+  }
+
+  // ── 兩行式詞綴:遊戲檔是一條(模板裡有換行),畫面上是兩個並排的行元素 ──
+  // 例:「Grants Immunity to Bleeding for 16 seconds if used while Bleeding」+
+  //     「Grants Immunity to Corrupted Blood for 16 seconds if used while affected by Corrupted Blood」。
+  // 單行都查不到時,跟下一個同類的兄弟元素合併(中間當空白)再查;譯文剛好兩行才按行寫回(參考擴充的多行合併做法)。
+  const elText = (el) => textNodesIn(el).map(englishOf).join('').trim();
+  function writeEl(el, zh) {
+    const nodes = textNodesIn(el);
+    const first = nodes.findIndex((n) => englishOf(n).trim());
+    nodes.forEach((n, i) => setText(n, i === first ? zh : ''));
+  }
+  function translatePair(el) {
+    const next = el?.nextElementSibling;
+    if (!next || next.tagName !== el.tagName || skipped(next)) return false;
+    const a = elText(el);
+    const b = elText(next);
+    if (!/[A-Za-z]{2}/.test(a) || !/[A-Za-z]{2}/.test(b) || a.length + b.length > MAX_LEN) return false;
+    const parts = translateText(`${a} ${b}`, dict)?.trim().split('\n');
+    if (parts?.length !== 2) return false;
+    writeEl(el, parts[0].trim());
+    writeEl(next, parts[1].trim());
+    addTitle(el, a);
+    addTitle(next, b);
+    stat.lines++;
+    return true;
   }
 
   // ── 以 <br> 斷行的一段文字(技能敘述、傳說文字、跨兩行的詞綴)──
@@ -497,6 +568,7 @@
 
   function processTextNodes(nodes) {
     const doneLines = new Set();
+    const pairTried = new Set();
     for (const n of nodes) {
       if (!n.isConnected || skipped(n)) continue;
       if (written.get(n) === n.data) continue;
@@ -511,7 +583,13 @@
         doneLines.add(line);
         if (translateLine(line)) continue;
       }
-      translateNode(n);
+      if (translateNode(n)) continue;
+      // 單行怎樣都查不到:試著跟下一行合併(兩行式詞綴)
+      const row = line ?? n.parentElement;
+      if (row && row !== document.body && !pairTried.has(row)) {
+        pairTried.add(row);
+        translatePair(row);
+      }
     }
   }
 
@@ -535,7 +613,11 @@
     const game = detectGame();
     if (game !== dictGame) {
       // SPA 內切換 PoE1 / PoE2(poe.ninja 頂欄那顆),或 pobb.in 的標題剛渲染出來
+      const myRun = runId;
       await loadDict(game);
+      // ⚠ 載字典要跨程序、可能要幾百毫秒;這段期間使用者可能已經關掉開關 / 切 English(stop() 已把頁面還原)。
+      //   不再檢查就會在還原之後又翻一遍(切 English 時背景清資料正好會觸發這條重載,端到端 E20 抓到)
+      if (!enabled || myRun !== runId) { pending.clear(); return; }
       pending.clear();
       if (dict) { const all = []; collectText(document.body, all); processTextNodes(all); }
       return;
@@ -646,9 +728,11 @@
     hiddenBrs.length = 0;
   }
 
+  let runId = 0;
   async function start() {
     if (enabled) return;
     enabled = true;
+    runId++;
     dictGame = undefined; // 強制 flush 重載字典並整頁掃一次
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     schedule(document.body);
@@ -657,6 +741,7 @@
   function stop() {
     if (!enabled) return;
     enabled = false;
+    runId++; // 進行中的字典載入一律作廢(見 flush)
     observer.disconnect();
     restoreAll();
     dict = null;
