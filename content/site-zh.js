@@ -80,6 +80,55 @@
     'Unique Flasks': '傳奇藥劑', // clientstrings.FlaskStashFilterUnique
   };
 
+  // ── 網站自己的介面字(人工譯名)──
+  // 使用者 2026-09-27 要求 ninja / pobb.in 網站本身的字也翻,並指定導覽列「經濟 | 流派 | 天賦樹」。
+  // 這些是網站自創的用語,遊戲檔沒有;遊戲檔有同義詞的一律沿用遊戲用字(閃避機率、格擋、傷害減免、充能、專精…)。
+  // 與 SITE_UI(遊戲檔出處)分開放:這張是人工譯名,改之前先問使用者。
+  const SITE_UI_MANUAL = {
+    // 導覽列
+    Economy: '經濟', Builds: '流派', 'Atlas Trees': '輿圖天賦樹', 'Passive Skill Tree': '天賦樹', More: '更多', 'Log in': '登入',
+    // 角色頁
+    'Back to search': '返回搜尋', Previous: '上一個', Next: '下一個', Favorite: '收藏',
+    'Time Machine': '時光機', 'Time machine': '時光機', 'Latest snapshot': '最新快照',
+    Profile: '個人檔案', 'Last fetched': '最後更新', 'Import Code for Path of Building': 'Path of Building 匯入碼',
+    'Build Planner': '配裝規劃器', Copy: '複製', 'Base Jewels': '基礎珠寶',
+    Stats: '屬性', Attributes: '能力值', Bandits: '盜賊', Defensive: '防禦', Offensive: '攻擊',
+    'Damage Reduction': '傷害減免', Block: '格擋', 'Spell Block': '法術格擋',
+    'Spell Supression': '法術壓制', 'Spell Suppression': '法術壓制',
+    'Evade chance': '閃避機率', 'Deflect chance': '偏斜機率',
+    'Physical taken as': '物理傷害轉換', 'Fire taken as': '火焰傷害轉換', 'Cold taken as': '冰冷傷害轉換',
+    'Lightning taken as': '閃電傷害轉換', 'Chaos taken as': '混沌傷害轉換',
+    'Effective Health Pool': '有效生命池', 'Max Hit': '最大承受傷害',
+    Recovery: '恢復', 'Life regen': '生命回復', 'Mana regen': '魔力回復', 'Energy shield recharge': '能量護盾充能',
+    'Life leech + on hit': '生命偷取 + 擊中回復', 'Main Skills': '主要技能',
+    'Passive tree': '天賦樹', Enlarge: '放大', 'Ascendancy & Keystones': '昇華與關鍵天賦', Ascendancy: '昇華',
+    Keystone: '關鍵天賦', Masteries: '專精', 'Quest Rewards': '任務獎勵', Choices: '選擇', All: '全部', Interludes: '間章',
+    // 物價頁
+    'Equipment & gems': '裝備與寶石', Atlas: '輿圖', General: '一般', 'Value Display': '價值顯示', Adaptive: '自動',
+    Name: '名稱', 'Last 7 days': '近 7 天', 'Volume / Hour': '每小時交易量', 'Most Popular': '最熱門兌換', 'Show more': '顯示更多',
+    // 輿圖天賦樹頁
+    Found: '找到', 'unique atlas trees.': '個不重複的輿圖天賦樹。', 'Reset all filters': '重設所有篩選',
+    'Show atlas heatmap': '顯示輿圖熱度圖', 'Show passive heatmap': '顯示天賦熱度圖', Columns: '欄位', Tree: '天賦樹',
+    Popularity: '熱門度', Points: '點數', None: '無', 'Add your character': '新增你的角色',
+    'Not enough data': '資料不足', 'Memory Tears': '記憶裂痕', 'Scarab Specialization': '聖甲蟲專精',
+    'Map Monsters': '地圖怪物', 'Map Tiers': '地圖階級', 'Shaper & Elder': '塑者與尊師', 'Labyrinth Trials': '迷宮試煉',
+    // 頁尾
+    About: '關於', Statistics: '統計', Resources: '資源', Contribute: '協助', 'Support the site': '支持本站',
+    'Docs & FAQ': '說明與常見問題', 'Data dumps': '資料匯出', 'Privacy Policy': '隱私權政策',
+    // pobb.in
+    Gems: '寶石', 'Tree Preview': '天賦樹預覽', Notes: '備註', 'Brief notes': '簡短備註', Loadout: '配置', Custom: '自訂',
+    Config: '設定', Bandit: '盜賊', 'Kill All': '全部殺掉', Web: '網頁', 'Share your Build': '分享你的配裝',
+    Create: '建立', Import: '匯入', Login: '登入', Speed: '速度', 'Hit Chance': '命中率',
+  };
+  // 網站自己的數量 / 時間格式(人工譯名,同上)
+  const SITE_PATTERNS = [
+    [/^Week (\d+)$/, '第 $1 週'], [/^Day (\d+)$/, '第 $1 天'], [/^Hour (\d+)$/, '第 $1 小時'], [/^Act (\d+)$/, '第 $1 章'],
+    [/^(\d+) minutes? ago$/, '$1 分鐘前'], [/^(\d+) hours? ago$/, '$1 小時前'], [/^(\d+) days? ago$/, '$1 天前'],
+    [/^(\d+) weeks? ago$/, '$1 週前'], [/^(\d+) months? ago$/, '$1 個月前'],
+    [/^Found ([\d,]+) characters\.$/, '找到 $1 個角色。'],
+    [/^Level (\d+) \((\d+) passives\)$/, '等級 $1($2 點天賦)'],
+  ];
+
   // ── 翻譯核心(純函式,tools/verify-site-zh.mjs 離線測)──
 
   const NUM_RE = /\d+(?:\.\d+)?/g;
@@ -146,10 +195,15 @@
     // 大小寫完全相同的先查,查不到才放寬大小寫
     const uiExact = new Map(Object.entries(sn.ui ?? {}).filter(([en, zh]) => en !== zh));
     // 介面字是人工核對過出處的,優先於面板用詞(同詞不同譯時以它為準)
+    // 網站自己的字(人工譯名)蓋過面板用詞(「Defensive」面板給「防禦的」,在網站上當分區標題不通順);
+    // 遊戲檔出處的 SITE_UI 最後蓋,優先序最高
+    for (const [en, zh] of Object.entries(SITE_UI_MANUAL)) { lower.set(en.toLowerCase(), zh); lowerDropped.delete(en.toLowerCase()); }
     for (const [en, zh] of Object.entries(SITE_UI)) { lower.set(en.toLowerCase(), zh); lowerDropped.delete(en.toLowerCase()); }
     // 技能顯示名(裝備賦予的技能、PoE2 技能)只補其他來源都沒有的名字:寶石以交易站物品表的名稱為準
     // (`Bone Armour` 寶石「骨製戰甲」vs 技能表「骸骨鎧甲」—— 畫面上的是寶石),不拿來跟它們比撞名
     for (const [en, zh] of Object.entries(sn.skills ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'skill');
+    // 地區名(任務獎勵區)同樣只補缺:地名常跟物品 / 天賦同名,不拿來跟它們比撞名
+    for (const [en, zh] of Object.entries(sn.areas ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'area');
     const flat = new Map([...names].map(([en, v]) => [en, v.zh]));
     // 職業 / 昇華名(給「Level 100 Warden」這種標題用)。這個位置一定是職業,所以直接取
     // ascendancy / characters 兩張表,不受天賦撞名影響(`Warden` 昇華「守林人」vs 同名天賦「守護者」,
@@ -323,6 +377,8 @@
       return ok ? out : null;
     };
     let zh = one(t);
+    // 網站自己的數量 / 時間格式(`Week 9`、`50 hours ago`、`Found 124410 characters.`)
+    if (!zh) for (const [re, out] of SITE_PATTERNS) if (re.test(t)) { zh = t.replace(re, out); break; }
     if (!zh) zh = formatted(t);
     if (!zh && /\d/.test(t)) zh = value(t);
     // 「標籤: 數值」(`Cost: 13 Mana`、`Cast Time: Instant`、`Grants Skill: Raise Shield`)
@@ -374,13 +430,15 @@
     return zh ? lead + zh + trail : null;
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, renderStat, stripBilingual, SITE_UI };
+  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
   // ── DOM ──
 
-  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'CODE', 'PRE', 'TEMPLATE']);
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'TEMPLATE']);
+  // 下拉選單照翻(時光機的 Week 9 / Latest snapshot、價值顯示…),只有聯盟選單不碰(聯盟名不翻,使用者裁定)
+  const isLeagueSelect = (el) => el.tagName === 'SELECT' && (el.id === 'League' || /league/i.test(el.name ?? '') || /league/i.test(el.getAttribute('aria-label') ?? ''));
   const INLINE = new Set(['SPAN', 'A', 'B', 'I', 'EM', 'STRONG', 'SMALL', 'FONT', 'U', 'SUP', 'SUB', 'LABEL', 'MARK']);
 
   const original = new WeakMap(); // 文字節點 → 原文
@@ -394,7 +452,7 @@
 
   function skipped(node) {
     for (let el = node.parentElement; el; el = el.parentElement) {
-      if (SKIP_TAGS.has(el.tagName) || el.isContentEditable) return true;
+      if (SKIP_TAGS.has(el.tagName) || el.isContentEditable || isLeagueSelect(el)) return true;
       if (el.dataset?.pmzNoZh !== undefined) return true;
     }
     return false;
