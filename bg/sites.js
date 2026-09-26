@@ -80,9 +80,34 @@ export async function ensureSiteNames(game) {
   const got = await chrome.storage.local.get([cacheKey, 'siteNamesChecked']);
   const checked = got.siteNamesChecked ?? {};
   if (got[cacheKey] && Date.now() - (checked[game] ?? 0) < CHECK_MS) return { ok: true, cached: true };
-  await loadDict(file); // 遠端 → 快取;兩層都沒有會 throw(沒有內建版本)
+  try {
+    await loadDict(file); // 遠端 → 快取;兩層都沒有會 throw(沒有內建版本)
+  } catch (err) {
+    if (!(await loadLocalDevNames(file, cacheKey))) throw err;
+  }
   await chrome.storage.local.set({ siteNamesChecked: { ...checked, [game]: Date.now() } });
   return { ok: true, cached: false };
+}
+
+// ── 本機開發備援(只給「載入未封裝項目」的開發版)──
+// 名稱表推上 dict 分支之前,開發版也要能手動測完整效果:遠端與快取都拿不到時,改讀擴充資料夾裡
+// tools/gen-site-names.mjs 產生的 store/dict/<檔名>(gitignored)。
+// ⚠ 發布包(tools/pack.mjs 的 INCLUDE)沒有 store/,這條在正式版一定 404 → 照原本丟出錯誤,行為不變。
+//   商店安裝的 Chrome 版 manifest 帶 update_url,連試都不試。
+const isUnpacked = () => !('update_url' in chrome.runtime.getManifest());
+async function loadLocalDevNames(file, cacheKey) {
+  if (!isUnpacked()) return false;
+  try {
+    const res = await fetch(chrome.runtime.getURL(`store/dict/${file}`));
+    if (!res.ok) return false;
+    const text = await res.text();
+    JSON.parse(text); // 形狀不對就當沒有
+    await chrome.storage.local.set({ [cacheKey]: { text, size: text.length, storedAt: Date.now(), devLocal: true } });
+    console.warn(`[PTM] 名稱表 ${file}:遠端拿不到,開發版改用本機 store/dict/(正式版不會走這條)`);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 export async function handleSitesMessage(msg) {
