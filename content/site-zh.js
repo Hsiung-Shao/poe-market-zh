@@ -107,6 +107,12 @@
     'Equipment & gems': '裝備與寶石', Atlas: '輿圖', General: '一般', 'Value Display': '價值顯示', Adaptive: '自動',
     Name: '名稱', 'Last 7 days': '近 7 天', 'Volume / Hour': '每小時交易量', 'Most Popular': '最熱門兌換', 'Show more': '顯示更多',
     'Search filters...': '搜尋篩選…',
+    // 流派列表頁的篩選欄標題與技能特性
+    Classes: '職業', Passives: '天賦', Filters: '篩選', 'Spirit Skills': '精魂技能', 'All Skills': '所有技能',
+    'Anointed Passives': '塗油天賦', 'Main Skill Traits': '主要技能特性', 'Weapon Configuration': '武器配置',
+    'Damage Type': '傷害類型', Delivery: '施放方式', Crit: '暴擊', 'No Crit': '無暴擊',
+    'Second Ascendancy': '第二昇華', 'All Gems': '所有寶石',
+    Cluster: '星團珠寶', // 交易站分類 jewel.cluster「Cluster Jewel」= 星團珠寶(ninja 簡寫成 Cluster)
     // 輿圖天賦樹頁
     Found: '找到', 'unique atlas trees.': '個不重複的輿圖天賦樹。', 'Reset all filters': '重設所有篩選',
     'Show atlas heatmap': '顯示輿圖熱度圖', 'Show passive heatmap': '顯示天賦熱度圖', Columns: '欄位', Tree: '天賦樹',
@@ -236,7 +242,8 @@
     // 稀有度 + 物品類別(`Rare Ring`):兩半各自來自交易站篩選 × 遊戲檔交叉比對(tools/gen-site-names.mjs rarityAndCats)
     const rarity = new Map(Object.entries(sn.rarity ?? {}));
     const itemCats = new Map(Object.entries(sn.itemCats ?? {}));
-    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    const monsters = new Map(Object.entries(sn.monsters ?? {}));
+    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -337,12 +344,16 @@
     if (D.leagues?.has(t.toLowerCase())) return null;
     const lead = s.match(/^\s*/)[0];
     const trail = s.match(/\s*$/)[0];
+    // ninja 寫「Two Handed Mace」,交易站選項是「Two-Handed Mace」
+    const itemCat = (x) => D.itemCats?.get(x) ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1-Handed')) ?? null;
     const one = (x) => {
       let zh = D.names.get(x) ?? D.uiExact?.get(x) ?? D.lower.get(x.toLowerCase());
       // pobb.in 的寶石列省略「 Support」(`Burning Damage` = 燃燒傷害輔助)。
       // 只從寶石表補,不拿其他來源湊;名稱表本身查得到的優先(同名的主動技能)
       if (!zh) zh = D.gems.get(`${x} Support`);
       if (!zh) zh = renderStat(x, D.statMap, D.statTpl);
+      // 物品類別單數名(ninja 武器配置「Staff」「Wand / Sceptre」):其他來源都查不到才用
+      if (!zh) zh = itemCat(x);
       return zh ?? null;
     };
     // 數值欄:數字 + 單位(`13 Mana`、`0.75 sec`)或數值格式(`20 (Max)`)。
@@ -354,7 +365,8 @@
         if (!m) continue;
         // 含英文字的擷取值必須本身是一條完整的名稱 / 詞綴 / 格式(`{0} (Max)` 裡的 `20` 除外都是數字);
         // 不做單位逐字替換 —— 否則 `{0}% of base` 會把「Attack Speed: 300」整段當成數值吃進去
-        const vals = m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) : c));
+        // 怪物名只在這裡用(「Companion: {0}」的 {0}),不當一般名稱:怪物名常跟玩家角色名 / 其他字同形
+        const vals = m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) ?? D.monsters?.get(c) ?? null : c));
         if (vals.some((v) => v == null)) continue;
         return f.zh.replace(/\{(\d+)(?::[^}]*)?\}/g, (_m, n) => vals[f.order.indexOf(n)] ?? '');
       }
@@ -400,8 +412,14 @@
     if (!zh) {
       const m = /^(Normal|Magic|Rare|Unique) (.+)$/.exec(t);
       const r = m && D.rarity?.get(m[1]);
-      const c = r && D.itemCats?.get(m[2]);
+      const c = r && itemCat(m[2]);
       if (c) zh = `${r}${c}`;
+    }
+    // 武器配置「Dual Mace」= 雙持 + 類別
+    if (!zh) {
+      const m = /^Dual (.+)$/.exec(t);
+      const c = m && (itemCat(m[1]) ?? D.lower.get(m[1].toLowerCase()));
+      if (c) zh = `雙持${c}`;
     }
     // 「Unique Weapons」這類 ninja 分類 = 遊戲檔「傳奇」+ 交易站分類名(複數沒有就試單數)
     if (!zh) {
