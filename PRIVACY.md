@@ -1,10 +1,10 @@
 # Poe Market Zh 隱私權政策 / Privacy Policy
 
-最後更新:2026-09-23
+最後更新:2026-09-27
 
 ## 中文
 
-**Poe Market Zh**(以下稱「本擴充」)是 Path of Exile 官方交易站的輔助瀏覽器擴充,支援國際服(pathofexile.com)與台服(pathofexile.tw)的 PoE1(/trade)與 PoE2(/trade2):提供搜尋書籤側邊欄、詞綴篩選按鈕與 Path of Building 匯入,並可選擇把國際服交易站介面在地化為繁體中文。擴充介面可選中文或 English。
+**Poe Market Zh**(以下稱「本擴充」)是 Path of Exile 官方交易站的輔助瀏覽器擴充,支援國際服(pathofexile.com)與台服(pathofexile.tw)的 PoE1(/trade)與 PoE2(/trade2):提供搜尋書籤側邊欄、詞綴篩選按鈕與 Path of Building 匯入,並可選擇把國際服交易站介面在地化為繁體中文;另可選擇把 poe.ninja 與 pobb.in 的頁面文字顯示為繁體中文。擴充介面可選中文或 English。
 
 ### 資料收集
 本擴充**不會將任何使用者資料傳送給開發者或第三方**,包括但不限於:瀏覽紀錄、搜尋內容、帳號資訊、遊戲資料、裝置識別碼。本擴充不含任何分析、追蹤或廣告元件。
@@ -14,6 +14,7 @@
 
 - 介面語言與交易站翻譯的偏好設定
 - 翻譯資料(詞綴/物品名對照表,只在介面選中文時下載;切到 English 時會清除)
+- poe.ninja / pobb.in 中文化用的名稱資料(只在開啟該功能且打開該網站時下載;切到 English 時會清除)
 - Path of Building 匯入用的官方英文詞綴清單
 - 使用者自行建立或匯入的搜尋書籤與資料夾
 - 最近開啟過的搜尋紀錄(最多 20 筆)
@@ -28,6 +29,9 @@
 - `raw.githubusercontent.com`:本擴充線上更新的翻譯資料與官方資料的公開快照(本專案自己的 dict 分支)
 - `poe.ninja`:**選用功能**。僅在使用者明確授權並開啟側邊欄的「物價查詢」後,讀取其公開的通貨價格資料;未授權時完全不會對其發出任何請求。價格資料來源於畫面上另有標示。
 
+### poe.ninja / pobb.in 中文化(選用功能)
+使用者在彈出視窗開啟並於授權對話框同意後,本擴充才會在 `poe.ninja` 與 `pobb.in` 的頁面上執行,**只在使用者的瀏覽器內**把頁面上的英文字替換成中文顯示。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱;唯一會記在本機的是頁面聯盟選單裡的聯盟名稱(用來讓聯盟名維持英文、不被翻譯)。關閉開關後頁面即時還原為英文。此功能所需的名稱資料來自上述 `raw.githubusercontent.com`。
+
 上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
 
 ### 政策變更
@@ -40,7 +44,7 @@
 
 ## English
 
-**Poe Market Zh** ("the Extension") is a browser extension for the official Path of Exile trade site. It works on the international (pathofexile.com) and Taiwan (pathofexile.tw) trade sites for PoE1 (/trade) and PoE2 (/trade2), adding a search bookmarks sidebar, mod filter buttons and Path of Building import, and can optionally localize the international trade site into Traditional Chinese. The Extension's own interface is available in English or Chinese.
+**Poe Market Zh** ("the Extension") is a browser extension for the official Path of Exile trade site. It works on the international (pathofexile.com) and Taiwan (pathofexile.tw) trade sites for PoE1 (/trade) and PoE2 (/trade2), adding a search bookmarks sidebar, mod filter buttons and Path of Building import, and can optionally localize the international trade site into Traditional Chinese. It can also optionally show the text of poe.ninja and pobb.in pages in Traditional Chinese. The Extension's own interface is available in English or Chinese.
 
 ### Data Collection
 The Extension does **not send any user data to the developer or to third parties**, including but not limited to browsing history, search queries, account information, game data, or device identifiers. It contains no analytics, tracking, or advertising components.
@@ -50,6 +54,7 @@ The following data is kept only in the browser's local storage (the browser's ex
 
 - Interface language and trade-site translation preferences
 - Translation data (stat/item mapping tables; downloaded only when the interface is set to Chinese and removed when switching to English)
+- Name data for the poe.ninja / pobb.in localization (downloaded only when that feature is on and the site is opened; removed when switching to English)
 - The official English stat list used by Path of Building import
 - Search bookmarks and folders the user creates or imports
 - Recently opened searches (up to 20 entries)
@@ -63,6 +68,9 @@ The Extension makes network requests solely to **fetch publicly available data**
 - `pathofexile.com` / `pathofexile.tw` — official public trade data APIs by Grinding Gear Games (interface data in English and Traditional Chinese, and stat IDs for Path of Building import). The Taiwan API is not contacted when the interface is set to English.
 - `raw.githubusercontent.com` — the Extension's own online translation updates and public snapshots of the official data (this project's dict branch)
 - `poe.ninja` — **optional**. Requested only after the user explicitly grants permission and enables the sidebar's price lookup; with no permission granted, no request is ever made to it. The price data source is also credited in the UI.
+
+### poe.ninja / pobb.in localization (optional)
+Only after the user turns it on in the popup and approves the permission prompt does the Extension run on `poe.ninja` and `pobb.in` pages, replacing English text with Chinese **inside the user's browser only**. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. The only thing kept locally is the list of league names from the page's league selector (so league names stay in English); turning the switch off restores the English text immediately. The name data for this feature comes from `raw.githubusercontent.com` listed above.
 
 These requests carry no user-identifying information and use no cookies.
 
