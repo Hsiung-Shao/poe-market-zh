@@ -106,6 +106,7 @@
     // 物價頁
     'Equipment & gems': '裝備與寶石', Atlas: '輿圖', General: '一般', 'Value Display': '價值顯示', Adaptive: '自動',
     Name: '名稱', 'Last 7 days': '近 7 天', 'Volume / Hour': '每小時交易量', 'Most Popular': '最熱門兌換', 'Show more': '顯示更多',
+    'Search filters...': '搜尋篩選…',
     // 輿圖天賦樹頁
     Found: '找到', 'unique atlas trees.': '個不重複的輿圖天賦樹。', 'Reset all filters': '重設所有篩選',
     'Show atlas heatmap': '顯示輿圖熱度圖', 'Show passive heatmap': '顯示天賦熱度圖', Columns: '欄位', Tree: '天賦樹',
@@ -232,7 +233,10 @@
     }).filter((f) => f.re).sort((a, b) => b.weight - a.weight);
     // 聯盟名一律不翻(使用者 2026-09-26 裁定:ninja 是國際服在用,聯盟名維持英文)
     const leagues = new Set((sources.leagues ?? []).map((l) => String(l).toLowerCase()));
-    return { names: flat, uiExact, lower, gems, classNames, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    // 稀有度 + 物品類別(`Rare Ring`):兩半各自來自交易站篩選 × 遊戲檔交叉比對(tools/gen-site-names.mjs rarityAndCats)
+    const rarity = new Map(Object.entries(sn.rarity ?? {}));
+    const itemCats = new Map(Object.entries(sn.itemCats ?? {}));
+    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -390,6 +394,14 @@
         const val = lab && value(m[2]);
         if (lab && val) zh = `${lab}: ${val}`;
       }
+    }
+    // ninja 流派頁的物品篩選「Rare Ring」「Magic Quarterstaff」= 稀有度 + 物品類別(單數)。
+    // 稀有度與類別兩半都要查得到(稀有度只收交易站與遊戲檔一致的,`Normal` 兩邊不同 → 不換)
+    if (!zh) {
+      const m = /^(Normal|Magic|Rare|Unique) (.+)$/.exec(t);
+      const r = m && D.rarity?.get(m[1]);
+      const c = r && D.itemCats?.get(m[2]);
+      if (c) zh = `${r}${c}`;
     }
     // 「Unique Weapons」這類 ninja 分類 = 遊戲檔「傳奇」+ 交易站分類名(複數沒有就試單數)
     if (!zh) {
@@ -555,11 +567,20 @@
     return false;
   }
 
+  // ninja 流派頁的職業 / 昇華篩選格(`.class-filter-list`):這個位置只可能是職業名,直接查職業表。
+  // 單獨出現時撞名的(`Martial Artist` 昇華「武聖」vs 同名天賦「武術家」、`Shaman`)在這裡就不會是天賦
+  const CLASS_LIST = '.class-filter-list';
+  function classText(node, en) {
+    if (!node.parentElement?.closest(CLASS_LIST)) return null;
+    const zh = dict.classNames?.get(en.trim());
+    return zh ? en.match(/^\s*/)[0] + zh + en.match(/\s*$/)[0] : null;
+  }
+
   function translateNode(node) {
     const en = englishOf(node);
     if (written.get(node) === node.data) return true; // 已是我們的譯文
     if (hasOtherWords(node)) return false;
-    const zh = translateText(en, dict);
+    const zh = classText(node, en) ?? translateText(en, dict);
     if (!zh) return false;
     setText(node, zh);
     addTitle(node.parentElement, en.trim());
@@ -651,6 +672,26 @@
     }
   }
 
+  // ── 輸入框的提示字(`Search filters...`、`Name`)──
+  // 只改 placeholder 屬性;原文記在 WeakMap,關開關時還原。框架自己改了 placeholder(不等於我們寫的)就當新原文
+  const placeholderOrig = new WeakMap();
+  const placeholderSet = []; // WeakRef<Element>
+  function translatePlaceholders(root) {
+    if (root.nodeType !== Node.ELEMENT_NODE) return;
+    const els = root.matches?.('input[placeholder], textarea[placeholder]') ? [root] : [];
+    els.push(...root.querySelectorAll('input[placeholder], textarea[placeholder]'));
+    for (const el of els) {
+      const cur = el.getAttribute('placeholder');
+      const rec = placeholderOrig.get(el);
+      if (rec && rec.zh === cur) continue;
+      const zh = translateText(cur, dict);
+      if (!zh) continue;
+      if (!rec) placeholderSet.push(new WeakRef(el));
+      placeholderOrig.set(el, { en: cur, zh });
+      el.setAttribute('placeholder', zh);
+    }
+  }
+
   function collectText(root, out) {
     if (root.nodeType === Node.TEXT_NODE) { out.push(root); return; }
     if (root.nodeType !== Node.ELEMENT_NODE || SKIP_TAGS.has(root.tagName)) return;
@@ -677,14 +718,16 @@
       //   不再檢查就會在還原之後又翻一遍(切 English 時背景清資料正好會觸發這條重載,端到端 E20 抓到)
       if (!enabled || myRun !== runId) { pending.clear(); return; }
       pending.clear();
-      if (dict) { const all = []; collectText(document.body, all); processTextNodes(all); }
+      if (dict) { const all = []; collectText(document.body, all); processTextNodes(all); translatePlaceholders(document.body); }
       return;
     }
     if (!dict) { pending.clear(); return; }
     const nodes = [];
     for (const p of pending) collectText(p, nodes);
+    const roots = [...pending];
     pending.clear();
     processTextNodes(nodes);
+    for (const r of roots) if (r.isConnected) translatePlaceholders(r);
   }
 
   const observer = new MutationObserver((muts) => {
@@ -784,6 +827,13 @@
     titled.length = 0;
     for (const ref of hiddenBrs) ref.deref()?.style.removeProperty('display');
     hiddenBrs.length = 0;
+    for (const ref of placeholderSet) {
+      const el = ref.deref();
+      const rec = el && placeholderOrig.get(el);
+      if (rec && el.getAttribute('placeholder') === rec.zh) el.setAttribute('placeholder', rec.en);
+      if (el) placeholderOrig.delete(el);
+    }
+    placeholderSet.length = 0;
   }
 
   let runId = 0;
