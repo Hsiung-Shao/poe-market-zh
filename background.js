@@ -3,6 +3,7 @@
 
 import { buildTranslation, chineseDataAllowed, handleTranslationMessage, purgeChineseData } from './bg/translation.js';
 import { handleNinjaMessage } from './bg/ninja.js';
+import { handleSitesMessage, syncSiteScripts } from './bg/sites.js';
 
 // 要建哪幾款遊戲的資料:**依使用者實際開過的交易站決定**(使用者 2026-08-26 裁定)。
 // content/bootstrap.js 每次在 /trade/ 或 /trade2/ 上跑起來就記一筆 gamesSeen[game]。
@@ -34,13 +35,26 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
   // 安裝/更新後立即建置,使用者開啟交易頁時內建字典已就緒(English / 不翻時守門會擋下)
   if (await chineseDataAllowed()) for (const g of await gamesToBuild()) buildTranslation(g);
+  syncSites();
   maybeAskForNinja();
 });
+
+// ── pobb.in / poe.ninja 中文化(bg/sites.js)──
+// 動態註冊的 content script 會跨工作階段保留,但開關、權限、介面語言任一變動都要重新對齊;
+// 啟動時也對一次(使用者可能在擴充管理頁收回了網站權限)。
+function syncSites() {
+  syncSiteScripts().catch((err) => console.warn('[PTM] 網站中文化註冊失敗:', err));
+}
+chrome.runtime.onStartup?.addListener(syncSites);
+chrome.permissions.onAdded?.addListener(syncSites);
+chrome.permissions.onRemoved?.addListener(syncSites);
 
 // 切到 English:把已經下載的中文資料清掉(使用者 2026-09-21 要求)。
 // 掛在 storage 變更上而不是各個按鈕裡 —— popup 與側邊欄都能切,這裡一處保證都會清。
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.uiLang) return;
+  if (area !== 'local') return;
+  if (changes.siteZh || changes.uiLang || changes.language) syncSites();
+  if (!changes.uiLang) return;
   if (changes.uiLang.newValue === 'en' && changes.uiLang.oldValue !== 'en') {
     purgeChineseData().catch((err) => console.warn('[PTM] 清除中文資料失敗:', err));
   }
@@ -120,7 +134,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       ? handleNinjaMessage(msg)
       : msg.t.startsWith('perm:')
         ? handlePermissionMessage(msg)
-        : null;
+        : msg.t.startsWith('sites:')
+          ? handleSitesMessage(msg)
+          : null;
   if (!route) return false;
   route
     .then(sendResponse)

@@ -26,6 +26,14 @@
     letter-spacing: 0.5px;
   }
   header .ver { font-size: 11px; color: #7a6f5a; }
+  header { flex-direction: column; align-items: stretch; gap: 2px; }
+  header .brand { display: flex; align-items: baseline; gap: 8px; }
+  header .tagline { font-size: 11px; color: #a99a7c; }
+  /* 分區:交易站 / poe.ninja・pobb.in / 翻譯資料 */
+  .group { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid #33291d; }
+  .group h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 1px; color: #c9a66b; }
+  .now-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; font-size: 12px; color: #a99a7c; }
+  .now-row .lang { font-size: 13px; font-weight: 700; color: #ffe8b8; letter-spacing: 1px; }
   main { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
   .lang-card {
     background: #211b14;
@@ -125,37 +133,55 @@
 </head>
 <body>
   <header>
-    <span class="name">Poe Market Zh</span>
-    <span class="ver" id="version"></span>
+    <div class="brand">
+      <span class="name">Poe Market Zh</span>
+      <span class="ver" id="version"></span>
+    </div>
+    <!-- 不再只是交易站翻譯:交易站 + 書籤側邊欄 + 物價 + poe.ninja / pobb.in 中文化(2026-09-26 使用者要求調整) -->
+    <div class="tagline" data-i18n="pop.tagline">PoE 交易站、poe.ninja、pobb.in 的中文輔助工具</div>
   </header>
   <main>
-    <!-- 介面語言(uiLang):擴充自己的介面。English = 交易站不翻、不載任何中文資料 -->
+    <!-- 介面語言(uiLang):擴充自己的介面。English = 交易站與網站都不翻、不載任何中文資料 -->
     <div class="lang-card">
       <div class="label" data-i18n="pop.uiLang">介面語言 / Language</div>
       <!-- 選項由 popup.js 依 shared/i18n.js 的語言清單產生(加語言不必改這裡) -->
       <select id="uiLangSel" class="lang-select" aria-label="Language"></select>
     </div>
-    <!-- 以下三項只在中文介面出現(交易站翻不翻、雙語顯示) -->
-    <div id="zhOnly">
-      <div class="lang-card">
-        <div class="label" data-i18n="pop.langNow">目前語系</div>
-        <div class="lang" id="langNow">…</div>
+
+    <section class="group">
+      <h2 data-i18n="pop.sec.trade">交易站</h2>
+      <!-- 只在中文介面出現(交易站翻不翻、雙語顯示) -->
+      <div id="zhOnly">
+        <div class="now-row"><span data-i18n="pop.langNow">目前語系</span><span class="lang" id="langNow">…</span></div>
+        <div class="btn-row">
+          <button id="applyZh" data-i18n="pop.applyZh">繁體中文化(ZH_TW)</button>
+          <button id="restoreEn" data-i18n="pop.restoreEn">還原回英文(US)</button>
+        </div>
+        <button id="bilingualToggle" class="toggle-row"><span data-i18n="pop.bilingual">詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
       </div>
-      <button id="applyZh" data-i18n="pop.applyZh">繁體中文化(ZH_TW)</button>
-      <button id="restoreEn" data-i18n="pop.restoreEn">還原回英文(US)</button>
-      <button id="bilingualToggle" class="toggle-row"><span data-i18n="pop.bilingual">詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
-    </div>
-    <button id="sidebarToggle" class="toggle-row"><span data-i18n="pop.sidebar">側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
-    <!-- poe.ninja 的授權按鈕平常不顯示:安裝/更新後 background 會把這頁開成
-         popup.html?ask=ninja 專門問一次,側邊欄設定裡的開關也是開這個網址。
-         chrome.permissions.request 只能從擴充頁面呼叫,所以按鈕得留在這裡。 -->
-    <button id="ninjaToggle" class="toggle-row" hidden><span data-i18n="pop.ninja">物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
-    <button id="clearCache" data-i18n="pop.clearCache">清除快取</button>
-    <div id="status"></div>
-    <div id="dictInfo"></div>
+      <button id="sidebarToggle" class="toggle-row"><span data-i18n="pop.sidebar">側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
+    </section>
+
+    <!-- poe.ninja / pobb.in:一顆開關管兩站(popup.js SITE_ORIGINS)。選用權限,打開時才要;
+         關掉不收回權限 —— poe.ninja 那條物價查詢也在用 -->
+    <section class="group" id="zhOnlySites">
+      <h2 data-i18n="pop.sec.sites">poe.ninja / pobb.in</h2>
+      <button id="siteZhToggle" class="toggle-row"><span data-i18n="pop.siteZh">中文化(角色、配裝、物價頁)</span><span class="state" id="siteZhState">關</span></button>
+      <!-- poe.ninja 的物價授權按鈕平常不顯示:安裝/更新後 background 會把這頁開成
+           popup.html?ask=ninja 專門問一次,側邊欄設定裡的開關也是開這個網址。
+           chrome.permissions.request 只能從擴充頁面呼叫,所以按鈕得留在這裡。 -->
+      <button id="ninjaToggle" class="toggle-row" hidden><span data-i18n="pop.ninja">物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
+    </section>
+
+    <section class="group">
+      <h2 data-i18n="pop.sec.data">翻譯資料</h2>
+      <button id="clearCache" data-i18n="pop.clearCache">清除快取</button>
+      <div id="status"></div>
+      <div id="dictInfo"></div>
+    </section>
   </main>
   <ol>
-    <li data-i18n="pop.tip1">套用後記得重新整理交易頁讓修改生效</li>
+    <li data-i18n="pop.tip1">設定改完後重新整理交易站或網站頁面才會生效</li>
     <li data-i18n="pop.tip2">POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具</li>
     <li data-i18n="pop.tip3">開啟交易站時若翻譯資料超過 6 小時會自動背景更新;台服跟上改版後會自動補上新詞綴</li>
   </ol>

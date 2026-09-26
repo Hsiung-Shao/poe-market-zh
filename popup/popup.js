@@ -1,4 +1,4 @@
-// Popup:介面語言、交易站語系與翻譯資料維護。
+// Popup:介面語言、交易站(語系 / 雙語 / 側邊欄)、poe.ninja・pobb.in 中文化、翻譯資料維護。
 // 設定即存即用,交易頁重新整理後生效。
 //
 // 介面語言(uiLang,2026-09-21):中文 / English。English = 交易站不翻、不載任何中文資料、
@@ -20,7 +20,7 @@ I18N.register({
     'pop.sidebar': '側邊欄(書籤 / 歷史 / 物價)',
     'pop.ninja': '物價查詢(poe.ninja)',
     'pop.clearCache': '清除快取',
-    'pop.tip1': '套用後記得重新整理交易頁讓修改生效',
+    'pop.tip1': '設定改完後重新整理交易站或網站頁面才會生效',
     'pop.tip2': 'POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具',
     'pop.tip3': '開啟交易站時若翻譯資料超過 6 小時會自動背景更新;台服跟上改版後會自動補上新詞綴',
     'pop.src.remote': '遠端',
@@ -44,6 +44,14 @@ I18N.register({
     'pop.st.fetchErr': '無法取得狀態:{error}',
     'pop.sidebarToggled': '已{state}側邊欄,重新整理交易頁生效',
     'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁生效',
+    'pop.tagline': 'PoE 交易站、poe.ninja、pobb.in 的中文輔助工具',
+    'pop.sec.trade': '交易站',
+    'pop.sec.sites': 'poe.ninja / pobb.in',
+    'pop.sec.data': '翻譯資料',
+    'pop.siteZh': '中文化(角色、配裝、物價頁)',
+    'pop.siteToggled': '已{state} poe.ninja / pobb.in 中文化,重新整理該網站生效',
+    'pop.siteOffNote': '已關閉 poe.ninja / pobb.in 中文化(物價查詢不受影響),重新整理該網站生效',
+    'pop.siteDenied': '沒有取得 poe.ninja / pobb.in 的網站存取權限,無法開啟',
     'pop.opened': '開啟',
     'pop.closed': '關閉',
     'pop.ninjaAsk': '側邊欄的「物價」分頁要讀 poe.ninja 的公開匯率。\n要用的話請按上面的「物價查詢(poe.ninja)」允許存取;不需要就直接關掉這一頁。',
@@ -68,7 +76,7 @@ I18N.register({
     'pop.sidebar': 'Sidebar (bookmarks / history / prices)',
     'pop.ninja': 'Price check (poe.ninja)',
     'pop.clearCache': 'Clear cache',
-    'pop.tip1': 'Reload the trade page after changing settings',
+    'pop.tip1': 'Reload the trade site or the web page after changing settings',
     'pop.tip2': 'Bookmarks, history and prices live in the sidebar on the trade site',
     'pop.tip3': 'Works on pathofexile.com/trade, /trade2 and the Taiwan trade site',
     'pop.src.remote': 'remote',
@@ -92,6 +100,14 @@ I18N.register({
     'pop.st.fetchErr': 'Could not read status: {error}',
     'pop.sidebarToggled': 'Sidebar {state}. Reload the trade page to apply',
     'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page to apply',
+    'pop.tagline': 'Bookmarks and price check for the PoE trade site, plus Chinese for poe.ninja and pobb.in',
+    'pop.sec.trade': 'Trade site',
+    'pop.sec.sites': 'poe.ninja / pobb.in',
+    'pop.sec.data': 'Translation data',
+    'pop.siteZh': 'Chinese (builds, economy)',
+    'pop.siteToggled': 'Chinese on poe.ninja / pobb.in {state}. Reload that site to apply',
+    'pop.siteOffNote': 'Chinese on poe.ninja / pobb.in disabled (price check is unaffected). Reload that site to apply',
+    'pop.siteDenied': 'Access to poe.ninja / pobb.in was not granted, so it cannot be enabled',
     'pop.opened': 'enabled',
     'pop.closed': 'disabled',
     'pop.ninjaAsk': 'The sidebar "Prices" tab reads public exchange rates from poe.ninja.\nTo use it, click "Price check (poe.ninja)" above and allow access. Otherwise just close this page.',
@@ -130,6 +146,7 @@ function applyUiLang(lang) {
   // 翻譯相關的按鈕只給「會翻交易站」的語言(目前只有中文)
   const zh = uiLangChosen && I18N.langInfo(uiLang).translatesSite;
   $('#zhOnly').hidden = !zh;
+  $('#zhOnlySites').hidden = !zh; // 網站中文化同樣只給中文介面
   $('#dictInfo').hidden = !zh;
 }
 
@@ -328,6 +345,7 @@ async function init() {
   renderBilingual(bilingualMods === true);
   const { sidebarEnabled } = await chrome.storage.local.get('sidebarEnabled');
   renderSidebar(sidebarEnabled !== false);
+  await renderSites();
   const granted = await ninjaGranted();
   renderNinja(granted);
   // 安裝/更新後 background 會把這頁開成分頁(?ask=ninja)問一次物價權限,
@@ -416,6 +434,39 @@ $('#bilingualToggle').addEventListener('click', async () => {
   showStatus(t('pop.bilingualToggled', { state: t(next ? 'pop.opened' : 'pop.closed') }));
 });
 
+// ── poe.ninja / pobb.in 中文化:一顆開關管兩站(使用者 2026-09-26 要求合併)──
+// bg/sites.js 依 siteZh 與授權動態註冊 content/site-zh.js。
+// 打開時兩站權限一起要(permissions.request 只能從擴充頁面、而且要是 click handler 裡的
+// **第一個**呼叫 —— Firefox 的規定,見 ninjaOn 的說明)。
+// 關掉只改開關、不收回權限:poe.ninja 那條權限物價查詢也在用。
+const SITE_ORIGINS = ['https://poe.ninja/*', 'https://pobb.in/*'];
+let siteOn = false;
+
+function renderSiteZh(on) {
+  siteOn = on === true;
+  $('#siteZhToggle').classList.toggle('on', siteOn);
+  $('#siteZhState').textContent = t(siteOn ? 'common.on' : 'common.off');
+}
+
+async function renderSites() {
+  const { siteZh } = await chrome.storage.local.get('siteZh');
+  let granted = false;
+  try { granted = await chrome.permissions.contains({ origins: SITE_ORIGINS }); } catch (_) { /* 當作沒有 */ }
+  renderSiteZh(siteZh === true && granted);
+}
+
+$('#siteZhToggle').addEventListener('click', async () => {
+  const next = !siteOn;
+  // ⚠ request 必須是第一個呼叫(前面不能有 await)
+  if (next && !(await chrome.permissions.request({ origins: SITE_ORIGINS }).catch(() => false))) {
+    showStatus(t('pop.siteDenied'), true);
+    return;
+  }
+  await chrome.storage.local.set({ siteZh: next });
+  renderSiteZh(next);
+  showStatus(next ? t('pop.siteToggled', { state: t('pop.opened') }) : t('pop.siteOffNote'));
+});
+
 $('#clearCache').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ t: 'translation:clear' }).catch(() => {});
   renderDictInfo(null); // 字典快取與來源狀態一起被清掉了
@@ -431,6 +482,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.language) renderLang(changes.language.newValue ?? 'zh_tw');
   if (changes.bilingualMods) renderBilingual(changes.bilingualMods.newValue === true);
   if (changes.sidebarEnabled) renderSidebar(changes.sidebarEnabled.newValue !== false);
+  if (changes.siteZh) renderSites();
 });
 
 // init 任何一步失敗都不該讓 popup 停在半成品(語系、字典狀態全都不顯示)
