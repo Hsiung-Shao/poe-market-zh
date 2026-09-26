@@ -735,7 +735,8 @@ export async function purgeChineseData() {
     'passives',
     'statGroups',
     'dictStatus',
-    'siteNames', // pobb.in / poe.ninja 用的天賦與職業名稱表(bg/sites.js)
+    'siteNamesChecked', // pobb.in / poe.ninja 名稱表的確認時間(名稱表本身是遠端字典快取,由 clearDictCache 清)
+    'siteLeagues', // pobb.in / poe.ninja 看過的聯盟名(不翻用,content/site-zh.js)
   ];
   await chrome.storage.local.remove(keys);
   await clearDictCache();
