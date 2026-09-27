@@ -29,10 +29,10 @@
 - `raw.githubusercontent.com`:本擴充線上更新的翻譯資料與官方資料的公開快照(本專案自己的 dict 分支)
 - `poe.ninja`:**選用功能**。僅在使用者明確授權並開啟側邊欄的「物價查詢」後,讀取其公開的通貨價格資料;未授權時完全不會對其發出任何請求。價格資料來源於畫面上另有標示。
 
+上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
+
 ### poe.ninja / pobb.in 中文化(選用功能)
 使用者在彈出視窗開啟並於授權對話框同意後,本擴充才會在 `poe.ninja` 與 `pobb.in` 的頁面上執行,**只在使用者的瀏覽器內**把頁面上的英文字替換成中文顯示。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱;唯一會記在本機的是頁面聯盟選單裡的聯盟名稱(用來讓聯盟名維持英文、不被翻譯)。關閉開關後頁面即時還原為英文。此功能所需的名稱資料來自上述 `raw.githubusercontent.com`。
-
-上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
 
 ### 政策變更
 如本政策有變更,將於本頁面更新並調整「最後更新」日期。
@@ -69,10 +69,10 @@ The Extension makes network requests solely to **fetch publicly available data**
 - `raw.githubusercontent.com` — the Extension's own online translation updates and public snapshots of the official data (this project's dict branch)
 - `poe.ninja` — **optional**. Requested only after the user explicitly grants permission and enables the sidebar's price lookup; with no permission granted, no request is ever made to it. The price data source is also credited in the UI.
 
+These requests carry no user-identifying information and use no cookies.
+
 ### poe.ninja / pobb.in localization (optional)
 Only after the user turns it on in the popup and approves the permission prompt does the Extension run on `poe.ninja` and `pobb.in` pages, replacing English text with Chinese **inside the user's browser only**. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. The only thing kept locally is the list of league names from the page's league selector (so league names stay in English); turning the switch off restores the English text immediately. The name data for this feature comes from `raw.githubusercontent.com` listed above.
-
-These requests carry no user-identifying information and use no cookies.
 
 ### Changes
 Any changes to this policy will be posted on this page with an updated date.
