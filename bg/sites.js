@@ -81,7 +81,9 @@ export async function ensureSiteNames(game) {
   const checked = got.siteNamesChecked ?? {};
   if (got[cacheKey] && Date.now() - (checked[game] ?? 0) < CHECK_MS) return { ok: true, cached: true };
   try {
-    await loadDict(file); // 遠端 → 快取;兩層都沒有會 throw(沒有內建版本)
+    // 遠端 → 快取;兩層都沒有會 throw(沒有內建版本)。
+    // freshIndex:不沿用交易站建置時抓的索引(可能是舊的、還沒有名稱表),見 loadDict 的說明
+    await loadDict(file, { freshIndex: true });
   } catch (err) {
     if (!(await loadLocalDevNames(file, cacheKey))) throw err;
   }

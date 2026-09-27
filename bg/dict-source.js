@@ -266,8 +266,13 @@ function record(name, src, meta) {
  * 取一個字典,依「遠端 → 快取 → 內建」降級。
  * 三層全滅才會 throw —— 呼叫端必須自己容錯,不得讓一個檔拖垮整份建置。
  */
-export async function loadDict(name) {
+export async function loadDict(name, { freshIndex = false } = {}) {
   const s = ensureSession();
+  // 索引平常一個 session 只抓一次(一次建置內各檔看到同一份)。但 session 活得跟 service worker 一樣久:
+  // 網站中文化的名稱表是建置之外、隔很久才來要的,沿用建置當時的索引會拿到舊宣告 ——
+  // 2026-09-27 實測:建置時 raw CDN 還給舊索引 v6(沒有 sitenames),之後開 ninja 頁就一直「遠端與快取都沒有」,
+  // 要等 service worker 閒置重啟才好。這種呼叫端傳 freshIndex,重抓一次索引。
+  if (freshIndex) s.indexPromise = null;
   const index = await getIndex();
 
   // 遠端沒有比內建新 → 這一輪連碰都不碰遠端與快取,直接用內建。
