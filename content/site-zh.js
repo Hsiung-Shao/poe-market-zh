@@ -116,7 +116,10 @@
     'Vestigial Modifiers': '殘存詞綴', // clientstrings DivergentItem「Vestigial {0}」= 殘存 {0}、殘存固定詞綴
     'Mercenary Class': '傭兵職業', 'Mercenary Items': '傭兵物品', // 傭兵 = leaguenames Mercenaries
     'No Major God': '無主神', 'No Minor God': '無次神', // clientstrings PantheonInformationMajorGod 主神之力 / 次神之力
-    'Animated Guardian': '幻靈守衛', // monstervarieties AnimatedArmour(另一個「聚魂之衛」是血族變體)
+    'Animated Guardian': '幻靈守衛',
+    wiki: '維基', // ninja 物價列每一列的外部連結
+    '(scroll to see more)': '(捲動查看更多)',
+    'The Brine King': '海洋之王', // quest.Name 與 npctalk 一致(萬神殿的「海洋王之魂」是神魂名) // monstervarieties AnimatedArmour(另一個「聚魂之衛」是血族變體)
     // 流派頁表格欄位(人工譯名;暴擊率 / 暴擊加成 / 投射物 沿用遊戲檔用字)
     'Attack/Cast Rate': '攻擊 / 施放速度', 'Crit Chance': '暴擊率', 'Crit Multiplier': '暴擊加成', Projectiles: '投射物',
     Pierces: '穿透', 'AoE Radius': '範圍半徑', 'Damage types': '傷害類型',
@@ -158,8 +161,9 @@
 
   // ── 翻譯核心(純函式,tools/verify-site-zh.mjs 離線測)──
 
-  const NUM_RE = /\d+(?:\.\d+)?/g;
-  const SIGNED_NUM_RE = /-?\d+(?:\.\d+)?/g;
+  // 範圍值「(10-18)」整段算一個數值(ninja 物品浮窗印的是詞綴範圍:`(10-18)% increased Attack Speed`)
+  const NUM_RE = /\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)|\d+(?:\.\d+)?/g;
+  const SIGNED_NUM_RE = /\(-?\d+(?:\.\d+)?--?\d+(?:\.\d+)?\)|-?\d+(?:\.\d+)?/g;
   const CJK_RE = /[㐀-鿿]/;
   const MAX_LEN = 240; // 超過這個長度的一定不是單條詞綴或名稱(備註、說明文)
   const MAX_TEXT_LEN = 1200; // 整句查表(技能敘述、傳說文字)的上限;更長的是使用者備註
@@ -267,7 +271,11 @@
     const rarity = new Map(Object.entries(sn.rarity ?? {}));
     const itemCats = new Map(Object.entries(sn.itemCats ?? {}));
     const monsters = new Map(Object.entries(sn.monsters ?? {}));
-    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    // 依區塊查表(ninja 流派頁「天賦 / 塗油天賦 / 輿圖」區塊):同名的物品 / 技能 / 職業在那裡不會出現,
+    // 直接查天賦表(Quickstep 天賦「疾步」vs 技能「迅捷步伐」撞名時,名稱表兩邊都不收)
+    const passiveAll = new Map(Object.entries({ ...(sn.passives ?? {}), ...(sources.passiveMap ?? {}) }));
+    const atlasPassives = new Map(Object.entries(sn.atlasPassives ?? {}));
+    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -447,7 +455,7 @@
     // ninja 物價列把變體接在名稱後面的另一個節點:`, Magic`、`, Forbidden Flesh`(逗號也是原文的一部分)
     if (!zh) {
       const m = /^, (.+)$/.exec(t);
-      const z = m && (one(m[1]) ?? D.rarity?.get(m[1]));
+      const z = m && (one(m[1]) ?? formatted(m[1]) ?? D.rarity?.get(m[1]));
       if (z) zh = `,${z}`;
     }
     // 篩選清單的計數:`Duelist [30]`、`Magic [8]`
@@ -603,7 +611,7 @@
     const piecewise = () => {
       const parts = nodes.map((n) => {
         const e = englishOf(n);
-        return /[A-Za-z]/.test(e) ? translateText(e, dict) : e;
+        return /[A-Za-z]/.test(e) ? classText(n, e) ?? translateText(e, dict) : e;
       });
       if (!parts.every((p) => p != null)) return false;
       nodes.forEach((n, i) => { if (parts[i] !== englishOf(n)) setText(n, parts[i]); });
@@ -648,9 +656,30 @@
   // ninja 流派頁的職業 / 昇華篩選格(`.class-filter-list`):這個位置只可能是職業名,直接查職業表。
   // 單獨出現時撞名的(`Martial Artist` 昇華「武聖」vs 同名天賦「武術家」、`Shaman`)在這裡就不會是天賦
   const CLASS_LIST = '.class-filter-list';
+  // 區塊標題(ninja 在 h2 的 title 保留英文原文;沒有 title 的用原文字)→ 該查哪張表
+  const SECTION_KINDS = [
+    [/^(Passives|Keystones|Anointed Passives|Masteries|Notables)$/i, 'passive'],
+    [/^Atlas$/i, 'atlas'],
+    [/^(Classes|Second Ascendancy|Ascendancy)$/i, 'class'],
+  ];
+  function sectionKind(node) {
+    const h2 = node.parentElement?.closest('section')?.querySelector('header h2');
+    if (!h2) return null;
+    const title = (h2.getAttribute('title') ?? textNodesIn(h2).map(englishOf).join('')).trim();
+    return SECTION_KINDS.find(([re]) => re.test(title))?.[1] ?? null;
+  }
   function classText(node, en) {
-    if (!node.parentElement?.closest(CLASS_LIST)) return null;
-    const zh = dict.classNames?.get(en.trim());
+    const key = en.trim();
+    let zh = null;
+    if (node.parentElement?.closest(CLASS_LIST)) zh = dict.classNames?.get(key);
+    // 物價頁「禁忌珠寶」:表格只有昇華天賦名與職業名兩種(Forbidden Power、Saboteur),沒有區塊標題可看
+    else if (/\/forbidden-jewels(\/|$)/.test(location.pathname)) zh = dict.classNames?.get(key) ?? dict.passiveAll?.get(key);
+    else {
+      const kind = sectionKind(node);
+      if (kind === 'passive') zh = dict.passiveAll?.get(key);
+      else if (kind === 'atlas') zh = dict.atlasPassives?.get(key);
+      else if (kind === 'class') zh = dict.classNames?.get(key);
+    }
     return zh ? en.match(/^\s*/)[0] + zh + en.match(/\s*$/)[0] : null;
   }
 
