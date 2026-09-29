@@ -118,6 +118,11 @@
     'No Major God': '無主神', 'No Minor God': '無次神', // clientstrings PantheonInformationMajorGod 主神之力 / 次神之力
     'Animated Guardian': '幻靈守衛',
     wiki: '維基', // ninja 物價列每一列的外部連結
+    'Character is using any': '角色使用任一', // 流派頁篩選提示「Character is using any <物品>」
+    // 流派首頁(聯盟清單):挑戰聯盟、不限期聯盟取 clientstrings,其餘人工
+    'Available Leagues': '可選聯盟', 'Challenge Leagues': '挑戰聯盟', 'Permanent Leagues': '不限期聯盟', 'Past leagues': '過往聯盟',
+    'Private Leagues': '私人聯盟', 'Add private league': '新增私人聯盟', Streamers: '實況主',
+    'Top Classes Per League': '各聯盟熱門職業', 'See all builds': '查看所有流派',
     '(scroll to see more)': '(捲動查看更多)',
     'The Brine King': '海洋之王', // quest.Name 與 npctalk 一致(萬神殿的「海洋王之魂」是神魂名) // monstervarieties AnimatedArmour(另一個「聚魂之衛」是血族變體)
     // 流派頁表格欄位(人工譯名;暴擊率 / 暴擊加成 / 投射物 沿用遊戲檔用字)
@@ -156,6 +161,7 @@
     [/^(\d+) minutes? ago$/, '$1 分鐘前'], [/^(\d+) hours? ago$/, '$1 小時前'], [/^(\d+) days? ago$/, '$1 天前'],
     [/^(\d+) weeks? ago$/, '$1 週前'], [/^(\d+) months? ago$/, '$1 個月前'],
     [/^Found ([\d,]+) characters\.$/, '找到 $1 個角色。'],
+    [/^([\d,]+) characters$/, '$1 個角色'], // 流派首頁每個聯盟的角色數
     [/^Level (\d+) \((\d+) passives\)$/, '等級 $1($2 點天賦)'],
   ];
 
@@ -275,7 +281,9 @@
     // 直接查天賦表(Quickstep 天賦「疾步」vs 技能「迅捷步伐」撞名時,名稱表兩邊都不收)
     const passiveAll = new Map(Object.entries({ ...(sn.passives ?? {}), ...(sources.passiveMap ?? {}) }));
     const atlasPassives = new Map(Object.entries(sn.atlasPassives ?? {}));
-    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    // 塗油只能塗一般天賦樹的天賦(Saboteur 塗油 = 怠工者;同名的昇華是破壞者)
+    const anointPassives = new Map(Object.entries(sn.anointPassives ?? {}));
+    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, anointPassives, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -658,12 +666,14 @@
   const CLASS_LIST = '.class-filter-list';
   // 區塊標題(ninja 在 h2 的 title 保留英文原文;沒有 title 的用原文字)→ 該查哪張表
   const SECTION_KINDS = [
-    [/^(Passives|Keystones|Anointed Passives|Masteries|Notables)$/i, 'passive'],
+    [/^Anointed Passives$/i, 'anoint'],
+    [/^(Passives|Keystones|Masteries|Notables)$/i, 'passive'],
     [/^Atlas$/i, 'atlas'],
-    [/^(Classes|Second Ascendancy|Ascendancy)$/i, 'class'],
+    [/^(Classes|Second Ascendancy|Ascendancy|Top Classes Per League)$/i, 'class'],
   ];
   function sectionKind(node) {
-    const h2 = node.parentElement?.closest('section')?.querySelector('header h2');
+    // 標題多半是 h2;流派首頁「Top Classes Per League」是 header 裡的 <a>
+    const h2 = node.parentElement?.closest('section')?.querySelector('header h2, header h3, header > a');
     if (!h2) return null;
     const title = (h2.getAttribute('title') ?? textNodesIn(h2).map(englishOf).join('')).trim();
     return SECTION_KINDS.find(([re]) => re.test(title))?.[1] ?? null;
@@ -671,12 +681,14 @@
   function classText(node, en) {
     const key = en.trim();
     let zh = null;
-    if (node.parentElement?.closest(CLASS_LIST)) zh = dict.classNames?.get(key);
+    // 職業篩選格,或連到「?class=職業」的卡片(流派首頁各聯盟熱門職業)
+    if (node.parentElement?.closest(`${CLASS_LIST}, a[href*="class="]`)) zh = dict.classNames?.get(key);
     // 物價頁「禁忌珠寶」:表格只有昇華天賦名與職業名兩種(Forbidden Power、Saboteur),沒有區塊標題可看
     else if (/\/forbidden-jewels(\/|$)/.test(location.pathname)) zh = dict.classNames?.get(key) ?? dict.passiveAll?.get(key);
     else {
       const kind = sectionKind(node);
-      if (kind === 'passive') zh = dict.passiveAll?.get(key);
+      if (kind === 'anoint') zh = dict.anointPassives?.get(key) ?? dict.passiveAll?.get(key);
+      else if (kind === 'passive') zh = dict.passiveAll?.get(key);
       else if (kind === 'atlas') zh = dict.atlasPassives?.get(key);
       else if (kind === 'class') zh = dict.classNames?.get(key);
     }
