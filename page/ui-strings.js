@@ -6,7 +6,11 @@
 // UI 字串一律直接替換為單一語言(純中文),不做雙語對照 ——
 // 下拉選單的中英對照屬 lscache 資料層(bg/translation.js),與此無關。
 
-const __ = (() => {
+// ⚠ 不用 `const __` 宣告(2026-09-29 改):別的翻譯擴充(或同時開著兩份本擴充,例如商店版 + 開發版)
+//   也用同一個掛勾時,後宣告的那支會報「Identifier '__' has already been declared」整支不執行,
+//   交易站介面字全部變回英文(使用者實際遇到:頁面上的 __ 是另一份的空字典)。
+//   改成:已經有人放了 `__` 就把我們的字補進去;沒有才掛成全域屬性(官網讀的是裸識別字 `__`,屬性也讀得到)。
+(() => {
   const dict = {
     // ── 頂欄與通用 ──
     'Search Items': '搜尋物品',
@@ -252,6 +256,17 @@ const __ = (() => {
     merged = { ...base, ...extra };
   } catch (_) { /* localStorage 不可用或字典資料損毀時,退回自寫字典 */ }
 
-  if (mode === 'en') return {};
-  return merged;
+  // English:不提供任何字典(官網 translate() 查不到就用原文);別人放的 `__` 也不動
+  if (mode === 'en') return;
+  let existing = null;
+  try {
+    existing = __; // 裸識別字:別的腳本的全域 const / 屬性都讀得到
+  } catch (_) { /* 沒有人宣告過 */ }
+  if (existing && typeof existing === 'object') {
+    try {
+      Object.assign(existing, merged);
+      return;
+    } catch (_) { /* 對方的物件被凍結:退回自己掛(對方若是 const,官網仍讀對方的) */ }
+  }
+  globalThis.__ = merged;
 })();

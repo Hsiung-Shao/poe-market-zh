@@ -112,6 +112,26 @@
     'Anointed Passives': '塗油天賦', 'Main Skill Traits': '主要技能特性', 'Weapon Configuration': '武器配置',
     'Damage Type': '傷害類型', Delivery: '施放方式', Crit: '暴擊', 'No Crit': '無暴擊',
     'Second Ascendancy': '第二昇華', 'All Gems': '所有寶石',
+    // 使用者回報(2026-09-29)的流派頁區塊標題與物價頁分類。能從遊戲檔推的註明出處,其餘是人工譯名
+    'Vestigial Modifiers': '殘存詞綴', // clientstrings DivergentItem「Vestigial {0}」= 殘存 {0}、殘存固定詞綴
+    'Mercenary Class': '傭兵職業', 'Mercenary Items': '傭兵物品', // 傭兵 = leaguenames Mercenaries
+    'No Major God': '無主神', 'No Minor God': '無次神', // clientstrings PantheonInformationMajorGod 主神之力 / 次神之力
+    'Animated Guardian': '幻靈守衛', // monstervarieties AnimatedArmour(另一個「聚魂之衛」是血族變體)
+    // 流派頁表格欄位(人工譯名;暴擊率 / 暴擊加成 / 投射物 沿用遊戲檔用字)
+    'Attack/Cast Rate': '攻擊 / 施放速度', 'Crit Chance': '暴擊率', 'Crit Multiplier': '暴擊加成', Projectiles: '投射物',
+    Pierces: '穿透', 'AoE Radius': '範圍半徑', 'Damage types': '傷害類型',
+    Ladder: '天梯', Depth: '深度', 'Base Class': '基礎職業', 'Show low confidence': '顯示低可信度', '# Listed': '上架數',
+    Artifacts: '文物', // 破碎之環文物(Broken Circle Artifact)
+    'Forbidden Jewels': '禁忌珠寶', // 禁忌烈焰 / 禁忌血肉
+    'Cluster Jewels': '星團珠寶', // 交易站 jewel.cluster
+    'Blighted Maps': '凋落地圖', 'Blight-ravaged Maps': '凋落蔓延地圖', // baseitemtypes Blighted / Blight-ravaged Map
+    'Valdo Maps': '瓦爾多地圖', // 瓦爾多的謎盒
+    Invitations: '邀請', // 釋界之邀 / 異界之邀
+    Temples: '神殿', // incursionrooms 神殿前院、神殿通道…
+    'Scrying Orbs': '占卜寶珠', 'Base Types': '基礎類型', // baseitemtypes / clientstrings SortMethodBaseType
+    Vials: '罈', // Vial of Summoning = 召喚之罈
+    'Lineage Gems': '血脈寶石', // 交易站 Lineage Support Gems = 血脈輔助寶石
+    'Precursor Tablets': '先行者碑牌', // 先行者(Precursor)+ 碑牌(Tablet)
     Cluster: '星團珠寶', // 交易站分類 jewel.cluster「Cluster Jewel」= 星團珠寶(ninja 簡寫成 Cluster)
     // 輿圖天賦樹頁
     Found: '找到', 'unique atlas trees.': '個不重複的輿圖天賦樹。', 'Reset all filters': '重設所有篩選',
@@ -176,7 +196,6 @@
     for (const [en, zh] of Object.entries(passives)) add(en, zh, 'passive');
     for (const [en, zh] of Object.entries(sources.uniqueMap ?? {})) add(en, stripBilingual(en, zh), 'unique');
     // 技能敘述、輔助寶石說明、通貨效果與用法(整句)、寶石標籤(Spell / AoE / Warcry…)
-    for (const [en, zh] of Object.entries(sn.texts ?? {})) add(en, zh, 'text');
     for (const [en, zh] of Object.entries(sn.tags ?? {})) add(en, zh, 'tag');
     const gems = new Map();
     for (const [en, zh] of Object.entries(sources.itemMap ?? {})) {
@@ -211,6 +230,11 @@
     for (const [en, zh] of Object.entries(sn.skills ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'skill');
     // 地區名(任務獎勵區)同樣只補缺:地名常跟物品 / 天賦同名,不拿來跟它們比撞名
     for (const [en, zh] of Object.entries(sn.areas ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'area');
+    // 整句的說明文字只補缺:四個字以上的傳奇名(The Light of Meaning = 意涵之光)會剛好等於某段說明裡的句子(意義之光),
+    // 物品名優先,不讓它們互相抵銷成兩邊都不換(2026-09-29 使用者回報)
+    for (const [en, zh] of Object.entries(sn.texts ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'text');
+    // 其他遊戲檔名稱(傭兵職業、神殿房間、地圖 / 碑牌基底、萬神殿神名、多字的物品名):同樣只補缺
+    for (const [en, zh] of Object.entries(sn.extras ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'extra');
     const flat = new Map([...names].map(([en, v]) => [en, v.zh]));
     // 職業 / 昇華名(給「Level 100 Warden」這種標題用)。這個位置一定是職業,所以直接取
     // ascendancy / characters 兩張表,不受天賦撞名影響(`Warden` 昇華「守林人」vs 同名天賦「守護者」,
@@ -281,10 +305,16 @@
   //   只收「多個佔位符」或「含寫死數字」的模板 —— 正是只有 # 的字典會填錯位置的那些。
   function renderOrdered(text, tpl) {
     if (!tpl) return null;
-    // 沒有數值的整句(技能檔的「Fires Projectiles in a circle」)也在這張表:vals 為空時就是原樣比對
-    for (const { key, vals } of maskedKeys(text)) {
-      const zh = tpl[key];
-      if (typeof zh === 'string') return zh.replace(/\{(\d+)\}/g, (_m, k) => vals[Number(k)] ?? '');
+    // 沒有數值的整句(技能檔的「Fires Projectiles in a circle」)也在這張表:vals 為空時就是原樣比對。
+    // ninja 流派頁的詞綴篩選清單直接列模板本身(`#% increased Strength`):沒有數值可填的格子印回 `#`,
+    // 不是空字串(否則變成「增加 % 力量」);ninja 也把帶號模板的 `+` 省掉了(`#% to …` = 遊戲檔 `+#% to …`)
+    const literal = text.includes('#');
+    const keys = literal ? [text, text.replace(/(^|\s)#/, '$1+#'), text.replace(/(^|\s)#/g, '$1+#')] : [text];
+    for (const k0 of keys) {
+      for (const { key, vals } of maskedKeys(k0)) {
+        const zh = tpl[key];
+        if (typeof zh === 'string') return zh.replace(/\{(\d+)\}/g, (_m, k) => vals[Number(k)] ?? (literal ? '#' : ''));
+      }
     }
     // 負值:遊戲檔的帶號模板是 `{0:+d}`(鍵裡是 `+#`,中文是 `+{0}`),畫面印的是 `-1%`。
     // 把數字前的負號當成正號去比對,命中後那一格的「+值」換成「-值」(符號跟著數值走,不改字)
@@ -322,12 +352,28 @@
     return null;
   }
 
+  const normKeyCache = new WeakMap(); // statMap → Map(換行正規化成空白的鍵 → 原鍵)
   function renderStat(text, map, tpl) {
     const ordered = renderOrdered(text, tpl);
     if (ordered) return ordered;
     if (!map) return null;
     // 整句原樣就是鍵(數字全是寫死的)
     if (typeof map[text] === 'string' && !map[text].includes('#')) return map[text];
+    // 模板本身(ninja 流派頁的詞綴篩選清單:`#% to Critical Strike Multiplier per #% Chance to Block Attack Damage`):
+    // 沒有數字要填,就沒有「填錯位置」的問題,多個 # 也可以直接用;ninja 省掉的 `+` 也試一下
+    if (text.includes('#') && !/\d/.test(text)) {
+      // 兩行式模板的鍵帶換行(`… when Leech is\nremoved by …`),畫面文字已正規化成空白:另建一份正規化鍵的索引
+      let norm = normKeyCache.get(map);
+      if (!norm) {
+        norm = new Map();
+        for (const k of Object.keys(map)) if (/\n/.test(k)) norm.set(k.replace(/\s+/g, ' '), k);
+        normKeyCache.set(map, norm);
+      }
+      for (const k of [text, text.replace(/(^|\s)#/, '$1+#'), text.replace(/(^|\s)#/g, '$1+#')]) {
+        const z = map[k] ?? map[`${k} (Local)`] ?? map[norm.get(k)];
+        if (typeof z === 'string') return stripLocalZh(z);
+      }
+    }
     return renderSingle(text, map);
   }
 
@@ -345,7 +391,9 @@
     const lead = s.match(/^\s*/)[0];
     const trail = s.match(/\s*$/)[0];
     // ninja 寫「Two Handed Mace」,交易站選項是「Two-Handed Mace」
-    const itemCat = (x) => D.itemCats?.get(x) ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1-Handed')) ?? null;
+    // PoE1 交易站叫 `Base One-Handed Mace`、遊戲檔叫 `One Hand Mace`,都試
+    const itemCat = (x) => D.itemCats?.get(x) ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1-Handed'))
+      ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1 Hand')) ?? null;
     const one = (x) => {
       let zh = D.names.get(x) ?? D.uiExact?.get(x) ?? D.lower.get(x.toLowerCase());
       // pobb.in 的寶石列省略「 Support」(`Burning Damage` = 燃燒傷害輔助)。
@@ -396,6 +444,18 @@
     // 網站自己的數量 / 時間格式(`Week 9`、`50 hours ago`、`Found 124410 characters.`)
     if (!zh) for (const [re, out] of SITE_PATTERNS) if (re.test(t)) { zh = t.replace(re, out); break; }
     if (!zh) zh = formatted(t);
+    // ninja 物價列把變體接在名稱後面的另一個節點:`, Magic`、`, Forbidden Flesh`(逗號也是原文的一部分)
+    if (!zh) {
+      const m = /^, (.+)$/.exec(t);
+      const z = m && (one(m[1]) ?? D.rarity?.get(m[1]));
+      if (z) zh = `,${z}`;
+    }
+    // 篩選清單的計數:`Duelist [30]`、`Magic [8]`
+    if (!zh) {
+      const m = /^(.+?) \[(\d+)\]$/.exec(t);
+      const z = m && (one(m[1]) ?? D.rarity?.get(m[1]) ?? D.classNames?.get(m[1]));
+      if (z) zh = `${z} [${m[2]}]`;
+    }
     if (!zh && /\d/.test(t)) zh = value(t);
     // 「標籤: 數值」(`Cost: 13 Mana`、`Cast Time: Instant`、`Grants Skill: Raise Shield`)
     if (!zh) {
