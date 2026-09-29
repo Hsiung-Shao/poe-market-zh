@@ -118,7 +118,7 @@
     'No Major God': '無主神', 'No Minor God': '無次神', // clientstrings PantheonInformationMajorGod 主神之力 / 次神之力
     'Animated Guardian': '幻靈守衛',
     wiki: '維基', // ninja 物價列每一列的外部連結
-    'Character is using any': '角色使用任一', // 流派頁篩選提示「Character is using any <物品>」
+    'Character is using any': '角色使用任一', 'Check wiki for optional modifiers': '可選詞綴請查看維基', Foulborn: '穢生', Type: '類型', // 物價頁篩選標籤(穢生 = clientstrings MutatedUniqueName) // 流派頁篩選提示「Character is using any <物品>」
     // 流派首頁(聯盟清單):挑戰聯盟、不限期聯盟取 clientstrings,其餘人工
     'Available Leagues': '可選聯盟', 'Challenge Leagues': '挑戰聯盟', 'Permanent Leagues': '不限期聯盟', 'Past leagues': '過往聯盟',
     'Private Leagues': '私人聯盟', 'Add private league': '新增私人聯盟', Streamers: '實況主',
@@ -170,6 +170,7 @@
   // 範圍值「(10-18)」整段算一個數值(ninja 物品浮窗印的是詞綴範圍:`(10-18)% increased Attack Speed`)
   const NUM_RE = /\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)|\d+(?:\.\d+)?/g;
   const SIGNED_NUM_RE = /\(-?\d+(?:\.\d+)?--?\d+(?:\.\d+)?\)|-?\d+(?:\.\d+)?/g;
+  const PLUS_NUM_RE = /[+-]?\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)|[+-]?\d+(?:\.\d+)?/g;
   const CJK_RE = /[㐀-鿿]/;
   const MAX_LEN = 240; // 超過這個長度的一定不是單條詞綴或名稱(備註、說明文)
   const MAX_TEXT_LEN = 1200; // 整句查表(技能敘述、傳說文字)的上限;更長的是使用者備註
@@ -245,6 +246,8 @@
     for (const [en, zh] of Object.entries(sn.texts ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'text');
     // 其他遊戲檔名稱(傭兵職業、神殿房間、地圖 / 碑牌基底、萬神殿神名、多字的物品名):同樣只補缺
     for (const [en, zh] of Object.entries(sn.extras ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'extra');
+    // 交易站官方清單印證過的傳奇名(含單字的 Reverie = 綺夢):同樣只補缺
+    for (const [en, zh] of Object.entries(sn.uniqueWords ?? {})) if (!names.has(en) && !dropped.has(en)) add(en, zh, 'unique');
     const flat = new Map([...names].map(([en, v]) => [en, v.zh]));
     // 職業 / 昇華名(給「Level 100 Warden」這種標題用)。這個位置一定是職業,所以直接取
     // ascendancy / characters 兩張表,不受天賦撞名影響(`Warden` 昇華「守林人」vs 同名天賦「守護者」,
@@ -283,7 +286,12 @@
     const atlasPassives = new Map(Object.entries(sn.atlasPassives ?? {}));
     // 塗油只能塗一般天賦樹的天賦(Saboteur 塗油 = 怠工者;同名的昇華是破壞者)
     const anointPassives = new Map(Object.entries(sn.anointPassives ?? {}));
-    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, anointPassives, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    // 物品區查傳奇名、技能區查寶石名(Briarpatch 傳奇「薔薇眼罩」vs 寶石「荊棘叢」撞名時,名稱表兩邊都不收)
+    const uniqueAll = new Map([...Object.entries(sn.uniqueWords ?? {}),
+      ...Object.entries(sources.uniqueMap ?? {}).map(([en, zh]) => [en, stripBilingual(en, zh)])]);
+    const gemAll = new Map([...Object.entries(sn.skills ?? {}),
+      ...Object.entries(sources.itemMap ?? {}).map(([en, zh]) => [en, stripBilingual(en, zh)])]);
+    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, anointPassives, uniqueAll, gemAll, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -353,7 +361,8 @@
   //   兩個以上的 # 無從得知中文的填入順序(`若你至少配置 # 生命專精,有 #%` 就會把 10 與 6 填反),
   //   那種行只信 ①,① 沒有就保留英文。
   function renderSingle(text, map) {
-    for (const re of [NUM_RE, SIGNED_NUM_RE]) {
+    // 第三種:正負號連數值一起當一格(畫面「+40%」、字典「#%」:Nightblade 那條)
+    for (const re of [NUM_RE, SIGNED_NUM_RE, PLUS_NUM_RE]) {
       const key = text.replace(re, '#');
       if (hashCount(key) > 1) continue;
       const tpl = map[key] ?? map[`${key} (Local)`];
@@ -389,8 +398,28 @@
         const z = map[k] ?? map[`${k} (Local)`] ?? map[norm.get(k)];
         if (typeof z === 'string') return stripLocalZh(z);
       }
+      // ninja 連模板裡「寫死的數字」也換成 #(遊戲檔「… with a 0.3 second Cooldown」→ 畫面「… with a # second Cooldown」):
+      // 把鍵裡所有數字(含正負號)都當 # 再比一次;只有唯一對應才用,中文照原樣(寫死的數字保留、佔位符印 #)
+      const want = hashAll(text);
+      const k1 = looseIndex(map).get(want);
+      if (k1) return stripLocalZh(map[k1]);
+      const k2 = tpl && looseIndex(tpl).get(want);
+      if (k2) return tpl[k2].replace(/\{\d+\}/g, '#');
     }
     return renderSingle(text, map);
+  }
+  const hashAll = (k) => k.replace(/\s+/g, ' ').trim().replace(/[+-]?\d+(?:\.\d+)?/g, '#').replace(/[+-]#/g, '#');
+  const looseCache = new WeakMap();
+  function looseIndex(obj) {
+    let idx = looseCache.get(obj);
+    if (idx) return idx;
+    idx = new Map();
+    for (const k of Object.keys(obj)) {
+      const h = hashAll(k);
+      idx.set(h, idx.has(h) && idx.get(h) !== k ? null : k); // 多個鍵正規化後相同 → 不用(null)
+    }
+    looseCache.set(obj, idx);
+    return idx;
   }
 
   // 一段文字 → 中文(保留前後空白);查不到回 null
@@ -518,9 +547,22 @@
     // poe.ninja 把幾樣東西用「, 」接成一行:精通的多條效果、物價頁的「傳奇名, 變體, 基底」。
     // 整行查不到才拆;**每一段都要各自查得到**(名稱或完整詞綴;只有數字符號的段落原樣保留,如 `6L`),
     // 缺一段就整行保留英文(不湊半中半英)
+    // 各段本身也可能含「, 」(專精「Every 4 seconds, Recover 1 Life for every …」):
+    // 逐段硬切會把它切壞,改成找「每一段都翻得出來」的切法(相鄰的片段可以接回同一段)
     if (!zh && t.includes(', ')) {
-      const parts = t.split(', ').map((p) => (/[A-Za-z]{2}/.test(p) ? one(p) : p));
-      if (parts.length > 1 && parts.every(Boolean)) zh = parts.join(',');
+      const pieces = t.split(', ');
+      if (pieces.length > 1 && pieces.length <= 8) {
+        const tr = (p) => (/[A-Za-z]{2}/.test(p) ? one(p) : p);
+        const best = [[]]; // best[i] = 前 i 片的一種可行切法(譯文陣列)
+        for (let i = 1; i <= pieces.length; i++) {
+          for (let j = i - 1; j >= 0 && !best[i]; j--) {
+            if (!best[j] || (j === 0 && i === pieces.length)) continue; // 整行不切的情況前面已試過
+            const z = tr(pieces.slice(j, i).join(', '));
+            if (z) best[i] = [...best[j], z];
+          }
+        }
+        if (best[pieces.length]) zh = best[pieces.length].join(',');
+      }
     }
     // ninja 天賦樹頁的「Blight / Fungal Remission」(機制 / 基石):同樣每段都要查得到
     if (!zh && t.includes(' / ')) {
@@ -667,6 +709,8 @@
   // 區塊標題(ninja 在 h2 的 title 保留英文原文;沒有 title 的用原文字)→ 該查哪張表
   const SECTION_KINDS = [
     [/^Anointed Passives$/i, 'anoint'],
+    [/^(Items|Animated Guardian|Mercenary Items)$/i, 'item'],
+    [/^(Main Skills|Spirit Skills|All Skills|All Gems|Skills|Gems)$/i, 'skill'],
     [/^(Passives|Keystones|Masteries|Notables)$/i, 'passive'],
     [/^Atlas$/i, 'atlas'],
     [/^(Classes|Second Ascendancy|Ascendancy|Top Classes Per League)$/i, 'class'],
@@ -688,6 +732,8 @@
     else {
       const kind = sectionKind(node);
       if (kind === 'anoint') zh = dict.anointPassives?.get(key) ?? dict.passiveAll?.get(key);
+      else if (kind === 'item') zh = dict.uniqueAll?.get(key);
+      else if (kind === 'skill') zh = dict.gemAll?.get(key);
       else if (kind === 'passive') zh = dict.passiveAll?.get(key);
       else if (kind === 'atlas') zh = dict.atlasPassives?.get(key);
       else if (kind === 'class') zh = dict.classNames?.get(key);
