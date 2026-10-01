@@ -890,4 +890,13 @@ html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
   background: #1e2124;
   font: 13px system-ui, sans-serif;
 }
-html.pmz-hide-tier-picker .pmz-tier-pick { display: none; }
+/* 對齊用的空格:沒有選單的列補一格同寬(與 .pmz-tier-pick 的 width / min-width 必須相同),
+   標題與 MIN/MAX 才會上下對齊(使用者 2026-10-01 回報「詞墜上下不一樣」) */
+.pmz-tier-pick-ph {
+  display: table-cell;
+  width: 44px;
+  min-width: 44px;
+  pointer-events: none;
+}
+html.pmz-hide-tier-picker .pmz-tier-pick,
+html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }

@@ -27,6 +27,8 @@
 //
 // ⚠ 非破壞性:控制項插在 `.filter-body` 裡 MIN 前那個 `.sep` 之前(display:table-cell,與官網的
 //   `.sep` 同型 —— 實測用 float 會把 MIN/MAX 擠到下一行),Vue 管的節點一個都不增刪。
+//   面板裡有選單時,沒有選單的列在同一位置補一格同寬空格(`.pmz-tier-pick-ph`),標題與 MIN/MAX
+//   才會上下對齊;功能關掉時選單與空格全部拿掉 —— 見 placeRow / ensurePlaceholder。
 (() => {
   // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
   const dbg = (...a) => console.info(...a);
@@ -352,6 +354,41 @@
     return ctrl;
   }
 
+  // ── 對齊用的空格(2026-10-01 使用者回報:「出現了詞墜上下不一樣」)──
+  // 選單是 .filter-body(display:table)裡多出來的一格,標題吃剩下的寬度 → 有選單的列標題變窄,
+  // MIN/MAX 與沒有選單的列對不齊。面板裡只要有任何一列放了選單,其餘「有 MIN 欄的詞綴篩選列」
+  // (not / count / weight / if 各群組、偽屬性、沒有階梯的、被排除的…)都在同一個位置補一格同寬的空格
+  // (aria-hidden、不能點);整個面板一列選單都沒有、或功能關掉時一格都不留 → 官方原樣。
+  // 插入點與選單相同(MIN 前那個 .sep 之前),Vue 管的節點一個都不增刪。
+  const PH = `${CTRL}-ph`;
+  function placeRow(row) {
+    const body = row.querySelector(':scope > .filter-body');
+    const min = body?.querySelector(':scope > input.minmax');
+    if (!min) return null;
+    return { body, anchor: min.previousElementSibling?.classList.contains('sep') ? min.previousElementSibling : min };
+  }
+  function ensurePlaceholder(row) {
+    const at = placeRow(row);
+    const existing = at?.body.querySelector(`:scope > .${PH}`) ?? null;
+    if (!at) { if (existing) existing.remove(); return null; }
+    let ph = existing;
+    if (!ph) {
+      ph = document.createElement('span');
+      ph.className = PH;
+      ph.setAttribute('aria-hidden', 'true');
+    }
+    if (ph.nextElementSibling !== at.anchor) at.body.insertBefore(ph, at.anchor);
+    return ph;
+  }
+  function dropPlaceholder(row) {
+    const ph = row.querySelector(':scope > .filter-body')?.querySelector(`:scope > .${PH}`);
+    if (ph) ph.remove();
+  }
+  // 功能關掉:選單與空格全部拿掉(只動我們自己插的節點)
+  function clearAll(root) {
+    for (const el of [...root.querySelectorAll(`.${CTRL}`), ...root.querySelectorAll(`.${PH}`)]) el.remove();
+  }
+
   let panelEl = null;
   const panel = () => {
     if (!panelEl || !panelEl.isConnected) panelEl = document.querySelector(PANEL_SEL);
@@ -361,9 +398,15 @@
   let observer = null;
   let reportTimer = null;
   function rescan() {
-    if (!state.enabled || !state.ladders) return 0;
     // 沒有搜尋面板(大宗通貨 / 歷史分頁、官網還沒掛上)就沒有篩選列:不必請 MAIN 走一遍元件樹
     const root = panel();
+    if (!state.enabled || !state.ladders) {
+      if (root && !state.enabled) {
+        clearAll(root);
+        observer?.takeRecords?.();
+      }
+      return 0;
+    }
     if (!root) return 0;
     // 請 MAIN world 把列的屬性標到最新(同步派送,回來時已經寫好)
     try { window.dispatchEvent(new CustomEvent('pmz:annotateFilters')); } catch (_) { /* 離線殼 */ }
@@ -373,9 +416,13 @@
     const rows = root.querySelectorAll(`[${ATTR.stat}]`);
     const seen = new Set();
     let n = 0;
+    const bare = []; // 沒放選單的列
     for (const row of rows) {
-      if (renderRow(row, ctx)) { n++; seen.add(row.getAttribute(ATTR.stat)); }
+      if (renderRow(row, ctx)) { n++; seen.add(row.getAttribute(ATTR.stat)); dropPlaceholder(row); }
+      else bare.push(row);
     }
+    // 有任何一列放了選單 → 其餘列補同寬空格;一列都沒有 → 空格全部拿掉(官方原樣)
+    for (const row of bare) if (n) ensurePlaceholder(row); else dropPlaceholder(row);
     // 篩選列被刪掉的詞綴就不再是目標(只在搜尋面板還在時判斷 —— 切到歷史分頁不算刪)
     let changed = false;
     for (const k of [...targets.keys()]) if (!seen.has(k)) { targets.delete(k); changed = true; }
@@ -484,6 +531,6 @@
   // 供離線驗證腳本呼叫真正的實作(不另外複製一份,避免測試與實機分歧)
   globalThis.__pmzTierPickerInternals = {
     tierInfo, computeValue, excludedReason, familiesFor, familyLabels, isPartial, variantLabel,
-    renderRow, rescan, useLadders, applySetting, applyLang, state, targets, stat, GAME, CACHE_KEY, VERIFIED_TEXT_ONLY,
+    renderRow, rescan, useLadders, applySetting, applyLang, state, targets, stat, GAME, CACHE_KEY, VERIFIED_TEXT_ONLY, PH,
   };
 })();
