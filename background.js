@@ -4,6 +4,7 @@
 import { buildTranslation, chineseDataAllowed, handleTranslationMessage, purgeChineseData } from './bg/translation.js';
 import { handleNinjaMessage } from './bg/ninja.js';
 import { handleSitesMessage, syncSiteScripts } from './bg/sites.js';
+import { handleTiersMessage } from './bg/tiers.js';
 
 // 要建哪幾款遊戲的資料:**依使用者實際開過的交易站決定**(使用者 2026-08-26 裁定)。
 // content/bootstrap.js 每次在 /trade/ 或 /trade2/ 上跑起來就記一筆 gamesSeen[game]。
@@ -136,7 +137,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         ? handlePermissionMessage(msg)
         : msg.t.startsWith('sites:')
           ? handleSitesMessage(msg)
-          : null;
+          : msg.t.startsWith('tiers:')
+            ? handleTiersMessage(msg)
+            : null;
   if (!route) return false;
   route
     .then(sendResponse)

@@ -737,6 +737,9 @@ export async function purgeChineseData() {
     'dictStatus',
     'siteNamesChecked', // pobb.in / poe.ninja 名稱表的確認時間(名稱表本身是遠端字典快取,由 clearDictCache 清)
     'siteLeagues', // pobb.in / poe.ninja 看過的聯盟名(不翻用,content/site-zh.js)
+    // 篩選列階級表的確認時間。階級表本身不是中文資料(只有 stat id 與數值,English 介面照樣可用,見 bg/tiers.js),
+    // 但它的快取在 DICT_STORAGE_KEYS 裡、會被下面的 clearDictCache 一併清掉 —— 確認時間跟著清,下次開交易站重抓
+    'tierLaddersChecked',
   ];
   await chrome.storage.local.remove(keys);
   await clearDictCache();

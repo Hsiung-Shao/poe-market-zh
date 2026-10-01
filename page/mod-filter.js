@@ -36,25 +36,31 @@
   const isGroup = (vm) =>
     vm && typeof vm.selectFilter === 'function' && typeof vm.removeFilter === 'function' && vm.group;
   const isPanel = (vm) => vm && typeof vm.selectStatGroup === 'function';
+  // 左欄的屬性篩選群組(type_filters 等;物品類別在這裡)。group.id 是字串,詞綴群組是數字
+  const isPropGroup = (vm) =>
+    vm && typeof vm.clearMe === 'function' && typeof vm.updateFilter === 'function' &&
+    typeof vm.group?.id === 'string';
 
   // 走訪官網元件樹。duck typing 而非元件名 —— 官網改名不會失效
   // (實測名稱來自 `$options._componentTag` 而不是 `$options.name`,只認 name 會找不到)。
   function findVms() {
     const root = window.app;
-    if (!root) return { panel: null, groups: [] };
+    if (!root) return { panel: null, groups: [], props: [] };
     const seen = new Set();
     const groups = [];
+    const props = [];
     let panel = null;
     const walk = (vm, d) => {
       if (!vm || seen.has(vm) || d > 16) return;
       seen.add(vm);
       if (!panel && isPanel(vm)) panel = vm;
       if (isGroup(vm)) groups.push(vm);
+      else if (isPropGroup(vm)) props.push(vm);
       const kids = vm.$children;
       if (kids) for (const c of kids) walk(c, d + 1);
     };
     walk(root, 0);
-    return { panel, groups };
+    return { panel, groups, props };
   }
 
   // 官方 stat id → 官網自己的 entry 物件
@@ -148,5 +154,136 @@
   document.addEventListener('DOMContentLoaded', refreshReady);
   setTimeout(refreshReady, 1500);
 
-  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG };
+  // ── 篩選列階級選單(content/tier-picker.js)的頁面端 ──
+  //
+  // isolated world 看不到 Vue,所以這裡把它要的東西**寫成 DOM 屬性**,填值則收 postMessage 代辦:
+  //   每一條詞綴篩選列(item-filter 元件的 $el):
+  //     data-pmz-stat-id  官方 stat id(語言無關;我們把標題翻成中文也不影響)
+  //     data-pmz-gi       詞綴群組索引 = group.id = state.persistent.stats 的陣列索引
+  //     data-pmz-fi       這一列在群組 state.filters 裡的索引
+  //     data-pmz-gtype    群組類型(and / not / count / weight…;not 群組不放選單)
+  //   <html>:
+  //     data-pmz-item-cat   物品類別選項 id(例 weapon.onesword;沒選 = 空字串)
+  //     data-pmz-item-type  搜尋列選的基底英文名(state.persistent.type;沒選 = 空字串)
+  //     data-pmz-item-cats  類別選項 id → 頁面上顯示的名稱(家族切換的標籤用;跟著頁面語言)
+  //
+  // ── 2026-10-01 對照官網 legacy bundle(dist/legacy/trade.*.js)原始碼確認,並在活站實測
+  //    (PoE1 未登入時搜尋面板仍會掛上;PoE2 未登入整個 legacy app 不載入)──
+  //   • StatFilterGroup 的 filters 是 `_.map(this.state.filters, …)`,模板
+  //     `<item-filter v-for="(filter, index) in filters" :index="index" :key="filter.id">`
+  //     → 群組的 $children 裡帶 filter + index 的就是各列,index 與 state.filters 一一對應
+  //   • 群組 `group.id` 由 ItemFilterPanel.groupsRight 設成 stateRight(= persistent.stats)的索引
+  //   • 物品類別:PropertyFilterGroup.updateFilter commit `setPropertyFilter`
+  //     → `persistent.filters[群組].filters[篩選 id] = { option }`,類別即
+  //     `persistent.filters.type_filters.filters.category.option`
+  //   • 填值:StatFilterGroup.updateFilter(i, patch) = commit setStatFilter + `$root.save(!0)`,
+  //     **不觸發搜尋**(與上方帶入下限同一條路)
+  // ⚠ 屬性只在值真的變了才寫:isolated world 監聽這些屬性,每次都寫會形成「寫 → 觸發 → 再寫」的迴圈。
+  const ATTR = { stat: 'data-pmz-stat-id', gi: 'data-pmz-gi', fi: 'data-pmz-fi', gtype: 'data-pmz-gtype' };
+  const setAttr = (el, k, v) => { if (el.getAttribute(k) !== v) el.setAttribute(k, v); };
+
+  // 類別名稱表只在選項清單變了才重寫(切語言 / 官網重建元件)
+  let catNamesSig = '';
+  function categoryNames(props) {
+    const tf = props.find((p) => p.group?.id === 'type_filters');
+    const cat = (tf?.group?.filters ?? []).find((f) => f?.id === 'category');
+    const out = {};
+    for (const o of cat?.option?.options ?? []) {
+      if (o && typeof o.id === 'string' && typeof o.text === 'string') out[o.id] = o.text;
+    }
+    return out;
+  }
+
+  // Vuex 的 subscribe 是官方 API(只讀回呼):任何 commit(加 / 刪詞綴、改類別、改值)之後重新標一次。
+  // 官網切分頁可能重建整個 app → 換了 store 就重掛。
+  let hookedStore = null;
+  let annotateTimer = null;
+  function hookStore(store) {
+    if (!store || hookedStore === store || typeof store.subscribe !== 'function') return;
+    hookedStore = store;
+    store.subscribe(() => {
+      // commit 之後 Vue 下一個 microtask 才重畫;setTimeout 0 排在那之後,拿到的是新的 DOM
+      if (annotateTimer) return;
+      annotateTimer = setTimeout(() => { annotateTimer = null; annotateFilters(); }, 0);
+    });
+  }
+
+  function annotateFilters() {
+    const root = window.app;
+    const st = root?.$store?.state?.persistent;
+    if (!st) return 0;
+    hookStore(root.$store);
+    const { groups, props } = findVms();
+    let n = 0;
+    for (const g of groups) {
+      const gi = g.group?.id;
+      if (!Number.isInteger(gi)) continue;
+      for (const c of g.$children ?? []) {
+        if (!c?.filter || !Number.isInteger(c.index) || !(c.$el instanceof Element)) continue;
+        // 只認官網自己的 state:索引對到的那筆 id 必須就是這一列的 filter.id(不一致 = 正在重畫,下一輪再標)
+        const id = g.state?.filters?.[c.index]?.id;
+        if (typeof id !== 'string' || id !== c.filter.id) continue;
+        setAttr(c.$el, ATTR.stat, id);
+        setAttr(c.$el, ATTR.gi, String(gi));
+        setAttr(c.$el, ATTR.fi, String(c.index));
+        setAttr(c.$el, ATTR.gtype, String(g.group?.type ?? ''));
+        n++;
+      }
+    }
+    const html = document.documentElement;
+    const cat = st.filters?.type_filters?.filters?.category?.option;
+    setAttr(html, 'data-pmz-item-cat', typeof cat === 'string' ? cat : '');
+    setAttr(html, 'data-pmz-item-type', typeof st.type === 'string' ? st.type : '');
+    const names = categoryNames(props);
+    const sig = JSON.stringify(names);
+    if (Object.keys(names).length && sig !== catNamesSig) {
+      catNamesSig = sig;
+      html.setAttribute('data-pmz-item-cats', sig);
+    }
+    return n;
+  }
+  // isolated world 看到篩選面板有變動時敲這個門(同 pmz:checkFilterReady 的做法;事件同步派送,
+  // 回來時屬性已經寫好)
+  window.addEventListener('pmz:annotateFilters', annotateFilters);
+
+  // 填值:{ t:'pmz:setFilterValue', reqId, statId, gi, fi, min?, max? } → 回 { t:'pmz:setFilterValueDone', reqId, ok, … }
+  const SET_MSG = 'pmz:setFilterValue';
+  function setFilterValue(d) {
+    const { groups } = findVms();
+    const g = groups.find((x) => x.group?.id === d.gi);
+    if (!g) return { ok: false, why: `找不到詞綴群組 ${d.gi}` };
+    const list = g.state?.filters ?? [];
+    let fi = d.fi;
+    if (list[fi]?.id !== d.statId) {
+      // 索引過期(例:使用者剛刪掉上面一列,屬性還沒重標):群組裡恰好一列是這個詞綴才改用它,
+      // 多列或沒有就放棄 —— 寫錯列比沒寫更糟
+      const hits = list.map((f, i) => (f?.id === d.statId ? i : -1)).filter((i) => i >= 0);
+      if (hits.length !== 1) return { ok: false, why: `群組 ${d.gi} 找不到唯一的 ${d.statId}` };
+      fi = hits[0];
+    }
+    const patch = {};
+    if (typeof d.min === 'number' && Number.isFinite(d.min)) patch.min = d.min;
+    if (typeof d.max === 'number' && Number.isFinite(d.max)) patch.max = d.max;
+    if (!Object.keys(patch).length) return { ok: false, why: '沒有數值' };
+    g.updateFilter(fi, patch);
+    return { ok: true, gi: d.gi, fi, ...patch };
+  }
+  window.addEventListener('message', (e) => {
+    // 只收自己這個視窗、自己這個來源送出的訊息(iframe / 第三方腳本也能 postMessage)
+    if (e.source !== window || e.origin !== location.origin) return;
+    const d = e.data;
+    if (!d || d.t !== SET_MSG || typeof d.statId !== 'string' || !Number.isInteger(d.gi) || !Number.isInteger(d.fi)) return;
+    let r;
+    try {
+      r = setFilterValue(d);
+      if (r.ok) dbg(`[PTM] 階級選單填值:${d.statId}(群組 ${r.gi} 第 ${r.fi} 列)${JSON.stringify({ min: r.min, max: r.max })}`);
+      else console.warn('[PTM] 階級選單填值失敗:', r.why);
+    } catch (err) {
+      console.warn('[PTM] 階級選單填值發生例外:', err);
+      r = { ok: false, why: String(err?.message ?? err) };
+    }
+    window.postMessage({ t: 'pmz:setFilterValueDone', reqId: d.reqId, ...r }, location.origin);
+  });
+
+  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG, annotateFilters, setFilterValue };
 })();

@@ -104,6 +104,7 @@
         "shared/i18n.js",
         "content/mod-row.js",
         "content/tier-badge.js",
+        "content/tier-picker.js",
         "content/item-text.js",
         "content/copy-item.js",
         "content/results.js"

@@ -76,6 +76,9 @@
     highlightPseudo: true, // 結果列的偽屬性(合計)詞綴高亮
     modFilterButtons: true, // 結果列每條詞綴右側的 ＋/− 篩選按鈕(content/mod-row.js 讀同一個鍵)
     tierBadges: true, // 結果列每條詞綴的階級徽章「T2 高」(content/tier-badge.js 讀同一個鍵)
+    tierPicker: true, // 篩選列每條詞綴 MIN 左側的階級選單「≈T▾」(content/tier-picker.js、bg/tiers.js 讀同一個鍵)
+    // 階級選單的填值方式:'inclusive' = 該階級下限;'strict' = 排除較低階級擲得到的值(tierfill 的兩種模式)
+    tierPickerMode: 'inclusive',
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
     //   —— 共用一個欄位會讓 PoE2 書籤套上 PoE1 的聯盟,開出空搜尋而且完全無聲。
     //   `league` / `lastLeague` **維持是 PoE1 的**(不做 migration,現有設定原封不動),
@@ -2542,6 +2545,18 @@
     settingToggle(body, 'modFilterButtons', tr('sb.set.modFilterButtons'));
     // 階級徽章同理:tier-badge.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
     settingToggle(body, 'tierBadges', tr('sb.set.tierBadges'));
+    // 階級選單:tier-picker.js 監聽 settings 即時顯示 / 隱藏、換填值方式,這裡只負責存
+    settingToggle(body, 'tierPicker', tr('sb.set.tierPicker'));
+    if (state.settings.tierPicker !== false) {
+      segRow(body, tr('sb.set.tierPickerMode'),
+        [['inclusive', tr('sb.set.tierPickerInclusive')], ['strict', tr('sb.set.tierPickerStrict')]],
+        (val) => (state.settings.tierPickerMode === 'strict' ? 'strict' : 'inclusive') === val,
+        (val) => {
+          state.settings.tierPickerMode = val;
+          persistSettings();
+          render();
+        });
+    }
 
     // ── 3. 資料來源 ──
     body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data')));

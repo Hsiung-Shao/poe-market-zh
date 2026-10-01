@@ -51,12 +51,17 @@ export const DICT_FILES = [
   // (使用者 2026-09-26 要求)。由 bg/sites.js 在需要時依遊戲各抓一份。
   'sitenames1.json',
   'sitenames2.json',
+  // 篩選列階級選單的詞綴階級表(只有數字與 stat id,不含任何中文;tools/gen-tier-ladders.mjs)。
+  // **只有遠端**(兩款各約 80 KB):沒開「階級選單」的人不下載,由 bg/tiers.js 在交易站要求時依遊戲各抓一份。
+  'tierladders1.json',
+  'tierladders2.json',
 ];
 // 沒有內建版本的檔。索引產生器不能拿 data/ 底下的同名檔跟它們比涵蓋率(根本沒有),
 // 擴充端的 loadDict 走到第三層也會直接 throw —— 兩邊都要知道這件事。
 export const REMOTE_ONLY_FILES = new Set([
   'api-us.json', 'api-tw.json', 'api2-us.json', 'api2-tw.json',
   'sitenames1.json', 'sitenames2.json',
+  'tierladders1.json', 'tierladders2.json',
 ]);
 
 // 逾時:第一階段的性質是「不需網路、必定成功」,遠端拖住就直接走本地。

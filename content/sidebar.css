@@ -772,3 +772,43 @@ html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
 .pmz-tier-badge.pmz-tier-q-low { color: #a99a7c; }
 .pmz-tier-badge.pmz-tier-meets { color: #7fd67f; border-color: #4f8a4f; }
 .pmz-tier-badge.pmz-tier-below { color: #e6b450; border-color: #8a6a2f; }
+
+/* ── 篩選列的詞綴階級選單(content/tier-picker.js)──────────────────────────
+   插在 MIN 前那個 .sep 之前。display:table-cell 與官網的 .sep 同型:官網的 .filter-body 是
+   display:table,標題吃剩下的寬度;實測用 float 會把 MIN/MAX 擠到下一行,table-cell 則只讓標題縮短。
+   原生 <select> 疊在字上(透明),點下去是瀏覽器自己的清單 —— 鍵盤、捲動、分組都不必自己做。 */
+.pmz-tier-pick {
+  display: table-cell;
+  position: relative;
+  vertical-align: middle;
+  width: 44px;
+  min-width: 44px;
+  height: 30px;
+}
+.pmz-tier-pick-label {
+  display: block;
+  height: 30px;
+  margin-left: 3px;
+  font: bold 12px/30px system-ui, sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  color: #cfc3a8;
+  background: #1e2124;
+  pointer-events: none;
+}
+.pmz-tier-pick:hover .pmz-tier-pick-label { color: #fff8e1; }
+.pmz-tier-pick.pmz-tier-pick-set .pmz-tier-pick-label { color: #7fd67f; }
+.pmz-tier-pick-select {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: calc(100% - 3px);
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  color: #fff;
+  background: #1e2124;
+  font: 13px system-ui, sans-serif;
+}
+html.pmz-hide-tier-picker .pmz-tier-pick { display: none; }

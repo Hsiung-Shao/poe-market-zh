@@ -16,6 +16,7 @@
 - 翻譯資料(詞綴/物品名對照表,只在介面選中文時下載;切到 English 時會清除)
 - poe.ninja / pobb.in 中文化用的名稱資料(只在開啟該功能且打開該網站時下載;切到 English 時會清除)
 - Path of Building 匯入用的官方英文詞綴清單
+- 篩選列詞綴階級選單用的詞綴階級表(只有官方詞綴代碼與數值;只在開著這個功能且打開交易站時下載)
 - 使用者自行建立或匯入的搜尋書籤與資料夾
 - 最近開啟過的搜尋紀錄(最多 20 筆)
 - 側邊欄的顯示設定(位置、各站各款的聯盟、各項開關)
@@ -56,6 +57,7 @@ The following data is kept only in the browser's local storage (the browser's ex
 - Translation data (stat/item mapping tables; downloaded only when the interface is set to Chinese and removed when switching to English)
 - Name data for the poe.ninja / pobb.in localization (downloaded only when that feature is on and the site is opened; removed when switching to English)
 - The official English stat list used by Path of Building import
+- Mod tier tables for the stat-filter tier picker (official stat IDs and numbers only; downloaded only when that feature is on and the trade site is opened)
 - Search bookmarks and folders the user creates or imports
 - Recently opened searches (up to 20 entries)
 - Sidebar display settings (side, per-site and per-game league, toggles)

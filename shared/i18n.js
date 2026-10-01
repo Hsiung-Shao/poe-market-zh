@@ -138,6 +138,56 @@
     },
   });
 
+  // content/tier-picker.js(篩選列詞綴階級選單)。選項文字同時是下拉清單的內容,要短
+  register({
+    zh: {
+      'tierpick.label': '≈T',
+      'tierpick.none': '— 不指定階級',
+      'tierpick.opt.min': 'T{n} ≥ {value}  [{range}] 等級 {lvl}',
+      'tierpick.opt.max': 'T{n} ≤ {value}  [{range}] 等級 {lvl}',
+      'tierpick.prefix': '前綴',
+      'tierpick.suffix': '後綴',
+      'tierpick.attr.str': '力量',
+      'tierpick.attr.dex': '敏捷',
+      'tierpick.attr.int': '智慧',
+      'tierpick.var.other': '其他基底',
+      'tierpick.sep': '、',
+      'tierpick.more': '{list} 等 {count} 類',
+      'tierpick.tip.title': '詞綴階級選單:選一個階級自動填入數值',
+      'tierpick.tip.fillMin': '填入最小值,不會自動搜尋',
+      'tierpick.tip.fillMax': '這條詞綴越小越好:填入最大值,不會自動搜尋',
+      'tierpick.tip.inclusive': '填值方式:該階級的下限',
+      'tierpick.tip.strict': '填值方式:嚴格(排除較低階級擲得到的值)',
+      'tierpick.tip.families': '依類別或前 / 後綴有 {count} 組階級,在清單裡分組列出(第一組是預設)',
+      'tierpick.tip.partial': '此類別只有部分基底會出現這條詞綴',
+      'tierpick.tip.target': '目前目標:T{n}(結果列的階級標記會顯示 ✓ / ▼)',
+      'tierpick.tip.failed': '填值失敗(篩選列可能剛變動),請再選一次',
+    },
+    en: {
+      'tierpick.label': '≈T',
+      'tierpick.none': '— No tier',
+      'tierpick.opt.min': 'T{n} ≥ {value}  [{range}] lvl {lvl}',
+      'tierpick.opt.max': 'T{n} ≤ {value}  [{range}] lvl {lvl}',
+      'tierpick.prefix': 'Prefix',
+      'tierpick.suffix': 'Suffix',
+      'tierpick.attr.str': 'STR',
+      'tierpick.attr.dex': 'DEX',
+      'tierpick.attr.int': 'INT',
+      'tierpick.var.other': 'Other bases',
+      'tierpick.sep': ', ',
+      'tierpick.more': '{list} +{count} more',
+      'tierpick.tip.title': 'Mod tier picker: pick a tier to fill in the value',
+      'tierpick.tip.fillMin': 'Fills MIN; does not start a search',
+      'tierpick.tip.fillMax': 'Lower is better for this mod: fills MAX; does not start a search',
+      'tierpick.tip.inclusive': 'Fill mode: tier minimum',
+      'tierpick.tip.strict': 'Fill mode: strict (excludes rolls reachable by lower tiers)',
+      'tierpick.tip.families': '{count} tier ladders (by category or prefix/suffix), grouped in the list (first is the default)',
+      'tierpick.tip.partial': 'Only some bases in this category can roll this mod',
+      'tierpick.tip.target': 'Target: T{n} (result tier badges show ✓ / ▼)',
+      'tierpick.tip.failed': 'Could not set the value (the filter may have just changed); please pick again',
+    },
+  });
+
   // content/bookmarks-model.js:預設名稱(會存進資料)與匯入錯誤訊息。
   // ⚠ zh 值必須與模型裡 tr() 的中文原文逐字相同(verify-i18n 有鎖)
   register({
