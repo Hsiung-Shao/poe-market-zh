@@ -2507,6 +2507,7 @@
 
   // settings 裡的布林鍵:state.settings 已與 DEFAULT_SETTINGS 合併,必有值;
   // 寫回同一個鍵、同樣 persist,after 是即時生效的副作用(可省)。
+  // 每一列掛 data-pmz-setting="<鍵>":功能導覽(content/tour.js)據此框「在設定調整」的那幾列,不靠文字 / 順序
   function settingToggle(body, key, label, after) {
     segRow(body, label, onOff(),
       (val) => (state.settings[key] !== false) === val,
@@ -2515,14 +2516,14 @@
         persistSettings();
         after?.();
         render();
-      });
+      }).parentElement.dataset.pmzSetting = key;
   }
 
   function renderSettings(body) {
     body.appendChild(el('div', 'pmz-hint', tr('sb.set.reloadHint')));
 
     // ── 1. 側邊欄 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.sidebar')));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.sidebar'))).dataset.pmzSection = 'sidebar';
     segRow(body, tr('sb.set.position'), [['left', tr('sb.set.left')], ['right', tr('sb.set.right')]],
       (val) => state.settings.sidebarSide === val,
       (val) => {
@@ -2541,7 +2542,7 @@
     // ⚠ 一律從 state 畫,不要在這裡 `chrome.storage.local.get().then(…)` 再 append ——
     //   render 是「清空 body 再重畫」,非同步 append 會在兩次 render 交錯時畫出兩份
     //   (切一次中文化就會多一組「中文化 + 備份與匯入」;2026-08-16 使用者截圖回報)。
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.display')));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.display'))).dataset.pmzSection = 'display';
     // 介面語言(與 popup 同一個 uiLang 鍵)。English = 交易站不翻、不載任何中文資料
     // 語言名一律用該語言自己的寫法(endonym),不隨介面語言翻 —— 看不懂目前語言的人才找得到
     const langRow = el('div', 'pmz-setting-row');
@@ -2582,11 +2583,11 @@
           state.settings.tierPickerMode = val;
           persistSettings();
           render();
-        });
+        }).parentElement.dataset.pmzSetting = 'tierPickerMode';
     }
 
     // ── 3. 資料來源 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data')));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data'))).dataset.pmzSection = 'data';
 
     // ⚠ 書籤/歷史的遊戲切換已改成**分頁頂部的 PoE1/PoE2 標籤**(依網址自動切),
     //   這裡不再有那個設定 —— 同一件事有兩個入口只會讓人不知道哪個說了算。
@@ -2666,7 +2667,7 @@
     // ── 4. 備份與匯入 ──
     // ⚠ 直觀優先:匯出是**三顆各自寫清楚做什麼的鈕**(不必先選再按);
     //   匯入是**先開檔、把裡面有什麼攤出來**,再按對應的鈕(開檔前根本不知道有什麼)。
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.backup')));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.backup'))).dataset.pmzSection = 'backup';
     const have = M.countByGame(state.data.folders);
 
     body.appendChild(el('div', 'pmz-sub-title', tr('sb.set.export')));
@@ -2787,7 +2788,7 @@
     }
 
     // ── 5. 進階 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.advanced')));
+    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.advanced'))).dataset.pmzSection = 'advanced';
     // 功能導覽重播(content/tour.js)。不需要 tourPending:按了就跑,結束後面板還原回這個設定分頁
     const tourRow = el('div', 'pmz-setting-row');
     tourRow.appendChild(el('span', null, tr('sb.set.tourLabel')));

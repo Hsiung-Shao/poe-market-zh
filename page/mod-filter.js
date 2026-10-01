@@ -285,5 +285,148 @@
     window.postMessage({ t: 'pmz:setFilterValueDone', reqId: d.reqId, ...r }, location.origin);
   });
 
-  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG, annotateFilters, setFilterValue };
+  // ── 功能導覽(content/tour.js)的示範 ──
+  //
+  // 使用者 2026-10-02 要求「模糊搜尋」那步要真的示範:篩選區收著就展開、在「＋ 新增詞綴篩選」下拉打一段
+  // 示範字、再示範「加了一條詞綴之後」的樣子(下一步框那一列的 ≈T▾)。導覽在 isolated world 看不到 Vue,
+  // 這裡代辦;{ t:'pmz:tourDemo', reqId, op, … } → 回 { t:'pmz:tourDemoDone', reqId, op, ok, … }。
+  //
+  // ── 2026-10-02 對照官網 legacy bundle(dist/legacy/trade.*.js)原始碼確認 ──
+  //   • 展開 / 收起篩選區:transient mutation `showAdvancedSearch(bool)`(官網自己切分頁時就這樣 commit),
+  //     收起的樣子是 `.search-bar.search-advanced.search-advanced-hidden { height:0; overflow:hidden }`
+  //     —— 裡面的元素**仍有大小**,只是被裁掉(導覽舊版就是因此把聚光框畫到結果列標頭上)
+  //   • 示範詞綴:**直接 commit `setStatFilter` / `removeStatFilter`,刻意不走 selectFilter / removeFilter** ——
+  //     那兩個會接著 `$root.save(true)`:標記目前搜尋 dirty、寫 localStorage 的 state、把網址 replaceState
+  //     成 gzip 查詢碼。示範結束要「完全還原」,這三樣沒有一個還原得乾淨(dirty 沒有反向 mutation)。
+  //     不 save 的話 Vuex 以外什麼都沒動:移除後 persistent 與導覽前逐筆相同,網址、localStorage 都沒碰過。
+  //     兩個 mutation 都不觸發搜尋(搜尋只由 doSearch 發)。
+  //   • 下拉:群組元件 `$refs.search` 就是 vue-multiselect 實例。**不呼叫 activate()** —— 它會把焦點移進輸入框,
+  //     導覽卡片一拿回焦點就 blur → deactivate 收起。改成直接設 isOpen / search(元件自己的 data,不是 Vuex),
+  //     模糊比對的 patch 原本在 focusin 掛,這裡沒有 focus,改呼叫 page/stat-search.js 開放的 __ptmSearch.patch。
+  // ⚠ 只動自己加的東西:加之前群組裡已經有同一個詞綴就**不加**(回傳那一列給導覽框);移除時再確認那一列
+  //   的 stat id,群組裡恰好一列是它才移除(加之前沒有 → 現在唯一那列就是我們加的),對不上寧可不動。
+  // ⚠ 頁面離開(pagehide)時自己清乾淨:導覽那邊的 postMessage 在卸載時不保證送得到。
+  const TOUR_MSG = 'pmz:tourDemo';
+  const TOUR_DONE = 'pmz:tourDemoDone';
+  const TOUR_STATS = new Set(['explicit.stat_3299347043']); // +# to maximum Life(PoE1 / PoE2 同 id,兩款都有階級表)
+  const demo = { expanded: false, added: null, ms: null };
+  const storeOf = () => window.app?.$store ?? null;
+  const andGroup = () => findVms().groups.find((g) => g.group?.type === 'and' && Number.isInteger(g.group?.id)) ?? null;
+
+  function tourExpand() {
+    const store = storeOf();
+    if (!store?.state?.transient) return { ok: false, why: '找不到交易 App' };
+    const hidden = store.state.transient.advancedSearchHidden === true;
+    if (hidden) {
+      store.commit('showAdvancedSearch', true);
+      demo.expanded = true;
+    }
+    return { ok: true, wasHidden: hidden };
+  }
+  function tourCollapse() {
+    if (!demo.expanded) return { ok: true, collapsed: false };
+    demo.expanded = false;
+    const store = storeOf();
+    if (!store?.state?.transient) return { ok: false, why: '找不到交易 App' };
+    if (store.state.transient.advancedSearchHidden !== true) store.commit('showAdvancedSearch', false);
+    return { ok: true, collapsed: true };
+  }
+  // queries:候選示範字(依序);挑第一個「下拉真的有結果」的 —— 全新安裝第一次開頁時中文詞綴表可能還沒建好,
+  // 清單是純英文,中文示範字會變成「No elements found」(2026-10-02 實站冒煙抓到),那就改用英文那個
+  const optionCount = (ms) => {
+    try { return (ms.filteredOptions ?? []).filter((o) => o && !o.$isLabel).length; } catch (_) { return 0; }
+  };
+  function tourOpenSearch(queries) {
+    const g = andGroup();
+    const ms = g?.$refs?.search;
+    if (!ms || typeof ms.isOpen !== 'boolean' || !('search' in ms)) return { ok: false, why: '找不到「新增詞綴篩選」下拉' };
+    const list = (Array.isArray(queries) ? queries : [queries]).map((q) => String(q ?? '').slice(0, 40)).filter(Boolean);
+    if (!list.length) return { ok: false, why: '沒有示範字' };
+    if (demo.ms && demo.ms !== ms) tourCloseSearch();
+    try { window.__ptmSearch?.patch?.(ms); } catch (_) { /* 沒有模糊比對(台服)就只顯示官網原生結果 */ }
+    demo.ms = ms;
+    let query = list[0];
+    for (const q of list) {
+      ms.search = q;
+      if (optionCount(ms) > 0) { query = q; break; }
+    }
+    ms.search = query;
+    ms.isOpen = true;
+    return { ok: true, gi: g.group.id, query, options: optionCount(ms), fuzzy: typeof window.__ptmSearch?.patch === 'function' };
+  }
+  function tourCloseSearch() {
+    const ms = demo.ms;
+    if (!ms) return { ok: true, closed: false };
+    demo.ms = null;
+    ms.search = '';
+    ms.isOpen = false;
+    return { ok: true, closed: true };
+  }
+  function tourAddFilter(statId) {
+    if (!TOUR_STATS.has(statId)) return { ok: false, why: `不是示範用的詞綴(${statId})` };
+    if (demo.added) return { ok: true, ...demo.added, existing: false };
+    const store = storeOf();
+    const g = andGroup();
+    if (!store || !g) return { ok: false, why: '找不到詞綴篩選群組' };
+    const gi = g.group.id;
+    const list = store.state?.persistent?.stats?.[gi]?.filters;
+    if (!Array.isArray(list)) return { ok: false, why: `群組 ${gi} 沒有篩選清單` };
+    const had = list.findIndex((f) => f?.id === statId);
+    if (had >= 0) return { ok: true, gi, fi: had, statId, existing: true }; // 使用者自己就有 → 直接框那一列,不加
+    if (!findEntry(g, statId)) return { ok: false, why: `篩選清單裡沒有這個詞綴(${statId})` };
+    const n0 = list.length;
+    store.commit('setStatFilter', { group: gi, value: { id: statId } });
+    const after = store.state.persistent.stats[gi].filters;
+    if (after.length !== n0 + 1 || after[n0]?.id !== statId) return { ok: false, why: '加入後的清單與預期不符' };
+    demo.added = { gi, fi: n0, statId };
+    return { ok: true, gi, fi: n0, statId, existing: false };
+  }
+  function tourRemoveFilter() {
+    const a = demo.added;
+    if (!a) return { ok: true, removed: false };
+    demo.added = null;
+    const store = storeOf();
+    const list = store?.state?.persistent?.stats?.[a.gi]?.filters;
+    if (!Array.isArray(list)) return { ok: false, why: `群組 ${a.gi} 不見了` };
+    const hits = list.map((f, i) => (f?.id === a.statId ? i : -1)).filter((i) => i >= 0);
+    if (hits.length !== 1) return { ok: false, why: `群組 ${a.gi} 有 ${hits.length} 列 ${a.statId},不確定哪列是示範的,不動` };
+    store.commit('removeStatFilter', { group: a.gi, index: hits[0] });
+    return { ok: true, removed: true, gi: a.gi, fi: hits[0] };
+  }
+  function tourCleanup() {
+    const out = {};
+    for (const [k, fn] of [['search', tourCloseSearch], ['filter', tourRemoveFilter], ['panel', tourCollapse]]) {
+      try { out[k] = fn(); } catch (err) { out[k] = { ok: false, why: String(err?.message ?? err) }; }
+    }
+    return { ok: Object.values(out).every((r) => r.ok), ...out };
+  }
+  const TOUR_OPS = {
+    expand: () => tourExpand(),
+    collapse: () => tourCollapse(),
+    openSearch: (d) => tourOpenSearch(d.queries),
+    closeSearch: () => tourCloseSearch(),
+    addFilter: (d) => tourAddFilter(d.statId),
+    removeFilter: () => tourRemoveFilter(),
+    cleanup: () => tourCleanup(),
+  };
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || e.origin !== location.origin) return;
+    const d = e.data;
+    if (!d || d.t !== TOUR_MSG || typeof d.op !== 'string' || !Object.hasOwn(TOUR_OPS, d.op)) return;
+    let r;
+    try {
+      r = TOUR_OPS[d.op](d);
+      if (!r.ok) console.warn(`[PTM] 導覽示範 ${d.op} 失敗:`, r.why ?? JSON.stringify(r));
+      else dbg(`[PTM] 導覽示範 ${d.op}:${JSON.stringify(r)}`);
+    } catch (err) {
+      console.warn(`[PTM] 導覽示範 ${d.op} 發生例外:`, err);
+      r = { ok: false, why: String(err?.message ?? err) };
+    }
+    window.postMessage({ t: TOUR_DONE, reqId: d.reqId, op: d.op, ...r }, location.origin);
+  });
+  window.addEventListener('pagehide', () => {
+    if (demo.expanded || demo.added || demo.ms) tourCleanup();
+  });
+
+  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG, annotateFilters, setFilterValue, tourOps: TOUR_OPS, tourState: () => ({ expanded: demo.expanded, added: demo.added, open: !!demo.ms }) };
 })();

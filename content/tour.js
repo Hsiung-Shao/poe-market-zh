@@ -10,14 +10,21 @@
 //   兩個鍵都是獨立 storage 鍵,不在 settings 裡(不進備份、不受 DEFAULT_SETTINGS 升級鎖約束),
 //   切 English 清中文資料時也不清(bg/translation.js purgeChineseData 的清單沒有它們)。
 //
-// ── 只指給使用者看,一個東西都不動 ──
-//   · 絕不送出搜尋、不改篩選值、不 postMessage 給 MAIN world、不碰 Vuex。
-//   · 官網(Vue 管)的節點一個都不增刪、不改屬性;導覽 UI 整組 append 到 document.body,
-//     **不放進側邊欄的 .pmz-body**(sidebar.js 的 render() 會清空它)。唯一會「動」頁面的是
+// ── 只指給使用者看;唯一的例外是篩選區的「示範」,而且全部還原 ──
+//   · 絕不送出搜尋、不改使用者既有的篩選值、不碰 Vuex(isolated world 本來也看不到)。
+//   · 示範(使用者 2026-10-02 要求):「模糊搜尋」那步把收著的篩選區展開、在「＋ 新增詞綴篩選」下拉打一段
+//     示範字;「階級選單」那步加一列示範詞綴(+# 最大生命)讓 ≈T▾ 有東西可框。這些都由 MAIN world 的
+//     page/mod-filter.js 代辦(postMessage `pmz:tourDemo`,只收同視窗同來源),那邊只 commit 官網自己的
+//     mutation、不呼叫 save(不改網址 / localStorage / 搜尋 dirty)。**離開需要它的步驟、結束、Esc、
+//     頁面離開都會還原**:關下拉清字、移除示範列(只移除自己加的那列,先核對 stat id)、原本收著就收回去。
+//   · 官網(Vue 管)的節點導覽這邊一個都不增刪、不改屬性;導覽 UI 整組 append 到 document.body,
+//     **不放進側邊欄的 .pmz-body**(sidebar.js 的 render() 會清空它)。另外會「動」頁面的只有
 //     scrollIntoView(把要框的東西捲進畫面,與使用者自己捲動相同)。
 //   · 側邊欄透過 sidebar.js 開放的極小 API(__pmzSidebarApi)切分頁,一律不寫 sidebarUi,
-//     導覽結束還原成導覽前的開合與分頁。
+//     導覽結束還原成導覽前的開合與分頁。設定列以 sidebar.js 掛的 data-pmz-setting / data-pmz-section 定位。
 //   · 錨點不在畫面上(例如還沒搜尋就沒有結果列)→ 改成置中卡片並說明「搜尋之後會出現…」。
+//     「在畫面上」要扣掉被祖先 overflow 裁掉的部分:官網收起篩選區是 height:0 + overflow:hidden,
+//     裡面的元素大小照舊 —— 舊版只看大小,把聚光框畫到了結果列標頭上(使用者 2026-10-02 回報)。
 //
 // ⚠ 同一個 isolated world 的 content script 共享頂層 lexical scope(跨 content_scripts 條目也是),
 //   所以整支包在 IIFE 裡,頂層一個名字都不宣告(CLAUDE.md「側邊欄」段)。
@@ -45,15 +52,38 @@
   // ── 官網 DOM 耦合點(改版時優先檢查這裡)──
   const SEL = {
     app: '.search-panel', // 交易 App 已掛上(PoE1 未登入也會掛;只剩登入頁時不自動跑)
-    addStat: '.search-advanced-items .filter-padded .multiselect', // 詞綴區最下面的「+ Add Stat Filter」
+    // 詞綴篩選群組裡的「+ Add Stat Filter」:只在 .filter-group-body 裡的 .filter-padded(右欄最下面的
+    // 「+ Add Stat Group」是 pane 直屬的 .filter-padded、屬性群組的 body 裡沒有 .filter-padded,都不會中)
+    addStat: '.search-advanced-items .filter-group-body .filter-padded .multiselect',
+    addStatOpen: 'multiselect--active', // vue-multiselect 開著時的 class
+    dropdown: '.multiselect__content-wrapper',
     tierPick: '.pmz-tier-pick', // content/tier-picker.js
     row: '.resultset .row[data-id]',
     orig: '.ptm-orig', // content/results.js 雙語模式的英文原文
     tail: '.pmz-mod-tail', // content/mod-row.js + tier-badge.js 共用的詞綴尾巴
+    badge: '.pmz-tier-badge', // content/tier-badge.js
     pseudo: '.item-mod--pseudo',
     copy: 'button.copy.pmz-copy-on', // content/copy-item.js 放出來的 PoE2 複製鈕
     replay: '.pmz-tour-replay', // sidebar.js 設定 → 進階 的重播鈕
   };
+  // sidebar.js 設定列 / 區塊標題上的穩定屬性(不靠文字、不靠 class 順序)
+  const SETTING_ATTR = 'data-pmz-setting';
+  const SECTION_ATTR = 'data-pmz-section';
+  // 「在設定調整」那步框的四列:結果列 ＋/−、階級標記、階級選單、填值方式(選單關掉時那列不存在)
+  const MOD_SETTING_KEYS = ['modFilterButtons', 'tierBadges', 'tierPicker', 'tierPickerMode'];
+
+  // 篩選區示範(page/mod-filter.js 代辦;見檔頭)
+  const DEMO_MSG = 'pmz:tourDemo';
+  const DEMO_DONE = 'pmz:tourDemoDone';
+  const DEMO_STAT = 'explicit.stat_3299347043'; // +# to maximum Life(PoE1 / PoE2 同 id,兩款都有階級表)
+  // 示範字:交易站是中文就打中文簡稱,否則(English 介面 / 關掉中文化)打英文。兩個都是「官網原生比對不到、
+  // 模糊比對才找得到」的例子(CLAUDE.md「下拉模糊搜尋」:暴率 → 暴擊率;regen life → Life Regeneration)
+  // ⚠ 這是打進官網下拉的「搜尋資料」,不是介面字串,所以不進 i18n 表(verify-i18n D1 對這個名字放行)
+  const DEMO_QUERY_ZH = '暴率';
+  const DEMO_QUERY_EN = 'regen life';
+  const demoQuery = (c) => (c.zhSite ? DEMO_QUERY_ZH : DEMO_QUERY_EN);
+  const DEMO_TIMEOUT_MS = 1500; // MAIN world 沒回應(官網改版、App 沒掛)→ 當作失敗,退回說明
+  const DEMO_ROW_WAIT_MS = 2500; // 加了示範列後等官網重畫 + tier-picker 放上 ≈T▾
 
   const AUTO_DELAY_MS = 1000; // 條件成立後再等一下,讓官網的篩選區、結果列先畫完
   const WAIT_MS = 20000; // 等交易 App / 側邊欄的上限;等不到就不自動跑(旗標保留)
@@ -64,15 +94,34 @@
   };
 
   // ── 找錨點 ──
+  const style = (n) => { try { return getComputedStyle(n) ?? null; } catch (_) { return null; } };
+  const CLIP_RE = /hidden|auto|scroll|clip/;
+  // 看得見的部分(扣掉被祖先 overflow 裁掉的);完全被裁掉 = null。
+  // fixed 定位的元素(側邊欄)不受它外層 overflow 影響,走到 fixed 就停。
   function visibleRect(node) {
     if (!node || node.isConnected === false || typeof node.getBoundingClientRect !== 'function') return null;
     const r = node.getBoundingClientRect();
     if (!r || !(r.width > 0) || !(r.height > 0)) return null;
-    try {
-      const cs = getComputedStyle(node);
-      if (cs && (cs.visibility === 'hidden' || cs.display === 'none')) return null;
-    } catch (_) { /* 拿不到樣式就只看大小 */ }
-    return r;
+    const cs = style(node);
+    if (cs && (cs.visibility === 'hidden' || cs.display === 'none')) return null;
+    let box = { left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height };
+    let fixed = cs?.position === 'fixed';
+    for (let p = node.parentElement; p && !fixed && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      const ps = style(p);
+      if (!ps) continue;
+      if (CLIP_RE.test(`${ps.overflow ?? ''} ${ps.overflowX ?? ''} ${ps.overflowY ?? ''}`)) {
+        const pr = p.getBoundingClientRect();
+        box = {
+          left: Math.max(box.left, pr.left),
+          top: Math.max(box.top, pr.top),
+          right: Math.min(box.right, pr.left + pr.width),
+          bottom: Math.min(box.bottom, pr.top + pr.height),
+        };
+        if (box.right - box.left < 1 || box.bottom - box.top < 1) return null;
+      }
+      if (ps.position === 'fixed') fixed = true;
+    }
+    return { ...box, width: box.right - box.left, height: box.bottom - box.top };
   }
   // 第一個看得見的(只看前 60 個:結果列可能很長,第一筆就夠指了)
   function firstVisible(sel, root = document) {
@@ -94,10 +143,65 @@
     return { ...out, width: out.right - out.left, height: out.bottom - out.top };
   }
 
+  // ── 頁面上的錨點 ──
+  // 「＋ 新增詞綴篩選」:下拉開著(示範中)就框輸入框 + 展開的清單,否則框第一個看得見的
+  function addStatAnchor() {
+    const list = [...document.querySelectorAll(SEL.addStat)];
+    const open = list.find((n) => n.classList.contains(SEL.addStatOpen) && visibleRect(n));
+    const ms = open ?? list.find((n) => visibleRect(n));
+    if (!ms) return null;
+    return [ms, open ? ms.querySelector(SEL.dropdown) : null];
+  }
+  // 示範那一列(page/mod-filter.js 回傳的群組 / 列索引;核對 stat id 才算)
+  function demoRow() {
+    const f = run?.demo?.filter;
+    if (!f || !Number.isInteger(f.gi) || !Number.isInteger(f.fi)) return null;
+    const row = document.querySelector(`[data-pmz-gi="${f.gi}"][data-pmz-fi="${f.fi}"]`);
+    return row && row.getAttribute('data-pmz-stat-id') === f.statId ? row : null;
+  }
+  // 階級選單:示範列(連同列上的 ≈T▾);沒有示範列就框第一個看得見的選單
+  function tierPickAnchor() {
+    const row = demoRow();
+    if (row && visibleRect(row)) return [row, row.querySelector(SEL.tierPick)];
+    return firstVisible(SEL.tierPick);
+  }
+  // 詞綴尾巴:第一筆看得見的結果裡**整欄**尾巴(徽章 + ＋/−)的聯集,不只第一條。
+  // ⚠ 使用者 2026-10-02 回報聚光框只框到一條的 ＋/−、沒框到徽章:第一個 .pmz-mod-tail 常是
+  //   隱性 / 附魔那條(沒有階級資料 → 只有按鈕)。偽屬性的尾巴不算(那是另一區)。
+  //   有徽章的話挑第一筆「至少一條帶徽章」的結果。
+  function tailAnchor(c) {
+    const rows = document.querySelectorAll(SEL.row);
+    let fallback = null;
+    for (let i = 0; i < rows.length && i < 30; i++) {
+      if (!visibleRect(rows[i])) continue;
+      const tails = [...rows[i].querySelectorAll(SEL.tail)].filter((t) => !t.closest(SEL.pseudo) && visibleRect(t));
+      if (!tails.length) continue;
+      if (!on(c.settings.tierBadges) || tails.some((t) => visibleRect(t.querySelector(SEL.badge)))) return tails;
+      fallback ??= tails;
+    }
+    return fallback ?? firstVisible(SEL.tail);
+  }
+
+  // ── 側邊欄裡的錨點 ──
+  const panelQuery = (env, sel) => env.nodes?.panel?.querySelector(sel) ?? null;
+  const settingRows = (env) => MOD_SETTING_KEYS.map((k) => panelQuery(env, `[${SETTING_ATTR}="${k}"]`)).filter(Boolean);
+  // 設定分頁的一個區塊 = 標題到下一個區塊標題之前的所有兄弟
+  function sectionNodes(env, id) {
+    const title = panelQuery(env, `[${SECTION_ATTR}="${id}"]`);
+    if (!title) return [];
+    const out = [title];
+    for (let n = title.nextElementSibling; n && !n.hasAttribute(SECTION_ATTR); n = n.nextElementSibling) out.push(n);
+    return out;
+  }
+  const scrollTo = (node, block) => {
+    try { node?.scrollIntoView({ block, behavior: 'auto' }); } catch (_) { /* 舊瀏覽器 */ }
+  };
+
   // ── 步驟 ──
   // when(ctx):這一步在這個情境下有沒有意義(站別 / 遊戲 / 介面語言 / 側邊欄 / 功能開關)
-  // prepare(env):顯示前把側邊欄擺到對的狀態;anchor(env):要框的元素(或陣列);
-  // body(ctx):段落陣列;miss:錨點不在畫面上時的補充說明鍵;page:錨點在官網頁面上(要捲進畫面)
+  // prepare(env):顯示前把側邊欄擺到對的狀態;anchor(env, ctx):要框的元素(或陣列,框聯集);
+  // body(ctx, demo):段落陣列;miss:錨點不在畫面上時的補充說明鍵;page:錨點在官網頁面上(要捲進畫面);
+  // demo:這一步需要的篩選區示範 { panel, dropdown, filter }(沒寫 = 都不要,離開時還原)
   const on = (v) => v !== false; // 設定鍵讀法與各功能相同:只有明確 false 才是關
   const sidebarTab = (tab) => ({
     when: (c) => c.sidebar,
@@ -129,9 +233,38 @@
       },
       body: (c) => [tr('sb.tour.settings.body'), c.zhSite ? tr('sb.tour.settings.zhExtra') : null],
     },
-    // 模糊搜尋是 MAIN world 的 page/stat-search.js,只掛國際服(manifest 第一條)
-    { id: 'fuzzy', when: (c) => c.site === 'intl', page: true, anchor: () => firstVisible(SEL.addStat), miss: 'sb.tour.fuzzy.miss' },
-    { id: 'tierPick', when: (c) => on(c.settings.tierPicker), page: true, anchor: () => firstVisible(SEL.tierPick), miss: 'sb.tour.tierPick.miss' },
+    // 備份與匯入:框整個區塊。PoB code 只有 PoE1(sidebar.js CODE_SOURCES)
+    {
+      id: 'backup',
+      when: (c) => c.sidebar,
+      prepare: (env) => {
+        env.api.showTab('settings');
+        scrollTo(sectionNodes(env, 'backup')[0], 'start');
+      },
+      anchor: (env) => sectionNodes(env, 'backup'),
+      body: (c) => [tr('sb.tour.backup.body'), tr('sb.tour.backup.file'), tr('sb.tour.backup.ext'), c.game === 'poe1' ? tr('sb.tour.backup.pob') : null],
+    },
+    // 模糊搜尋是 MAIN world 的 page/stat-search.js,只掛國際服(manifest 第一條)。
+    // 示範:展開篩選區、在下拉打示範字(離開這步就關下拉、清字;下一步不需要就收回篩選區)
+    {
+      id: 'fuzzy',
+      when: (c) => c.site === 'intl',
+      page: true,
+      demo: { panel: true, dropdown: true },
+      anchor: () => addStatAnchor(),
+      body: (c, d) => [tr('sb.tour.fuzzy.body'), d?.dropdown && d.query ? tr('sb.tour.fuzzy.demo', { query: d.query }) : null],
+      miss: 'sb.tour.fuzzy.miss',
+    },
+    // 示範:加一列 +# 最大生命(使用者自己已經有這列就直接框它,不加)
+    {
+      id: 'tierPick',
+      when: (c) => on(c.settings.tierPicker),
+      page: true,
+      demo: { panel: true, filter: true },
+      anchor: () => tierPickAnchor(),
+      body: (c, d) => [tr('sb.tour.tierPick.body'), d?.filter && !d.filter.existing ? tr('sb.tour.tierPick.demo') : null],
+      miss: 'sb.tour.tierPick.miss',
+    },
     {
       id: 'translate',
       when: (c) => c.zhSite,
@@ -146,12 +279,22 @@
       id: 'tail',
       when: (c) => on(c.settings.tierBadges) || on(c.settings.modFilterButtons),
       page: true,
-      anchor: () => firstVisible(SEL.tail),
+      anchor: (env, c) => tailAnchor(c),
       body: (c) => [
         on(c.settings.tierBadges) ? tr('sb.tour.tail.badges') : null,
         on(c.settings.modFilterButtons) ? tr('sb.tour.tail.buttons') : null,
       ],
       miss: 'sb.tour.tail.miss',
+    },
+    // 上面三樣(＋/−、階級標記、階級選單 + 填值方式)在 設定 → 顯示 的開關
+    {
+      id: 'modSettings',
+      when: (c) => c.sidebar,
+      prepare: (env) => {
+        env.api.showTab('settings');
+        scrollTo(settingRows(env)[0], 'center');
+      },
+      anchor: (env) => settingRows(env),
     },
     { id: 'pseudo', when: (c) => on(c.settings.highlightPseudo), page: true, anchor: () => firstVisible(SEL.pseudo), miss: 'sb.tour.pseudo.miss' },
     // 複製物品只有 PoE2 國際服(content/copy-item.js:台服物品 JSON 是中文,先不做)
@@ -163,8 +306,7 @@
       prepare: (env) => {
         if (!env.api) return;
         env.api.showTab('settings');
-        const btn = env.nodes?.panel?.querySelector(SEL.replay);
-        try { btn?.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (_) { /* 舊瀏覽器 */ }
+        scrollTo(env.nodes?.panel?.querySelector(SEL.replay), 'center');
       },
       anchor: (env) => env.nodes?.panel?.querySelector(SEL.replay) ?? null,
       noMiss: true, // 側邊欄關著時本來就沒有重播鈕,說明文字已經講了怎麼打開
@@ -242,6 +384,7 @@
       const steps = ids.map((id) => STEPS.find((s) => s.id === id));
       const api = ctx.sidebar ? ctx.api : null;
       run = {
+        id: `pmz-tour-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
         replay,
         ctx,
         steps,
@@ -252,6 +395,11 @@
         cleanup: [],
         hasAnchor: null,
         raf: 0,
+        // 篩選區示範目前的樣子(以 MAIN world 回報成功的為準);demoUsed = 送過任何示範請求
+        demo: { panel: false, dropdown: false, query: null, filter: null },
+        demoUsed: false,
+        demoQ: Promise.resolve(),
+        reqs: new Map(),
       };
       buildUi();
       show(0);
@@ -268,6 +416,10 @@
     const r = run;
     run = null;
     for (const fn of r.cleanup) { try { fn(); } catch (_) { /* 個別清理失敗不影響其他 */ } }
+    // 示範一律還原(關下拉清字 → 移除示範列 → 原本收著就收回)。不等回覆:run 已經是 null,
+    // 排隊中的示範請求看到 run 換掉就不再送;已經送出的會排在這則之前被 MAIN world 處理,所以清得到。
+    if (r.demoUsed) postDemo('cleanup', `${r.id}-end`);
+    for (const done of r.reqs.values()) done({ ok: false, why: 'ended' });
     r.root.remove();
     if (r.env.api && r.saved) r.env.api.restore(r.saved);
     if (reason === 'done' || reason === 'skip') {
@@ -359,6 +511,93 @@
       for (const t of r.timers ?? []) clearTimeout(t);
       if (r.raf) (globalThis.cancelAnimationFrame ?? clearTimeout)(r.raf);
     });
+    // 篩選區示範的回覆(page/mod-filter.js):只收同視窗、同來源、自己發出的 reqId
+    const onMsg = (e) => {
+      if (e.source !== window || e.origin !== location.origin) return;
+      const d = e.data;
+      if (!d || d.t !== DEMO_DONE || typeof d.reqId !== 'string') return;
+      r.reqs.get(d.reqId)?.(d);
+    };
+    window.addEventListener('message', onMsg);
+    r.cleanup.push(() => window.removeEventListener('message', onMsg));
+    // 頁面離開(重新整理、換頁、關分頁):當作程式中止 → 還原示範、旗標保留(下次再跑)
+    const onHide = () => end('abort');
+    window.addEventListener('pagehide', onHide);
+    r.cleanup.push(() => window.removeEventListener('pagehide', onHide));
+  }
+
+  // ── 篩選區示範(page/mod-filter.js 代辦)──
+  function postDemo(op, reqId, extra = {}) {
+    window.postMessage({ t: DEMO_MSG, reqId, op, ...extra }, location.origin);
+  }
+  function demoCall(r, op, extra = {}) {
+    r.demoUsed = true;
+    return new Promise((resolve) => {
+      const reqId = `${r.id}-${r.reqs.size}-${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => r.reqs.get(reqId)?.({ ok: false, why: 'timeout' }), DEMO_TIMEOUT_MS);
+      r.reqs.set(reqId, (d) => { clearTimeout(timer); r.reqs.delete(reqId); resolve(d); });
+      postDemo(op, reqId, extra);
+    });
+  }
+  // 把示範調成「目前這一步」要的樣子。一律排隊(連按 → ← 時前一輪還在等回覆),
+  // 每一輪都讀當下的步驟,所以最後一定收斂到最後停下的那步。
+  function queueDemo() {
+    const r = run;
+    if (!r) return Promise.resolve();
+    r.demoQ = r.demoQ.then(() => syncDemo(r)).catch((err) => console.warn('[PTM] 導覽示範失敗:', err));
+    return r.demoQ;
+  }
+  async function syncDemo(r) {
+    const live = () => run === r;
+    if (!live()) return;
+    const step = r.steps[r.i];
+    const want = step.demo ?? {};
+    const d = r.demo;
+    let changed = false;
+    // 先拆(不需要的)再裝(需要的);拆的順序:下拉 → 示範列 → 篩選區
+    if (!want.dropdown && d.dropdown) { d.dropdown = false; d.query = null; changed = true; await demoCall(r, 'closeSearch'); }
+    if (!live()) return;
+    if (!want.filter && d.filter) { d.filter = null; changed = true; await demoCall(r, 'removeFilter'); }
+    if (!live()) return;
+    if (!want.panel && d.panel) { d.panel = false; changed = true; await demoCall(r, 'collapse'); }
+    const same = () => live() && r.steps[r.i] === step;
+    if (!same()) return; // 等回覆時換了步驟:排在後面的那一輪會處理
+    if (want.panel && !d.panel) {
+      const x = await demoCall(r, 'expand');
+      if (!same()) return;
+      d.panel = x.ok === true;
+      changed = true;
+    }
+    if (want.filter && !d.filter && d.panel) {
+      const x = await demoCall(r, 'addFilter', { statId: DEMO_STAT });
+      if (x.ok === true) d.filter = { gi: x.gi, fi: x.fi, statId: x.statId, existing: x.existing === true };
+      if (!same()) return;
+      changed = true;
+      // 等官網畫出那一列、mod-filter 標上索引、tier-picker 放上 ≈T▾(選單關掉時只等那一列)
+      if (d.filter) {
+        const picker = on(r.ctx.settings.tierPicker);
+        await waitUntil(() => !same() || (picker ? !!demoRow()?.querySelector(SEL.tierPick) : !!demoRow()), DEMO_ROW_WAIT_MS, 100);
+      }
+      if (!same()) return;
+    }
+    if (want.dropdown && !d.dropdown && d.panel) {
+      // 候選示範字:先試這個介面該打的,下拉沒結果(例如中文詞綴表還沒建好)再退英文;實際打了哪個由 MAIN 回報
+      const queries = [...new Set([demoQuery(r.ctx), DEMO_QUERY_EN])];
+      const x = await demoCall(r, 'openSearch', { queries });
+      if (!same()) return;
+      d.dropdown = x.ok === true;
+      d.query = typeof x.query === 'string' ? x.query : null;
+      changed = true;
+    }
+    if (changed && same()) afterDemo(r, step);
+  }
+  // 示範改了版面:重寫說明(有沒有示範成功會影響內文)、捲進畫面、重量
+  function afterDemo(r, step) {
+    renderBody(step);
+    r.hasAnchor = null;
+    if (step.page) bringIntoView(step);
+    measure();
+    settle();
   }
 
   function go(delta) {
@@ -383,30 +622,39 @@
     const total = r.steps.length;
     r.count.textContent = tr('sb.tour.step', { n: i + 1, total });
     r.title.textContent = tr(`sb.tour.${step.id}.title`);
-    r.body.textContent = '';
-    const paras = (step.body ? step.body(r.ctx) : [tr(`sb.tour.${step.id}.body`)]).filter(Boolean);
-    for (const p of paras) r.body.appendChild(el('div', 'pmz-tour-p', p));
+    renderBody(step);
     r.prev.disabled = i === 0;
     r.next.textContent = i === total - 1 ? tr('sb.tour.done') : tr('sb.tour.next');
     r.card.dataset.step = step.id;
     r.hasAnchor = null;
-    // 頁面上的錨點不在可視範圍 → 捲進畫面(只捲,不改任何東西)
-    if (step.page) {
-      const a = resolveAnchor(step);
-      const rect = a.length === 1 ? visibleRect(a[0]) : null;
-      if (rect && (rect.top < 0 || rect.bottom > innerHeight)) {
-        try { a[0].scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' }); } catch (_) { /* 舊瀏覽器 */ }
-      }
-    }
+    if (step.page) bringIntoView(step);
     measure();
     settle();
     try { r.next.focus({ preventScroll: true }); } catch (_) { /* 沒有 focus 選項的舊瀏覽器 */ }
+    // 篩選區示範:這一步要的裝上、不要的還原(非同步;好了之後 afterDemo 重量一次)
+    queueDemo();
+  }
+
+  function renderBody(step) {
+    const r = run;
+    r.body.textContent = '';
+    const paras = (step.body ? step.body(r.ctx, r.demo) : [tr(`sb.tour.${step.id}.body`)]).filter(Boolean);
+    for (const p of paras) r.body.appendChild(el('div', 'pmz-tour-p', p));
+  }
+
+  // 頁面上的錨點(聯集)不在可視範圍 → 把第一個看得見的捲到中間(只捲,不改任何東西)
+  function bringIntoView(step) {
+    const a = resolveAnchor(step);
+    const u = a.length ? unionRect(a) : null;
+    if (!u || (u.top >= 0 && u.bottom <= innerHeight)) return;
+    const first = a.find((n) => visibleRect(n));
+    try { first?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' }); } catch (_) { /* 舊瀏覽器 */ }
   }
 
   function resolveAnchor(step) {
     if (!step.anchor) return [];
     let a = null;
-    try { a = step.anchor(run.env); } catch (_) { a = null; }
+    try { a = step.anchor(run.env, run.ctx); } catch (_) { a = null; }
     return (Array.isArray(a) ? a : [a]).filter(Boolean);
   }
 
@@ -459,10 +707,10 @@
 
   // ── 自動開始(首次安裝)──
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-  async function waitUntil(cond, ms) {
-    for (let t = 0; t <= ms; t += 250) {
+  async function waitUntil(cond, ms, every = 250) {
+    for (let t = 0; t <= ms; t += every) {
       if (cond()) return true;
-      await sleep(250);
+      await sleep(every);
     }
     return false;
   }
@@ -514,7 +762,8 @@
     start,
     stop: (reason) => end(reason === 'done' || reason === 'skip' ? reason : 'abort'),
     isActive: () => !!run,
-    current: () => (run ? { id: run.steps[run.i].id, i: run.i, total: run.steps.length, anchor: run.card.dataset.anchor, side: run.card.dataset.side } : null),
+    current: () => (run ? { id: run.steps[run.i].id, i: run.i, total: run.steps.length, anchor: run.card.dataset.anchor, side: run.card.dataset.side, demo: { ...run.demo } } : null),
+    demoIdle: () => run?.demoQ ?? Promise.resolve(), // 測試用:等目前排隊的示範調整做完
     planSteps,
     placeCard,
     STEP_IDS: STEPS.map((s) => s.id),
