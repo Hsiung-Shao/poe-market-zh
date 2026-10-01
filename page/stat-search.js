@@ -24,7 +24,16 @@
   // 模糊補充的數量上限。實測「ele」這類短查詢會子序列命中 11,785 條,
   // 不設限清單會爆掉;已依分數排序,取前段即可。
   const FUZZY_LIMIT = 60;
-  const EXTRA_GROUP = '模糊比對';
+  // 補充群組的標題跟著下拉本身的語言:content/bootstrap.js 在 document_start 寫入
+  // 'ptm-ui-mode'(交易站中文化開著 = 'zh',English 介面或關掉中文化 = 'en')。
+  // 每次組清單時才讀,切換語言重新整理後即生效。
+  const extraGroupLabel = () => {
+    try {
+      return localStorage.getItem('ptm-ui-mode') === 'zh' ? '模糊比對' : 'Fuzzy matches';
+    } catch (_) {
+      return 'Fuzzy matches';
+    }
+  };
 
   // 評分權重。經 17,727 條真實資料網格搜尋得出,改動前務必重跑
   // tools/verify-fuzzy.mjs —— 尤其「起點位置」的權重必須維持 0:中文詞綴
@@ -173,7 +182,7 @@
     }
     if (!add.length) return native;
     if (ms.groupValues && ms.groupLabel) {
-      return [...native, { $groupLabel: EXTRA_GROUP, $isLabel: true }, ...add];
+      return [...native, { $groupLabel: extraGroupLabel(), $isLabel: true }, ...add];
     }
     return [...native, ...add];
   }
