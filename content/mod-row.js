@@ -11,8 +11,17 @@
 //
 // ⚠ **非破壞性**:結果列是官網 Vue 渲染的,清空重建或增刪既有節點會讓 virtual DOM
 //   與實際 DOM 不符,重繪時 diff 中斷、整個結果區卡死(results.js 的 setModText
-//   有同一條教訓)。這裡只改既有文字節點的**內容**,一個節點都不增刪;按鈕是
-//   append 到尾端的新節點(官網不認得它,diff 不會踩到)。
+//   有同一條教訓)。這裡只改既有文字節點的**內容**,一個節點都不增刪;按鈕放進
+//   我們自己 append 到 .item-mod 尾端的 `.pmz-mod-tail`(官網不認得它,diff 不會踩到)。
+//
+// ── 位置:緊接在詞綴文字後面(2026-10-01 使用者裁定)──
+//   P4   +8 點護甲 [T4 中][＋][−]
+//   S8   1.2 每秒生命回復 [T8 高][＋][−]          蠑螈之
+// 以前按鈕 absolute 在右側(right:22px),會蓋住官方右欄的群組名(「蠑螈之」),
+// 很多人要看那一欄。現在徽章與按鈕共用一個 `.pmz-mod-tail`(徽章在前、＋− 在後),
+// 不定位、走正常行內流:官方的 .lc.l / .lc.r 是 absolute(不佔流),所以尾巴
+// 自然接在 .lc.s 後面。誰先跑誰建 tail(ensureTail),另一支找到就沿用 —— 見
+// content/tier-badge.js 的同名函式。版面規則(含左右留白、開關收合)在 content/sidebar.css。
 //
 // 掛載點是 results.js 的 processContainer(見該檔末尾的 __pmzModRow 呼叫)——
 // 不另開一套 MutationObserver,結果列串流時每一列都會經過那裡,多一套只是多一份成本。
@@ -82,23 +91,17 @@
     if (document.getElementById(STYLE_ID)) return;
     const s = document.createElement('style');
     s.id = STYLE_ID;
-    // 刻意做小、只在滑到那一列時才明顯 —— 結果卡本來就很擠,常駐的亮色按鈕
-    // 會蓋過真正要看的詞綴文字
-    // ── 按鈕固定在每一列的右側 ──
-    // 官網把 .lc.l(階級/roll)與 .lc.r(群組名)做成 absolute 的左右側欄,而
-    // **固定詞綴(item-mod--implicit)根本沒有 .lc.r** —— 早期版本因此把按鈕
-    // 掛到左欄去,同一張卡上按鈕一下左一下右。改成自己定位,兩種詞綴都一樣。
-    // ⚠ 這需要讓 .item-mod 成為定位基準。2026-08-30 於活站實測:對 .item-mod
-    //   設 position:relative 之後,.lc.l / .lc.r 的 getBoundingClientRect
-    //   **一個像素都沒變**(它們的 left/right 是相對同寬同左緣的容器算的),
-    //   item-popup 的尺寸也沒變。不是推論,是量過的。
-    // right:22px 是讓開 .lc.r 那 20px 的欄寬 —— 按鈕落在群組名左邊,
-    // 與使用者提供的參考截圖同一個位置。
+    // 刻意做小 —— 結果卡本來就很擠,大顆亮色按鈕會蓋過真正要看的詞綴文字。
+    // ── 按鈕接在詞綴文字後面(行內),不再自己定位 ──
+    // 官網把 .lc.l(階級/roll)與 .lc.r(群組名)做成 absolute 的左右側欄;
+    // **固定詞綴(item-mod--implicit)根本沒有 .lc.r**。接在文字後面兩種詞綴都一樣,
+    // 也不會再蓋住右欄。
+    // ⚠ 不加 opacity / transform / z-index:這些會讓按鈕自成堆疊層,畫在官方
+    //   absolute 欄位**上面**。不加的話官方欄位(滑過時展開、帶黑底)永遠畫在我們上面。
+    // ⚠ 滑過時只換顏色,不改尺寸/邊框寬度 —— 使用者回報過滑過時整列抖動。
+    // 外框 .pmz-mod-tail 的版面(行內、留白、開關收合)寫在 content/sidebar.css。
     s.textContent = `
-.pmz-mod-host{position:relative}
-.pmz-mod-btns{position:absolute;right:22px;top:50%;transform:translateY(-50%);
- display:inline-flex;gap:3px;z-index:3;opacity:.9;transition:opacity .12s}
-.item-mod:hover .pmz-mod-btns{opacity:1}
+.pmz-mod-btns{display:inline-flex;gap:3px;vertical-align:middle}
 .pmz-hide-mod-btns .pmz-mod-btns{display:none}
 .pmz-mod-btn{cursor:pointer;border:1px solid;background:#12100c;
  font:bold 13px/14px system-ui,sans-serif;width:17px;height:17px;padding:0;border-radius:3px;
@@ -192,10 +195,24 @@
       });
       wrap.appendChild(b);
     }
-    // append 不動既有節點:官網 Vue 的 diff 只在「既有節點被增刪」時會錯亂,
-    // 尾端加一個自己的節點是安全的(results.js 的雙語小字早就這樣做了)。
-    mod.classList.add('pmz-mod-host'); // 讓這一列成為定位基準(見 ensureStyle 的實測說明)
-    mod.appendChild(wrap);
+    // 放進我們自己的 tail(徽章在前、按鈕在後),不動官網的任何節點
+    ensureTail(mod).appendChild(wrap);
+  }
+
+  // ── 詞綴列尾巴:徽章 + ＋/− 共用的外框 ──
+  // ⚠ 與 content/tier-badge.js 的 ensureTail **同名同形**(class 名一字不差):兩支腳本誰先跑
+  //   誰建,另一支找到就沿用;任一支被關掉(或閘門沒開不畫按鈕)另一支照常運作。
+  // append 不動既有節點:官網 Vue 的 diff 只在「既有節點被增刪」時會錯亂,
+  // 尾端加一個自己的節點是安全的(results.js 的雙語小字早就這樣做了)。
+  // 只看 .item-mod 的**直接子節點**:官網重繪換掉節點時 tail 跟著消失,下次再建。
+  const TAIL_CLASS = 'pmz-mod-tail';
+  function ensureTail(mod) {
+    for (const c of mod.childNodes) if (c.nodeType === 1 && c.classList?.contains(TAIL_CLASS)) return c;
+    const tail = document.createElement('span');
+    tail.className = TAIL_CLASS;
+    mod.classList.add('pmz-mod-host'); // 標記「這一列有我們的尾巴」(sidebar.css 不靠它定位)
+    mod.appendChild(tail);
+    return tail;
   }
 
   function localizeMod(mod) {
@@ -215,7 +232,7 @@
         stat.nameMiss++;
       }
     }
-    // 按鈕一律固定在該列右側 —— 不依賴 .lc.r 是否存在(固定詞綴就沒有那一格)
+    // 按鈕一律接在詞綴文字後面 —— 不依賴 .lc.r 是否存在(固定詞綴就沒有那一格)
     if (state.buttons) { addButtons(mod); stat.btn++; }
     mod.dataset[DONE_ATTR] = '1';
   }
@@ -269,6 +286,6 @@
 
   // 供離線驗證腳本呼叫真正的實作(不另外複製一份,避免測試與實機分歧)
   globalThis.__pmzModRowInternals = {
-    SELECTORS, modNameZh, setFirstText, state, stat, modValue,
+    SELECTORS, modNameZh, setFirstText, state, stat, modValue, ensureTail, TAIL_CLASS,
   };
 })();

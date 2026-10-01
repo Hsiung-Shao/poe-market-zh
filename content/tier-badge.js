@@ -24,7 +24,15 @@
 // 判斷「標過了」看這一列有沒有我們的徽章節點,不只看旗標 —— 官網重繪換掉節點時要能再標。
 //
 // ⚠ 非破壞性:結果列是官網 Vue 渲染的,Vue 管的節點(尤其 `.lc.s`)一個都不增刪,
-//   徽章 append 到 `.item-mod` 尾端(官網不認得它,diff 不會踩到;mod-row.js 同一做法)。
+//   徽章放進我們自己 append 到 `.item-mod` 尾端的 `.pmz-mod-tail`(官網不認得它,diff 不會踩到)。
+//
+// ── 位置:緊接在詞綴文字後面,徽章在前、＋/− 在後(2026-10-01 使用者裁定)──
+//   P4   +8 點護甲 [T4 中][＋][−]
+//   S8   1.2 每秒生命回復 [T8 高][＋][−]          蠑螈之
+// 以前徽章 absolute 在右側,會蓋住官方右欄的群組名。現在與 content/mod-row.js 的按鈕
+// 共用一個 `.pmz-mod-tail`:誰先跑誰建(ensureTail 兩支同名同形),徽章一律插在
+// tail 最前面,所以不論哪支先跑、哪支被關掉,順序都是「徽章 → ＋ → −」。
+// 版面規則(行內、左右留白、開關收合)在 content/sidebar.css。
 (() => {
   // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
   const dbg = (...a) => console.info(...a);
@@ -216,6 +224,19 @@
     return field.startsWith(FIELD_PREFIX) ? field.slice(FIELD_PREFIX.length) : null;
   }
 
+  // ── 詞綴列尾巴:徽章 + ＋/− 共用的外框 ──
+  // ⚠ 與 content/mod-row.js 的 ensureTail **同名同形**(class 名一字不差):誰先跑誰建,
+  //   另一支找到就沿用。只看 .item-mod 的直接子節點(官網重繪換掉節點時 tail 跟著消失,下次再建)。
+  const TAIL_CLASS = 'pmz-mod-tail';
+  function ensureTail(mod) {
+    for (const c of mod.childNodes) if (c.nodeType === 1 && c.classList?.contains(TAIL_CLASS)) return c;
+    const tail = document.createElement('span');
+    tail.className = TAIL_CLASS;
+    mod.classList.add('pmz-mod-host'); // 標記「這一列有我們的尾巴」(sidebar.css 不靠它定位)
+    mod.appendChild(tail);
+    return tail;
+  }
+
   // 標一整列;JSON 還沒到就什麼都不做(也不蓋章,等 JSON 到了再來)
   function badgeRow(row) {
     const idx = items.get(row?.dataset?.id);
@@ -233,8 +254,8 @@
       const badge = document.createElement('span');
       badgeData.set(badge, { info, key });
       render(badge);
-      mod.classList.add('pmz-mod-host'); // 成為定位基準(mod-row.js 也加同一個 class)
-      mod.appendChild(badge);
+      const tail = ensureTail(mod);
+      tail.insertBefore(badge, tail.firstChild); // 徽章永遠在 ＋/− 前面(按鈕可能先畫好了)
       stat.badged++;
       n++;
     }
@@ -335,6 +356,6 @@
   // 供離線驗證腳本呼叫真正的實作(不另外複製一份,避免測試與實機分歧)
   globalThis.__pmzTierBadgeInternals = {
     stripMarkup, parseTier, magRange, sumRanges, pickValues, gradeLine, indexItem,
-    items, state, stat, scan, refreshAll, HIGH, LOW, DOMAINS,
+    items, state, stat, scan, refreshAll, HIGH, LOW, DOMAINS, ensureTail, TAIL_CLASS,
   };
 })();
