@@ -582,15 +582,16 @@
   }
 
   // 面板開/關與分頁切換的共用入口(rail 的書籤/設定鈕都走這裡)
-  function showTab(tab) {
+  // save: false = 不寫回 sidebarUi(功能導覽切分頁用:導覽結束會還原,中途關分頁也不該留下導覽切過去的分頁)
+  function showTab(tab, { save = true } = {}) {
     state.tab = tab;
     state.dataMsg = null; // 匯出/匯入結果訊息只顯示到離開分頁為止
     state.historyPickId = null;
     if (state.open) {
-      persistUi();
+      if (save) persistUi();
       render();
     } else {
-      setOpen(true);
+      setOpen(true, { save });
     }
   }
 
@@ -667,6 +668,32 @@
     enableDrag();
     applyShellText();
     updateRail();
+    exposeTourApi();
+  }
+
+  // ── 給功能導覽(content/tour.js)的極小 API ──
+  // tour.js 在同一個 isolated world、排在這支後面(manifest 同一條目),讀得到 globalThis。
+  // 只開放「看狀態 / 切分頁 / 開關 / 還原」與兩個節點,**一律不寫 sidebarUi**(save: false):
+  // 導覽結束時把面板還原成導覽前的樣子,使用者的開合/分頁偏好不被導覽改掉。
+  function exposeTourApi() {
+    const hasTab = (tab) => PANEL_TABS.some(([id]) => id === tab);
+    globalThis.__pmzSidebarApi = {
+      getState: () => ({ open: !!state.open, tab: state.tab, side: state.settings.sidebarSide === 'left' ? 'left' : 'right' }),
+      hasTab,
+      showTab: (tab) => {
+        if (!hasTab(tab)) return false;
+        showTab(tab, { save: false });
+        return true;
+      },
+      setOpen: (open) => setOpen(!!open, { save: false }),
+      restore: (saved) => {
+        state.tab = restoredTab(saved);
+        state.dataMsg = null;
+        state.historyPickId = null;
+        setOpen(saved?.open === true, { save: false });
+      },
+      nodes: () => ({ rail, panel, railBtn: (tab) => railBtns[tab] ?? null }),
+    };
   }
 
   // 外殼(rail / 標頭 / 分頁列)只建一次,字卻要跟著介面語言走:建的時候只記鍵,
@@ -2761,6 +2788,14 @@
 
     // ── 5. 進階 ──
     body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.advanced')));
+    // 功能導覽重播(content/tour.js)。不需要 tourPending:按了就跑,結束後面板還原回這個設定分頁
+    const tourRow = el('div', 'pmz-setting-row');
+    tourRow.appendChild(el('span', null, tr('sb.set.tourLabel')));
+    const replay = el('button', 'pmz-act pmz-tour-replay', tr('sb.set.tourReplay'));
+    replay.type = 'button';
+    replay.addEventListener('click', () => globalThis.__pmzTour?.start({ replay: true }));
+    tourRow.appendChild(replay);
+    body.appendChild(tourRow);
     // 舊網址(只在真的有舊書籤時才出現)
     const legacy = legacyBookmarks();
     if (legacy.length) {

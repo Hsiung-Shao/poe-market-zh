@@ -24,6 +24,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // 舊版(≤ 329.5.2)的遠端字典快取鍵:translate.json 已併入 ggpk.json 的 legacyItems,
   // 這個鍵沒有任何程式會再讀,不清會永久留 400 KB 在 storage 裡
   await chrome.storage.local.remove('dict:translate.json').catch(() => {});
+  // 首次安裝的功能導覽(content/tour.js):**只有全新安裝**排一次,更新一律不寫
+  // (使用者 2026-10-01 裁定:既有使用者升級不自動顯示)。獨立鍵,不放 settings ——
+  // settings 會進備份檔、DEFAULT_SETTINGS 的鍵受升級回歸鎖約束。
+  // ⚠ 必須寫在下面「開語言選擇頁就提早 return」之前,否則全新安裝永遠寫不到。
+  if (details?.reason === 'install') await chrome.storage.local.set({ tourPending: true }).catch(() => {});
   // 介面語言(使用者 2026-09-21 裁定):**不自動判斷,由使用者自己選**。
   //   · 全新安裝:開語言選擇頁,選好之前不建任何資料(chineseDataAllowed 要求 uiLang === 'zh')
   //   · 舊使用者更新:沒有 uiLang → 補成 'zh',行為與以前完全相同

@@ -900,3 +900,88 @@ html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
 }
 html.pmz-hide-tier-picker .pmz-tier-pick,
 html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
+
+/* ── 功能導覽(content/tour.js)──
+   整組 append 到 document.body(不進 .pmz-body:render() 會清空它)。z-index 高於 rail(9999)、
+   面板(9998)與拖曳影子 / 確認框(10000)。聚光框用 box-shadow 挖洞:框內是原本的畫面、框外調暗;
+   找不到錨點時根節點加 .pmz-tour-dim,改由擋點擊的那層整片調暗、卡片置中。 */
+.pmz-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  color: #cfc3a8;
+  font: 14px/1.6 "Segoe UI", "Microsoft JhengHei", sans-serif;
+}
+.pmz-tour [hidden] { display: none !important; }
+.pmz-tour-block {
+  position: absolute;
+  inset: 0;
+  background: transparent; /* 擋住頁面點擊;調暗交給聚光框的陰影 */
+}
+.pmz-tour.pmz-tour-dim .pmz-tour-block { background: rgba(0, 0, 0, 0.6); }
+.pmz-tour-spot {
+  position: fixed;
+  pointer-events: none;
+  border: 2px solid #c9a66b;
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6), 0 0 14px rgba(201, 166, 107, 0.55);
+}
+.pmz-tour-card {
+  position: fixed;
+  box-sizing: border-box;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 14px 16px 12px;
+  background: #211b14;
+  border: 1px solid #c9a66b;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.7);
+  text-align: left;
+}
+.pmz-tour-count { font-size: 12px; color: #a99a7c; letter-spacing: 0.5px; margin-bottom: 4px; }
+.pmz-tour-content { outline: none; }
+.pmz-tour-title { font-size: 16px; font-weight: 600; color: #ffe8b8; margin-bottom: 6px; }
+.pmz-tour-body { font-size: 13px; color: #cfc3a8; }
+.pmz-tour-p { margin: 0 0 6px; }
+.pmz-tour-note {
+  margin: 6px 0 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #c9a66b;
+  background: #14100c;
+  border: 1px dashed #4a3f2f;
+  border-radius: 4px;
+}
+.pmz-tour-keys { font-size: 11px; color: #7a6f5a; margin: 8px 0 10px; }
+.pmz-tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pmz-tour-nav { display: flex; gap: 6px; }
+.pmz-tour-skip,
+.pmz-tour-prev,
+.pmz-tour-next {
+  margin: 0;
+  padding: 5px 12px;
+  font: 13px/1.4 "Segoe UI", "Microsoft JhengHei", sans-serif;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pmz-tour-skip { padding: 5px 4px; background: none; border: 1px solid transparent; color: #a99a7c; }
+.pmz-tour-skip:hover { color: #ffe8b8; }
+.pmz-tour-prev { background: #14100c; border: 1px solid #4a3f2f; color: #cfc3a8; }
+.pmz-tour-prev:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+.pmz-tour-prev:disabled { opacity: 0.4; cursor: default; }
+.pmz-tour-next { background: #c9a66b; border: 1px solid #c9a66b; color: #14100c; font-weight: 600; }
+.pmz-tour-next:hover { background: #ffe8b8; border-color: #ffe8b8; }
+.pmz-tour-skip:focus-visible,
+.pmz-tour-prev:focus-visible,
+.pmz-tour-next:focus-visible { outline: 2px solid #ffe8b8; outline-offset: 2px; }
+/* 聚光框與卡片跟著目標滑動;要求減少動態效果的使用者不動畫(.pmz-tour-still 由 tour.js 依同一個查詢加上) */
+@media (prefers-reduced-motion: no-preference) {
+  .pmz-tour-spot { transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease; }
+  .pmz-tour-card { transition: left 0.18s ease, top 0.18s ease; }
+}
+.pmz-tour.pmz-tour-still .pmz-tour-spot,
+.pmz-tour.pmz-tour-still .pmz-tour-card { transition: none; }
+/* 設定 → 進階 的「重新播放導覽」(content/sidebar.js) */
+.pmz-tour-replay { margin-left: auto; flex: none; }

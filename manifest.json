@@ -125,7 +125,8 @@
         "shared/i18n-sidebar.js",
         "content/bookmarks-model.js",
         "content/pob-import.js",
-        "content/sidebar.js"
+        "content/sidebar.js",
+        "content/tour.js"
       ],
       "css": [
         "content/sidebar.css"
