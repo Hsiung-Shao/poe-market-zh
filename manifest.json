@@ -71,6 +71,7 @@
         "https://pathofexile.tw/trade2/*"
       ],
       "js": [
+        "page/fetch-tap.js",
         "page/mod-filter.js"
       ],
       "world": "MAIN",
@@ -102,6 +103,7 @@
       "js": [
         "shared/i18n.js",
         "content/mod-row.js",
+        "content/tier-badge.js",
         "content/item-text.js",
         "content/copy-item.js",
         "content/results.js"

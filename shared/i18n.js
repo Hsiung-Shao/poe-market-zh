@@ -100,6 +100,44 @@
     },
   });
 
+  // content/tier-badge.js(結果列詞綴階級徽章)。徽章本體只用 tier.q.*,其餘是滑鼠提示
+  register({
+    zh: {
+      'tier.q.high': '高',
+      'tier.q.mid': '中',
+      'tier.q.low': '低',
+      'tier.prefix': '前綴',
+      'tier.suffix': '後綴',
+      'tier.tip.tier': '階級 T{n}({kind},官方標記 {raw})',
+      'tier.tip.tierRaw': '階級 T{n}(官方標記 {raw})',
+      'tier.tip.multi': '這一行是 {count} 條詞綴的合計',
+      'tier.tip.range': '此階級範圍:{range}',
+      'tier.tip.roll': '數值 {value},位於範圍的 {pct}%',
+      'tier.tip.fixed': '此階級數值固定,沒有高低之分',
+      'tier.tip.noRoll': '數值不在此範圍內(可能疊加了其他效果),只標示階級',
+      'tier.tip.meets': '已達目標階級 T{target}',
+      'tier.tip.below': '未達目標階級 T{target}',
+      'tier.tip.order': '數字越小階級越高(T1 最好)',
+    },
+    en: {
+      'tier.q.high': 'HIGH',
+      'tier.q.mid': 'MID',
+      'tier.q.low': 'LOW',
+      'tier.prefix': 'prefix',
+      'tier.suffix': 'suffix',
+      'tier.tip.tier': 'Tier T{n} ({kind}, official {raw})',
+      'tier.tip.tierRaw': 'Tier T{n} (official {raw})',
+      'tier.tip.multi': 'This line is the sum of {count} mods',
+      'tier.tip.range': 'Tier range: {range}',
+      'tier.tip.roll': 'Roll {value}, at {pct}% of the range',
+      'tier.tip.fixed': 'Fixed value for this tier (no roll)',
+      'tier.tip.noRoll': 'Value is outside this range (other effects may add to it); tier only',
+      'tier.tip.meets': 'Meets target tier T{target}',
+      'tier.tip.below': 'Below target tier T{target}',
+      'tier.tip.order': 'Lower number = better tier (T1 is best)',
+    },
+  });
+
   // content/bookmarks-model.js:預設名稱(會存進資料)與匯入錯誤訊息。
   // ⚠ zh 值必須與模型裡 tr() 的中文原文逐字相同(verify-i18n 有鎖)
   register({

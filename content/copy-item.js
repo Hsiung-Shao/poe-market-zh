@@ -11,7 +11,7 @@
 // tooltip 全部與 PoE1 一模一樣,官網哪天自己補上 text 也不會變成兩顆。
 //
 // 物品文字由 content/item-text.js 從結構化 JSON 組(逐字元對過 PoE1 的官方正解,
-// 見 tools/verify-item-text.mjs);JSON 由 page/trade-data.js 的唯讀旁路送過來。
+// 見 tools/verify-item-text.mjs);JSON 由 page/fetch-tap.js 的唯讀旁路送過來。
 //
 // ⚠ 只在 PoE2 動手。PoE1 那顆是官網自己的,能正常運作,碰它只會製造回歸。
 (() => {
@@ -38,7 +38,7 @@
   };
   const READY_CLASS = 'pmz-copy-on'; // 我們自己的旗標,CSS 靠它把鈕放出來
 
-  // 物品 JSON:id → item。官網每抓一頁就送一批過來(page/trade-data.js)。
+  // 物品 JSON:id → item。官網每抓一頁就送一批過來(page/fetch-tap.js)。
   const items = new Map();
 
   window.addEventListener('message', (e) => {

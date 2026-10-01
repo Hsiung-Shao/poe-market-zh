@@ -731,6 +731,7 @@
     // 不翻譯(English 介面 / 關閉翻譯 / 台服站):只掛 ± 篩選按鈕,一個字都不改
     if (!state.translate) {
       globalThis.__pmzModRow?.(root, { translate: false });
+      globalThis.__pmzTierBadge?.(root); // 詞綴階級徽章(content/tier-badge.js)與語言無關,照掛
       return;
     }
     // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
@@ -765,6 +766,8 @@
     // 掛在這裡而不是另開一套 MutationObserver —— 結果列串流時每一列都會經過
     // 這裡,多一套監聽只是多付一份成本。沒載入就自然跳過。
     globalThis.__pmzModRow?.(root);
+    // 詞綴階級徽章(content/tier-badge.js):同一時機、同一個理由不另開監聽
+    globalThis.__pmzTierBadge?.(root);
     reportStats();
   }
 

@@ -735,3 +735,40 @@ body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
    一直亮著的話這一列會比官方多一顆常駐的鈕,看起來不是同一套介面。 */
 .resultset .row button.copy.pmz-copy-on { display: none !important; }
 .resultset .row:hover button.copy.pmz-copy-on { display: block !important; }
+
+/* ── 結果列詞綴的階級徽章(content/tier-badge.js)──────────────────────────
+   位置照 content/mod-row.js 的 ＋/− 按鈕:自己定位在那一列右側,不動官網的排版。
+   .pmz-mod-host 這裡也要有一份 —— mod-row.js 只在畫按鈕時才注入它的樣式,
+   篩選面板沒找到(不畫按鈕)時徽章仍要有定位基準。
+   right:22px 讓開 .lc.r 那 20px 的欄寬;同一列有 ＋/− 按鈕時再往左讓
+   兩顆按鈕的寬度(17×2 + 間距 3 + 留白 4 = 41px → 63px)。
+   使用者關掉按鈕(.pmz-hide-mod-btns)時按鈕不佔位,回到 22px。 */
+.pmz-mod-host { position: relative; }
+.pmz-tier-badge {
+  position: absolute;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: inline-block;
+  padding: 0 4px;
+  height: 15px;
+  font: bold 11px/15px system-ui, sans-serif;
+  white-space: nowrap;
+  border: 1px solid #6b5d45;
+  border-radius: 3px;
+  background: #12100c;
+  color: #cfc3a8;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  cursor: help;
+  opacity: .9;
+}
+.item-mod:hover > .pmz-tier-badge { opacity: 1; }
+.item-mod:has(> .pmz-mod-btns) > .pmz-tier-badge { right: 63px; }
+html.pmz-hide-mod-btns .item-mod > .pmz-tier-badge { right: 22px; }
+html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
+/* 擲值高低只用字色微調,主色留給「達到 / 未達目標」 */
+.pmz-tier-badge.pmz-tier-q-high { color: #ffe8b8; }
+.pmz-tier-badge.pmz-tier-q-low { color: #a99a7c; }
+.pmz-tier-badge.pmz-tier-meets { color: #7fd67f; border-color: #4f8a4f; }
+.pmz-tier-badge.pmz-tier-below { color: #e6b450; border-color: #8a6a2f; }

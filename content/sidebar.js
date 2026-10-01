@@ -75,6 +75,7 @@
     autoInstantBuyout: false, // 開頁自動把狀態設為「即刻購買」
     highlightPseudo: true, // 結果列的偽屬性(合計)詞綴高亮
     modFilterButtons: true, // 結果列每條詞綴右側的 ＋/− 篩選按鈕(content/mod-row.js 讀同一個鍵)
+    tierBadges: true, // 結果列每條詞綴的階級徽章「T2 高」(content/tier-badge.js 讀同一個鍵)
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
     //   —— 共用一個欄位會讓 PoE2 書籤套上 PoE1 的聯盟,開出空搜尋而且完全無聲。
     //   `league` / `lastLeague` **維持是 PoE1 的**(不做 migration,現有設定原封不動),
@@ -2539,6 +2540,8 @@
     settingToggle(body, 'highlightPseudo', tr('sb.set.highlightPseudo'), applyPseudoHighlight); // 即時生效,不必重整
     // 詞綴 ＋/− 按鈕的顯示由 mod-row.js 監聽 storage 的 settings 即時切換,這裡只負責存
     settingToggle(body, 'modFilterButtons', tr('sb.set.modFilterButtons'));
+    // 階級徽章同理:tier-badge.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
+    settingToggle(body, 'tierBadges', tr('sb.set.tierBadges'));
 
     // ── 3. 資料來源 ──
     body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data')));
