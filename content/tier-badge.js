@@ -26,13 +26,13 @@
 // ⚠ 非破壞性:結果列是官網 Vue 渲染的,Vue 管的節點(尤其 `.lc.s`)一個都不增刪,
 //   徽章放進我們自己 append 到 `.item-mod` 尾端的 `.pmz-mod-tail`(官網不認得它,diff 不會踩到)。
 //
-// ── 位置:緊接在詞綴文字後面,徽章在前、＋/− 在後(2026-10-01 使用者裁定)──
-//   P4   +8 點護甲 [T4 中][＋][−]
-//   S8   1.2 每秒生命回復 [T8 高][＋][−]          蠑螈之
-// 以前徽章 absolute 在右側,會蓋住官方右欄的群組名。現在與 content/mod-row.js 的按鈕
-// 共用一個 `.pmz-mod-tail`:誰先跑誰建(ensureTail 兩支同名同形),徽章一律插在
-// tail 最前面,所以不論哪支先跑、哪支被關掉,順序都是「徽章 → ＋ → −」。
-// 版面規則(行內、左右留白、開關收合)在 content/sidebar.css。
+// ── 位置:每條詞綴的最右側,徽章在前、＋/− 在後(2026-10-01 使用者裁定,同日第三版)──
+//   P4          +8 點護甲           蠑螈之 (≥12) [T4 中 ][＋][−]
+//   S8      1.2 每秒生命回復                     [T8 高 ][＋][−]
+// 官方右欄群組名(平時隱藏、滑過才出現)由 CSS 往左挪到尾巴左邊,不再被蓋住;徽章固定寬,
+// 整張卡的徽章 / ＋ / − 各自對齊。與 content/mod-row.js 的按鈕共用一個 `.pmz-mod-tail`:
+// 誰先跑誰建(ensureTail 兩支同名同形),徽章一律插在 tail 最前面,所以不論哪支先跑、
+// 哪支被關掉,順序都是「徽章 → ＋ → −」。版面規則全部在 content/sidebar.css(純 CSS,不量測)。
 (() => {
   // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
   const dbg = (...a) => console.info(...a);
@@ -46,6 +46,7 @@
   const BADGE_CLASS = 'pmz-tier-badge';
   const NO_DATA = 'pmzTierNone'; // → data-pmz-tier-none:JSON 到了但這條沒有階級(不再重算)
   const HIDE_CLASS = 'pmz-hide-tier-badges'; // <html> 上:使用者關掉徽章
+  const EN_CLASS = 'pmz-tier-en'; // <html> 上:徽章用英文(固定寬較寬)
   const TARGET_ATTR = 'data-pmz-tier-targets'; // <html> 上:階段二寫入的目標階級 {statId: n}
   const FIELD_PREFIX = 'stat.';
   // 只標這幾種詞綴領域(stat id 的第一段)
@@ -326,6 +327,8 @@
   function applyLang(uiLang, language) {
     const ui = globalThis.PMZ_I18N?.effectiveUiLang?.(uiLang, language);
     state.lang = ui === 'en' ? 'en' : 'zh';
+    // 徽章固定寬依語言不同(英文「T10 HIGH」較寬),寬度寫在 content/sidebar.css 的 --pmz-badge-w
+    document.documentElement.classList.toggle(EN_CLASS, state.lang === 'en');
   }
   let lastLang = { uiLang: undefined, language: undefined };
   try {

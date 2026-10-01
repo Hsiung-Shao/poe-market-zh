@@ -737,59 +737,103 @@ body.pmz-hl-pseudo .item-mod--pseudo .lc.s { color: #ffe8b8; }
 .resultset .row:hover button.copy.pmz-copy-on { display: block !important; }
 
 /* ── 結果列詞綴的尾巴:階級徽章(content/tier-badge.js)+ ＋/−(content/mod-row.js)──
-   2026-10-01 使用者裁定:兩者**緊接在詞綴文字後面**,徽章在前、＋− 在後:
-     P4   +8 點護甲 [T4 中][＋][−]
-     S8   1.2 每秒生命回復 [T8 高][＋][−]          蠑螈之
-   以前是 absolute 在右側(right:22px / 63px),會蓋住官方右欄的群組名。
+   2026-10-01 使用者裁定(同日第三版):尾巴固定在每條詞綴的**最右側**(官方右欄群組名的位置),
+   官方右欄改往左挪、緊貼在尾巴左邊;徽章固定寬,所以整張卡的徽章、＋、− 各自對齊成一欄:
+     P4          +8 點護甲           蠑螈之 (≥12) [T4 中 ][＋][−]     ← 群組名平時隱藏、滑過才出現
+     S8      1.2 每秒生命回復                     [T8 高 ][＋][−]
+   (第一版緊接文字後面 → 參差不齊、還把置中的文字往左推,使用者:「就是不整齊看得不舒服」。)
 
    官方樣式(web.poecdn.com/dist/css/trade.*.css,公開):`.lc` 是 inline-block、
    `.newItemPopup .lc.l {position:absolute; left:0}`、`.lc.r {position:absolute; right:0}`、
-   `.lc .d {display:none}`(滑過該列才顯示,`.results .item-mod .lc .d` 帶黑底);
-   精簡模式(#trade .results.compact)兩欄都改到右側(.lc.l right:8px、.lc.r 接在它左邊)。
-   (結果卡新版 Vue3 元件自己的 CSS 不在公開樣式表裡、未登入抓不到;上面這些與
-   content/mod-row.js 檔頭記的 2026-08-30 活站量測一致:兩欄是 absolute 的左右側欄。)
-   舊版徽章/按鈕有 opacity .9 → 滑過 1 的變化,已拿掉(理由見下一條)。
-   → 左右兩欄**不佔行內流**,我們的 .pmz-mod-tail 用 inline-flex 走正常流,就自然
-     接在 .lc.s 後面;多行詞綴(<br>)時 inline-block 的基線是最後一行,尾巴跟在最後一行。
+   `.lc .d {display:none}`(滑過該列才顯示,帶黑底)。精簡模式(#trade .results.compact):
+   `.item-mod {position:relative}`、`.lc.l {right:8px; anchor-name:--first; z-index:1}`、
+   `.lc.r {right:anchor(--first left)}`(右欄跟著階級欄)。
 
-   ⚠ 尾巴與其子元素**不得**有 position / z-index / transform / opacity<1 / filter:
-     這些會讓它自成堆疊層、畫在官方 absolute 欄位**上面**。不加的話,官方欄位
-     (含滑過才展開的黑底說明)永遠畫在我們上面 —— 官方的字不會被我們蓋住。
-   ⚠ 滑過時只換顏色,不改任何尺寸(使用者回報過滑過時抖動)。
-   ⚠ 上下負 margin:讓 17px 的按鈕不把行高撐高(整張卡不會因為我們變高)。 */
+   ── 全部只用 CSS,官方節點一個 DOM / style 都不寫 ──
+   ① 尾巴 absolute(right:4px、對齊第一行),不佔行內流 → 文字位置與官方原樣相同。
+   ② 尾巴寬度只有四種狀態(徽章+按鈕 / 只有按鈕 / 只有徽章 / 都沒有),由兩個開關 class 與
+      「這列有沒有徽章/按鈕」決定 → 寫成 .item-mod 上的自訂屬性 --pmz-tw-badge / --pmz-tw-btns
+      (只在我們自己的規則裡用,官方不認得),官方欄位的位移用它算:
+        一般模式:.lc.r 的 right 改成「尾巴寬 + 4px」(滑過時展開的黑底群組名也一起往左)。
+        精簡模式:.lc.l 的 right 改成「尾巴寬 + 10px」,.lc.r 靠 anchor 自己跟著。
+      .lc.l 在一般模式完全不碰。
+   ③ 長詞綴不得被尾巴蓋到、也不得因為我們而壓到左欄 P4:
+        一般模式:只有「置中後右緣會撞到尾巴」的那幾條往左挪剛好的量
+        (translate = min(0, 半個容器寬 − 半個文字寬 − 保留寬),短的詞綴位移 0 → 與官方逐像素相同);
+        挪了還放不下(比容器寬 − 尾巴 − 左欄還寬)才換行。半個容器寬用容器查詢單位 cqw,
+        所以 .item-mod 要設 container-type:inline-size(它本來就是撐滿父層寬的區塊,不影響尺寸)。
+        精簡模式:文字靠左,只設 max-width 讓它在尾巴與挪過的階級欄前面換行。
+   ④ 全部以「尾巴看得見」為條件(開關都關 = 完全回到官方原樣)。滑過不改任何尺寸,不抖動。
+   ⚠ 尾巴本身 position:absolute 但**不設 z-index / opacity / transform**:它不與官方欄位重疊,
+     官方精簡模式的階級欄 z-index:1 仍在最上層。 */
+:root { --pmz-badge-w: 60px; }               /* 「▼ T10 高」57px,中文單一階級全部放得下 */
+html.pmz-tier-en { --pmz-badge-w: 76px; }    /* 「▼ T10 HIGH」75px(tier-badge.js 依介面語言切換) */
 .pmz-mod-tail {
-  display: inline-flex;
+  position: absolute;
+  right: 4px;
+  top: 0;
+  height: 1lh;                               /* 一行高(繼承 .item-mod 的行高)→ 對齊第一行 */
+  display: flex;
   align-items: center;
   gap: 3px;
-  vertical-align: middle;
-  margin: -3px 0 -3px 4px;
   white-space: nowrap;
-  text-align: left;
   text-indent: 0;
 }
-/* 開關收合:裡面沒有看得見的東西時整個不佔位(連 4px 留白也收掉) */
+/* 開關收合:裡面沒有看得見的東西時整個不畫(兩個都關 = 完全回到官方原樣) */
 .pmz-mod-tail:empty,
 html.pmz-hide-mod-btns .pmz-mod-tail:not(:has(> .pmz-tier-badge)),
 html.pmz-hide-tier-badges .pmz-mod-tail:not(:has(> .pmz-mod-btns)),
 html.pmz-hide-mod-btns.pmz-hide-tier-badges .pmz-mod-tail { display: none; }
-/* 左右留白:尾巴把「文字 + 尾巴」這一組加寬,置中後兩端會往外推,長詞綴時會壓到
-   官方的左欄(P4/S8,常駐)或右欄。在有尾巴的列兩側各讓 32px(≥ 左欄 P10/S10 的寬度,離線實測 P4 欄寬 29px),
-   放不下時尾巴自己換到下一行(仍置中、緊鄰文字下方),不會鑽到欄位底下。
-   只在尾巴看得見時才讓位,關掉兩個開關就完全回到官方原樣。
-   用 :where() 把權重壓到 0 —— 任何官方或本檔其他規則(例如偽屬性高亮的 padding-left)都優先。 */
-:where(html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns),
-       html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge)) {
-  padding-left: 32px;
-  padding-right: 32px;
+/* 尾巴寬度(四種狀態)。:where 權重 0;自訂屬性官方不會用到。
+   ＋/− 各 17px + 間距 3px = 37px;徽章 = --pmz-badge-w + 與按鈕的間距 3px。 */
+:where(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge)) {
+  --pmz-tw-badge: calc(var(--pmz-badge-w) + 3px);
 }
-/* 精簡模式:文字靠左、兩欄都在右側 → 左邊不讓,右邊讓開兩欄(P4 + 收合的群組名欄) */
-:where(#trade .results.compact) :where(html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns),
-       html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge)) {
-  padding-left: 0;
-  padding-right: 44px;
+:where(html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)) {
+  --pmz-tw-btns: 37px;
 }
+/* 尾巴看得見的列:建立定位基準(一般模式官方 .item-mod 是 static;兩個官方欄位的左右邊與它相同,
+   top 都是 auto,所以改成 relative 它們不會動 —— 離線量測逐像素相同) */
+:where(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+       html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)) {
+  --pmz-tw: calc(var(--pmz-tw-badge, 0px) + var(--pmz-tw-btns, 0px));
+  position: relative;
+}
+/* 一般模式:右欄群組名挪到尾巴左邊(!important:官方各種卡片的選擇器權重不一,最高到 0,6,0) */
+:is(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+    html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)):not(#trade .results.compact .item-mod) > .lc.r {
+  right: calc(var(--pmz-tw) + 4px) !important;
+}
+/* 一般模式:長詞綴往左讓開尾巴(見上方 ③)。--pmz-tr = 文字右緣不得超過的、離內容區右緣的距離 */
+:where(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+       html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)):not(#trade .results.compact .item-mod) {
+  container-type: inline-size;
+  --pmz-tr: calc(var(--pmz-tw) + 6px);       /* 尾巴 4px 邊距 + 2px;.lc 本身左右各 6px 內距再補足間距 */
+}
+:where(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+       html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)):not(#trade .results.compact .item-mod) > .lc.s {
+  max-width: calc(100cqw - var(--pmz-tr) - 34px);              /* 34px ≈ 左欄 P10 的寬:挪到底也不壓到它 */
+  translate: min(0px, calc(50cqw - 50% - var(--pmz-tr))) 0;
+}
+/* 精簡模式:階級欄(右欄靠 anchor 跟著)挪到尾巴左邊;文字靠左,只限寬 */
+#trade .results.compact :is(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+    html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)) > .lc.l {
+  right: calc(var(--pmz-tw) + 10px) !important;
+}
+:where(#trade .results.compact) :where(html:not(.pmz-hide-tier-badges) .item-mod:has(> .pmz-mod-tail > .pmz-tier-badge),
+       html:not(.pmz-hide-mod-btns) .item-mod:has(> .pmz-mod-tail > .pmz-mod-btns)) > .lc.s {
+  max-width: calc(100% - var(--pmz-tw) - 44px);                /* 尾巴 + 間距 + 挪過的 P10 欄 */
+}
+/* 徽章固定寬(同一語言下每條一樣寬 → 左右緣都對齊),字置中;放不下的(多條合計又帶 ✓▼)
+   以 … 截斷,完整內容在滑過提示裡 */
 .pmz-tier-badge {
   display: inline-block;
+  box-sizing: border-box;
+  width: var(--pmz-badge-w);
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
   padding: 0 4px;
   height: 15px;
   font: bold 11px/15px system-ui, sans-serif;

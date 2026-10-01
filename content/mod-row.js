@@ -14,14 +14,14 @@
 //   有同一條教訓)。這裡只改既有文字節點的**內容**,一個節點都不增刪;按鈕放進
 //   我們自己 append 到 .item-mod 尾端的 `.pmz-mod-tail`(官網不認得它,diff 不會踩到)。
 //
-// ── 位置:緊接在詞綴文字後面(2026-10-01 使用者裁定)──
-//   P4   +8 點護甲 [T4 中][＋][−]
-//   S8   1.2 每秒生命回復 [T8 高][＋][−]          蠑螈之
-// 以前按鈕 absolute 在右側(right:22px),會蓋住官方右欄的群組名(「蠑螈之」),
-// 很多人要看那一欄。現在徽章與按鈕共用一個 `.pmz-mod-tail`(徽章在前、＋− 在後),
-// 不定位、走正常行內流:官方的 .lc.l / .lc.r 是 absolute(不佔流),所以尾巴
-// 自然接在 .lc.s 後面。誰先跑誰建 tail(ensureTail),另一支找到就沿用 —— 見
-// content/tier-badge.js 的同名函式。版面規則(含左右留白、開關收合)在 content/sidebar.css。
+// ── 位置:每條詞綴的最右側(2026-10-01 使用者裁定,同日第三版)──
+//   P4          +8 點護甲           蠑螈之 (≥12) [T4 中 ][＋][−]
+//   S8      1.2 每秒生命回復                     [T8 高 ][＋][−]
+// 以前按鈕 absolute 在右側(right:22px)會蓋住官方右欄的群組名(「蠑螈之」),很多人要看那一欄;
+// 第一版改成緊接文字後面又參差不齊、還把置中的文字往左推。現在徽章與按鈕共用一個
+// `.pmz-mod-tail`(徽章在前、＋− 在後),absolute 在最右側,官方右欄由 CSS 往左挪到尾巴左邊。
+// 誰先跑誰建 tail(ensureTail),另一支找到就沿用 —— 見 content/tier-badge.js 的同名函式。
+// 版面規則全部在 content/sidebar.css(純 CSS,不量測、不寫官方節點)。
 //
 // 掛載點是 results.js 的 processContainer(見該檔末尾的 __pmzModRow 呼叫)——
 // 不另開一套 MutationObserver,結果列串流時每一列都會經過那裡,多一套只是多一份成本。
@@ -92,14 +92,13 @@
     const s = document.createElement('style');
     s.id = STYLE_ID;
     // 刻意做小 —— 結果卡本來就很擠,大顆亮色按鈕會蓋過真正要看的詞綴文字。
-    // ── 按鈕接在詞綴文字後面(行內),不再自己定位 ──
+    // ── 按鈕放在 .pmz-mod-tail 裡(每條詞綴最右側),自己不定位 ──
     // 官網把 .lc.l(階級/roll)與 .lc.r(群組名)做成 absolute 的左右側欄;
-    // **固定詞綴(item-mod--implicit)根本沒有 .lc.r**。接在文字後面兩種詞綴都一樣,
-    // 也不會再蓋住右欄。
-    // ⚠ 不加 opacity / transform / z-index:這些會讓按鈕自成堆疊層,畫在官方
-    //   absolute 欄位**上面**。不加的話官方欄位(滑過時展開、帶黑底)永遠畫在我們上面。
+    // **固定詞綴(item-mod--implicit)根本沒有 .lc.r**。尾巴的位置兩種詞綴都一樣。
+    // ⚠ 不加 opacity / transform / z-index:尾巴已經把官方右欄挪開、不與官方欄位重疊,
+    //   不需要也不該自成堆疊層(官方精簡模式的階級欄 z-index:1 要維持在最上層)。
     // ⚠ 滑過時只換顏色,不改尺寸/邊框寬度 —— 使用者回報過滑過時整列抖動。
-    // 外框 .pmz-mod-tail 的版面(行內、留白、開關收合)寫在 content/sidebar.css。
+    // 外框 .pmz-mod-tail 的版面(最右側定位、官方右欄位移、開關收合)寫在 content/sidebar.css。
     s.textContent = `
 .pmz-mod-btns{display:inline-flex;gap:3px;vertical-align:middle}
 .pmz-hide-mod-btns .pmz-mod-btns{display:none}
