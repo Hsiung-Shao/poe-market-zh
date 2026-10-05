@@ -2,7 +2,7 @@
 //
 // 傳奇與寶石的結果列,在官方 refresh / copy / searchBy 那一欄(`.left`)末端加兩顆小鈕:
 //   W  → PoE Wiki(PoE1 poewiki.net / PoE2 poe2wiki.net)
-//   Db → poedb(PoE1 poedb.tw/us / PoE2 poe2db.tw/us)
+//   Db → poedb(PoE1 poedb.tw / PoE2 poe2db.tw;語系跟著使用者選的語言:中文 → /tw/、英文 → /us/)
 // 以物品英文名組網址、新分頁開啟。**不 fetch、不加任何權限**(只是 window.open)。
 //
 // ── 使用者裁定(2026-10-05)──
@@ -50,6 +50,7 @@
   const WRAP_CLASS = 'pmz-wiki-links';
   const ON_CLASS = 'pmz-result-links-on'; // <html> 上:設定開著(CSS 靠它決定滑過時顯示)
   const KIND_BY_FRAME = { 3: 'unique', 4: 'gem' };
+  let poedbLang = 'us'; // 'tw' | 'us',由下方 applyLang() 依使用者語言設定更新
 
   // ── 網址(純函式)──
   // wiki:空白 → 底線,其餘照 encodeURIComponent;撇號 encodeURIComponent 不編,另外補 %27
@@ -59,8 +60,9 @@
     const base = poe2 ? 'https://www.poe2wiki.net/wiki/' : 'https://www.poewiki.net/wiki/';
     return base + encodeURIComponent(name.replace(/\s+/g, '_')).replace(/'/g, '%27');
   }
-  function poedbUrl(name, poe2 = IS_POE2) {
-    const base = poe2 ? 'https://poe2db.tw/us/' : 'https://poedb.tw/us/';
+  //   lang:'tw' = 中文頁、'us' = 英文頁;兩邊的 slug 都是英文名,只差路徑上的語系段。
+  function poedbUrl(name, poe2 = IS_POE2, lang = poedbLang) {
+    const base = `https://${poe2 ? 'poe2db' : 'poedb'}.tw/${lang === 'tw' ? 'tw' : 'us'}/`;
     return base + encodeURIComponent(name.replace(/['’]/g, '').replace(/\s+/g, '_'));
   }
 
@@ -174,10 +176,27 @@
   function applySetting(settings) {
     document.documentElement.classList.toggle(ON_CLASS, settings?.resultLinks === true);
   }
+  // poedb 語系跟著使用者選的語言走(使用者 2026-10-05 要求):判定與 results.js 決定要不要
+  // 翻交易站同一條 —— 介面中文且 language = zh_tw → /tw/,其餘(選英文)→ /us/。
+  const lang = { uiLang: undefined, language: undefined };
+  function applyLang() {
+    const ui = globalThis.PMZ_I18N?.effectiveUiLang(lang.uiLang, lang.language)
+      ?? (lang.uiLang === 'zh' || lang.uiLang === 'en' ? lang.uiLang : lang.language !== undefined ? 'zh' : undefined);
+    poedbLang = ui === 'zh' && lang.language === 'zh_tw' ? 'tw' : 'us';
+  }
   try {
-    chrome.storage.local.get(['settings']).then((got) => applySetting(got?.settings)).catch(() => {});
+    chrome.storage.local.get(['settings', 'uiLang', 'language']).then((got) => {
+      applySetting(got?.settings);
+      lang.uiLang = got?.uiLang; lang.language = got?.language; applyLang();
+    }).catch(() => {});
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.settings) applySetting(changes.settings.newValue);
+      if (area !== 'local') return;
+      if (changes.settings) applySetting(changes.settings.newValue);
+      if (changes.uiLang || changes.language) {
+        if (changes.uiLang) lang.uiLang = changes.uiLang.newValue;
+        if (changes.language) lang.language = changes.language.newValue;
+        applyLang();
+      }
     });
   } catch (_) { /* 沒有 chrome.storage(離線驗證殼):維持關閉 */ }
 

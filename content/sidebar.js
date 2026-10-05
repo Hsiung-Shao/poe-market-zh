@@ -1874,6 +1874,9 @@
   const BULK_SEL = {
     row: '.resultset .row[data-id]',
     buy: 'button.direct-btn', // 結果列「直接購買 / 傳送到藏身處」那顆官方鈕
+    // 價格那格的通貨圖示(2026-10-05 實站:`[data-field=price] > .currency-text.currency-image > img[alt=<通貨 id>]`
+    // + 同層 span 是通貨名稱)。大量賣家只列畫面上還在的列,所以每一筆都取得到;取不到就退回文字。
+    currencyImg: '[data-field="price"] .currency-text img',
   };
   const BULK_MAX = 600; // 載入很多頁時的上限:超過就只留畫面上還在的列
 
@@ -1935,8 +1938,7 @@
     const btn = bulkRow(id)?.querySelector(BULK_SEL.buy);
     if (btn && !btn.disabled) {
       state.bulkMsg = null;
-      btn.click(); // 與使用者自己按那顆鈕完全相同(後續由官網處理)
-      locateRow(id);
+      btn.click(); // 與使用者自己按那顆鈕完全相同(後續由官網處理);不捲動畫面(使用者 2026-10-05 要求)
     } else {
       state.bulkMsg = { seller, text: tr('sb.bulk.noBtn') };
     }
@@ -1944,6 +1946,24 @@
   }
 
   const fmtPrice = (p) => (p ? `${p.amount} × ${p.currency}` : '—');
+
+  // 價格:數量 × 通貨圖示(圖從該結果列官方價格格複製網址,不另外請求資料);取不到圖退回文字
+  function bulkPrice(x) {
+    const box = el('span', 'pmz-bulk-price');
+    const src = x.price && bulkRow(x.id)?.querySelector(BULK_SEL.currencyImg)?.src; // .src = 已解析的絕對網址
+    if (!src) {
+      box.textContent = fmtPrice(x.price);
+      return box;
+    }
+    box.appendChild(document.createTextNode(`${x.price.amount} ×`));
+    const img = document.createElement('img');
+    img.className = 'pmz-bulk-cur';
+    img.src = iconSrc(src);
+    img.alt = x.price.currency;
+    img.title = x.price.currency;
+    box.appendChild(img);
+    return box;
+  }
 
   function renderBulk(body) {
     const ids = bulkDomIds();
@@ -1994,11 +2014,14 @@
           const nm = el('span', 'pmz-item-name', label);
           nm.title = label;
           top.appendChild(nm);
-          top.appendChild(el('span', 'pmz-bulk-price', fmtPrice(x.price)));
+          top.appendChild(bulkPrice(x));
           item.appendChild(top);
           const acts = el('div', 'pmz-item-acts');
           acts.appendChild(iconBtn('locate', tr('sb.bulk.find'), () => { locateRow(x.id); }));
-          acts.appendChild(iconBtn('bag', tr('sb.bulk.buy'), () => buyRow(x.id, g.seller)));
+          // 購買用文字鈕(使用者 2026-10-05:只有袋子圖示看不出是購買),定位維持圖示
+          const buy = actionBtn(tr('sb.bulk.buyLabel'), tr('sb.bulk.buy'), () => buyRow(x.id, g.seller));
+          buy.classList.add('pmz-bulk-buy');
+          acts.appendChild(buy);
           item.appendChild(acts);
           list.appendChild(item);
         }

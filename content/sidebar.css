@@ -1013,7 +1013,11 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
 .pmz-bulk-count { flex: none; font-size: 12px; color: #a99a7c; }
 .pmz-bulk-list { padding: 2px 0 0 12px; }
 .pmz-bulk-item .pmz-item-name { font-size: 13px; }
-.pmz-bulk-price { flex: none; font-size: 12px; color: #c9a66b; white-space: nowrap; }
+.pmz-bulk-price { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #c9a66b; white-space: nowrap; }
+.pmz-bulk-cur { width: 20px; height: 20px; object-fit: contain; }
+/* 購買:文字鈕、暗金強調,與定位圖示鈕區隔 */
+.pmz-item-acts .pmz-act.pmz-bulk-buy { color: #debe84; border-color: #8a6d3b; font-weight: 600; padding: 1px 10px; }
+.pmz-item-acts .pmz-act.pmz-bulk-buy:hover { color: #ffe8b8; border-color: #debe84; background: #2a241c; }
 .pmz-bulk-msg { margin: 4px 0 0 12px; font-size: 12px; color: #e0a8a0; }
 
 /* 「定位」:交易站結果列外框暗金高亮,2 秒內漸隱(sidebar.js locateRow 加上 / 移除) */
@@ -1028,8 +1032,14 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
 
 /* ── 結果列 poedb / wiki 快捷鈕(content/result-links.js)──
    只掛傳奇與寶石、只掛國際服;設定 resultLinks 開啟時 <html> 有 pmz-result-links-on。
-   顯示時機跟官方 refresh / searchBy 鈕一致:平時藏、滑過那一列才出現。 */
-.resultset .row .pmz-wiki-links { display: none; gap: 3px; margin-top: 4px; justify-content: center; }
+   顯示時機跟官方 refresh / searchBy 鈕一致:平時藏、滑過那一列才出現。
+   位置接在官方左下角那排鈕之後:官方 button.copy / button.searchBy 是 position:absolute、
+   bottom 8px、left 8px / 46px、各 30×30(以結果列為定位基準,.left 本身是 static),
+   所以用同一個基準排在 searchBy 右邊(46 + 30 + 8 = 84px)、同高置中。 */
+.resultset .row .pmz-wiki-links {
+  display: none; position: absolute; left: 84px; bottom: 8px; height: 30px;
+  gap: 3px; align-items: center;
+}
 html.pmz-result-links-on .resultset .row:hover .pmz-wiki-links { display: inline-flex; }
 .pmz-link {
   min-width: 24px;
