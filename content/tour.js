@@ -64,6 +64,7 @@
     badge: '.pmz-tier-badge', // content/tier-badge.js
     pseudo: '.item-mod--pseudo',
     copy: 'button.copy.pmz-copy-on', // content/copy-item.js 放出來的 PoE2 複製鈕
+    links: '.pmz-wiki-links', // content/result-links.js 的 poedb / wiki 快捷鈕(平時藏、滑過那一列才出現)
     replay: '.pmz-tour-replay', // sidebar.js 設定 → 進階 的重播鈕
   };
   // sidebar.js 設定列 / 區塊標題上的穩定屬性(不靠文字、不靠 class 順序)
@@ -182,6 +183,17 @@
     return fallback ?? firstVisible(SEL.tail);
   }
 
+  // 快捷鈕:第一個看得見的;都藏著(沒滑過)就框第一個所在的那一欄
+  function linksAnchor() {
+    const shown = firstVisible(SEL.links);
+    if (shown) return shown;
+    for (const n of document.querySelectorAll(SEL.links)) {
+      const cell = n.parentElement;
+      if (cell && visibleRect(cell)) return cell;
+    }
+    return null;
+  }
+
   // ── 側邊欄裡的錨點 ──
   const panelQuery = (env, sel) => env.nodes?.panel?.querySelector(sel) ?? null;
   const settingRows = (env) => MOD_SETTING_KEYS.map((k) => panelQuery(env, `[${SETTING_ATTR}="${k}"]`)).filter(Boolean);
@@ -223,6 +235,8 @@
     { id: 'history', ...sidebarTab('history') },
     // 物價只有 PoE1 國際服(bg/ninja.js 打 poe.ninja/poe1;台服拔掉)
     { id: 'prices', ...sidebarTab('prices'), when: (c) => c.sidebar && c.game === 'poe1' && c.site === 'intl' },
+    // 大量賣家:預設關,設定開了才有這個分頁(只有明確 true 才算開,與 sidebar.js tabEnabled 相同)
+    { id: 'bulk', ...sidebarTab('bulk'), when: (c) => c.sidebar && c.settings.bulkSellers === true, miss: 'sb.tour.bulk.miss' },
     {
       id: 'settings',
       ...sidebarTab('settings'),
@@ -299,6 +313,9 @@
     { id: 'pseudo', when: (c) => on(c.settings.highlightPseudo), page: true, anchor: () => firstVisible(SEL.pseudo), miss: 'sb.tour.pseudo.miss' },
     // 複製物品只有 PoE2 國際服(content/copy-item.js:台服物品 JSON 是中文,先不做)
     { id: 'copy', when: (c) => c.game === 'poe2' && c.site === 'intl', page: true, anchor: () => firstVisible(SEL.copy), miss: 'sb.tour.copy.miss' },
+    // poedb / wiki 快捷鈕:只掛國際服、預設關(content/result-links.js)。鈕平時藏著(滑過那一列才出現),
+    // 看得見就框鈕,否則框它所在的那一欄(官方 refresh / searchBy 那欄)
+    { id: 'links', when: (c) => c.site === 'intl' && c.settings.resultLinks === true, page: true, anchor: () => linksAnchor(), miss: 'sb.tour.links.miss' },
     // ninja / pobb.in 的開關只在中文介面的 popup 出現(popup #zhOnlySites);交易站上沒有東西可框
     { id: 'sites', when: (c) => c.uiLang === 'zh' },
     {
