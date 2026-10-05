@@ -79,6 +79,10 @@
     tierPicker: true, // 篩選列每條詞綴 MIN 左側的階級選單「≈T▾」(content/tier-picker.js、bg/tiers.js 讀同一個鍵)
     // 階級選單的填值方式:'inclusive' = 該階級下限;'strict' = 排除較低階級擲得到的值(tierfill 的兩種模式)
     tierPickerMode: 'inclusive',
+    // 「大量賣家」分頁(預設關,使用者 2026-10-05 裁定):同一賣家有 ≥2 筆上架時分組列出;關掉時 rail 鈕與分頁都藏起來
+    bulkSellers: false,
+    // 結果列 poedb / wiki 快捷鈕(預設關;只掛傳奇與寶石、只掛國際服;content/result-links.js 讀同一個鍵)
+    resultLinks: false,
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
     //   —— 共用一個欄位會讓 PoE2 書籤套上 PoE1 的聯盟,開出空搜尋而且完全無聲。
     //   `league` / `lastLeague` **維持是 PoE1 的**(不做 migration,現有設定原封不動),
@@ -128,6 +132,10 @@
     gameTab: POE_VER,
     // 匯入時先解析檔案再問要匯入什麼(檔案裡有什麼,開之前根本不知道)
     pendingImport: null, // { folders, report, isBackup, settings, history, exportedAt, counts, name }
+    // 大量賣家:目前頁面已載入結果的 id → { item, listing }(page/fetch-tap.js 送來,只放記憶體)
+    bulk: new Map(),
+    bulkCollapsed: new Set(), // 收起來的賣家(只放記憶體,換搜尋就清)
+    bulkMsg: null, // { seller, text }:「購買」找不到官網那顆鈕時,在那一組底下顯示一行
   };
 
   // 介面語言:改 PMZ_I18N 的語言 + 重填外殼文字(rail / 標頭 / 分頁列)。
@@ -365,7 +373,8 @@
     rememberLeague();
     adoptSearchId(); // ?q= 換成正式編號的那一刻,把編號寫回書籤
     scheduleHistory();
-    if (state.open && (state.tab === 'bookmarks' || state.tab === 'history')) render();
+    resetBulk();
+    if (state.open && (state.tab === 'bookmarks' || state.tab === 'history' || state.tab === 'bulk')) render();
   }
   // navigation API 有就用它,沒有才退回輪詢。
   // ⚠ 以前是兩條無條件並行 —— 現代 Chrome 兩條都在跑,每秒醒來一次純粹是白費。
@@ -441,13 +450,13 @@
   //         多出 收合✕/歷史/物價,分頁鈕依 state.tab 高亮,不可拖曳。
   // 按鈕一次建好,這裡只切 class 與 hidden(⚠ .pmz-rail-btn 是 display:flex,
   // CSS 要有 [hidden]{display:none} 才真的藏得住)。
-  const RAIL_OPEN_ONLY = ['close', 'history', 'prices'];
+  const RAIL_OPEN_ONLY = ['close', 'history', 'prices', 'bulk'];
   function updateRail() {
     const open = !!state.open;
     rail.classList.toggle('pmz-rail-full', open);
     rail.title = open ? '' : tr('sb.rail.dragHint');
-    for (const k of RAIL_OPEN_ONLY) if (railBtns[k]) railBtns[k].hidden = !open;
-    for (const tab of ['bookmarks', 'history', 'prices', 'settings']) {
+    for (const k of RAIL_OPEN_ONLY) if (railBtns[k]) railBtns[k].hidden = !open || !tabEnabled(k);
+    for (const tab of ['bookmarks', 'history', 'prices', 'bulk', 'settings']) {
       railBtns[tab]?.classList.toggle('pmz-rail-active', open && state.tab === tab);
     }
     applyTop();
@@ -461,8 +470,10 @@
   const UI_KEY = 'sidebarUi';
   // 第二欄是字串表的鍵(不是字),render 時才取字 —— 語言在載入後才設定
   const PANEL_TABS = !HAS_PRICES
-    ? [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['settings', 'sb.tab.settingsIcon']]
-    : [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['prices', 'sb.tab.prices'], ['settings', 'sb.tab.settingsIcon']];
+    ? [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['bulk', 'sb.tab.bulk'], ['settings', 'sb.tab.settingsIcon']]
+    : [['bookmarks', 'sb.tab.bookmarks'], ['history', 'sb.tab.history'], ['prices', 'sb.tab.prices'], ['bulk', 'sb.tab.bulk'], ['settings', 'sb.tab.settingsIcon']];
+  // 由設定開關決定顯示與否的分頁(關掉 = rail 鈕與分頁都藏起來,停在上面的退回書籤)
+  const tabEnabled = (tab) => tab !== 'bulk' || state.settings.bulkSellers === true;
 
   function persistUi() {
     chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab } });
@@ -470,7 +481,8 @@
 
   // 存下來的狀態可能來自另一款遊戲的頁面(PoE1 的「物價」在 PoE2 沒有)或舊資料,不合法就退回書籤
   function restoredTab(saved) {
-    return PANEL_TABS.some(([id]) => id === saved?.tab) ? saved.tab : 'bookmarks';
+    const tab = PANEL_TABS.some(([id]) => id === saved?.tab) ? saved.tab : 'bookmarks';
+    return tabEnabled(tab) ? tab : 'bookmarks';
   }
 
   function setOpen(open, { save = true } = {}) {
@@ -540,6 +552,8 @@
     ],
     // 書籤旗標
     bookmark: ['M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'],
+    // 大量賣家:三層疊起的紙(菱形頂層 + 兩道底層邊)
+    layers: ['M12 3l9 4.5-9 4.5-9-4.5z', 'M3 12l9 4.5 9-4.5', 'M3 16.5l9 4.5 9-4.5'],
     // 八齒齒輪 + 中心圓
     gear: [
       'M19.45 10.49L21.92 10.7L21.92 13.3L19.45 13.51L18.33 16.2L19.93 18.09L18.09 19.93L16.2 18.33L13.51 19.45L13.3 21.92L10.7 21.92L10.49 19.45L7.8 18.33L5.91 19.93L4.07 18.09L5.67 16.2L4.55 13.51L2.08 13.3L2.08 10.7L4.55 10.49L5.67 7.8L4.07 5.91L5.91 4.07L7.8 5.67L10.49 4.55L10.7 2.08L13.3 2.08L13.51 4.55L16.2 5.67L18.09 4.07L19.93 5.91L18.33 7.8z',
@@ -608,6 +622,8 @@
     railBtns.history = railBtn('history', 'sb.tab.history', () => showTab('history'));
     // ⚠ 物價只有 PoE1(bg/ninja.js 打的是 poe.ninja/poe1),與面板內的分頁列同一條判斷
     if (HAS_PRICES) railBtns.prices = railBtn('prices', 'sb.tab.prices', () => showTab('prices'));
+    // 大量賣家:設定關掉時由 updateRail 藏起來(tabEnabled)
+    railBtns.bulk = railBtn('layers', 'sb.tab.bulk', () => showTab('bulk'));
     // 設定:開到設定;已在設定 → 收合
     railBtns.settings = railBtn('gear', 'sb.tab.settings', () => {
       if (state.open && state.tab === 'settings') setOpen(false);
@@ -615,6 +631,7 @@
     });
     rail.append(railBtns.close, railBtns.bookmarks, railBtns.history);
     if (railBtns.prices) rail.appendChild(railBtns.prices);
+    rail.appendChild(railBtns.bulk);
     // 分隔線只在收合時看得到;開啟(全高)時改由 spacer 把贊助/Discord 推到底部
     rail.append(railBtns.settings, el('div', 'pmz-rail-sep'), el('div', 'pmz-rail-spacer'));
     for (const [icon, titleKey, href] of [
@@ -676,7 +693,7 @@
   // 只開放「看狀態 / 切分頁 / 開關 / 還原」與兩個節點,**一律不寫 sidebarUi**(save: false):
   // 導覽結束時把面板還原成導覽前的樣子,使用者的開合/分頁偏好不被導覽改掉。
   function exposeTourApi() {
-    const hasTab = (tab) => PANEL_TABS.some(([id]) => id === tab);
+    const hasTab = (tab) => PANEL_TABS.some(([id]) => id === tab) && tabEnabled(tab);
     globalThis.__pmzSidebarApi = {
       getState: () => ({ open: !!state.open, tab: state.tab, side: state.settings.sidebarSide === 'left' ? 'left' : 'right' }),
       hasTab,
@@ -754,6 +771,12 @@
     replace: 'M14 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2M8 6H5a2 2 0 0 0-2 2v3M4 14a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2zM16 18h3a2 2 0 0 0 2-2v-3M7 3 4 6l3 3M17 21l3-3-3-3',
     star: 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z',
     x: 'M18 6 6 18M6 6l12 12',
+    // 重新整理:一道開口的圓弧 + 箭頭
+    refresh: 'M20 12a8 8 0 1 1-2.34-5.66L20 8.5M20 3.5v5h-5',
+    // 定位:準星(圓 + 四道刻度)
+    locate: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 2v4M12 18v4M2 12h4M18 12h4',
+    // 購買:購物袋
+    bag: 'M6 7h12l1 14H5zM9 7V5a3 3 0 0 1 6 0v2',
     // 拖曳把手:兩排三點(點的粗細由 .pmz-grip 的 stroke-width 決定)
     grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
   };
@@ -1844,6 +1867,148 @@
     return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
   }
 
+  // ── 大量賣家 ──
+  // 目前搜尋結果裡同一賣家有 ≥2 筆上架的分組(content/bulk-model.js)。只看頁面已載入的結果:
+  // 物品 JSON 由 page/fetch-tap.js 旁路送來,不打任何 API、不翻後續頁(使用者 2026-10-05 裁定)。
+  // ── 官網 DOM 耦合點 ──
+  const BULK_SEL = {
+    row: '.resultset .row[data-id]',
+    buy: 'button.direct-btn', // 結果列「直接購買 / 傳送到藏身處」那顆官方鈕
+  };
+  const BULK_MAX = 600; // 載入很多頁時的上限:超過就只留畫面上還在的列
+
+  const bulkDomIds = () => new Set([...document.querySelectorAll(BULK_SEL.row)].map((r) => r.dataset.id));
+  // 只留畫面上還在的列(換搜尋、超量時用)
+  function pruneBulk() {
+    const ids = bulkDomIds();
+    for (const id of [...state.bulk.keys()]) if (!ids.has(id)) state.bulk.delete(id);
+  }
+  // 換搜尋:清掉摺疊狀態,資料只留畫面上已經是新結果的列。
+  // ⚠ 不直接 clear():官網換網址與送出新一批結果的先後不保證,先到的新結果不能被清掉;
+  //   舊結果的列此時多半已從畫面移除,留下的也會在 render 時被 DOM 過濾掉。
+  function resetBulk() {
+    state.bulkCollapsed.clear();
+    state.bulkMsg = null;
+    pruneBulk();
+  }
+
+  function onBulkItems(e) {
+    // 只收自己這個視窗、自己這個來源的訊息(頁面上的 iframe / 第三方腳本都能 postMessage)
+    if (e.source !== window || e.origin !== location.origin) return;
+    const d = e.data;
+    if (!d || d.__pmz !== 'items' || !Array.isArray(d.items)) return;
+    for (const r of d.items) {
+      if (!r?.id || !r.item) continue;
+      state.bulk.delete(r.id); // 重新插到最後(與 fetch-tap 同一個「最近看過留最久」)
+      state.bulk.set(r.id, { item: r.item, listing: r.listing ?? null });
+    }
+    if (state.bulk.size > BULK_MAX) pruneBulk();
+    // ⚠ 資料到了才 render(同步),render 裡不可再非同步 append(CLAUDE.md「render 是清空再重畫」)
+    if (state.open && state.tab === 'bulk') render();
+  }
+
+  // 依 id 找結果列(id 是官方的 64 位十六進位,仍走 CSS.escape 以防萬一)
+  function bulkRow(id) {
+    try {
+      const esc = globalThis.CSS?.escape ? CSS.escape(id) : String(id).replace(/["\\]/g, '\\$&');
+      return document.querySelector(`.resultset .row[data-id="${esc}"]`);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  const HIGHLIGHT_CLASS = 'pmz-row-highlight';
+  const highlightTimers = new WeakMap();
+  function locateRow(id) {
+    const row = bulkRow(id);
+    if (!row) return false;
+    try { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) { /* 舊瀏覽器 */ }
+    clearTimeout(highlightTimers.get(row));
+    row.classList.remove(HIGHLIGHT_CLASS);
+    void row.offsetWidth; // 連按兩次也要重播漸隱
+    row.classList.add(HIGHLIGHT_CLASS);
+    highlightTimers.set(row, setTimeout(() => row.classList.remove(HIGHLIGHT_CLASS), 2000));
+    return true;
+  }
+
+  function buyRow(id, seller) {
+    const btn = bulkRow(id)?.querySelector(BULK_SEL.buy);
+    if (btn && !btn.disabled) {
+      state.bulkMsg = null;
+      btn.click(); // 與使用者自己按那顆鈕完全相同(後續由官網處理)
+      locateRow(id);
+    } else {
+      state.bulkMsg = { seller, text: tr('sb.bulk.noBtn') };
+    }
+    render();
+  }
+
+  const fmtPrice = (p) => (p ? `${p.amount} × ${p.currency}` : '—');
+
+  function renderBulk(body) {
+    const ids = bulkDomIds();
+    const entries = [];
+    for (const [id, v] of state.bulk) if (ids.has(id)) entries.push({ id, item: v.item, listing: v.listing });
+    const groups = globalThis.pmzBulk?.groupBySeller(entries) ?? [];
+
+    const bar = el('div', 'pmz-bulk-bar');
+    bar.appendChild(el('span', 'pmz-bulk-summary', tr('sb.bulk.summary', { n: groups.length, total: entries.length })));
+    bar.appendChild(iconBtn('refresh', tr('sb.bulk.refresh'), () => {
+      pruneBulk();
+      state.bulkMsg = null;
+      render();
+    }));
+    body.appendChild(bar);
+
+    if (!groups.length) {
+      body.appendChild(el('div', 'pmz-empty', tr('sb.bulk.emptyTitle')));
+      body.appendChild(el('div', 'pmz-hint', tr('sb.bulk.empty')));
+      return;
+    }
+
+    for (const g of groups) {
+      const collapsed = state.bulkCollapsed.has(g.seller);
+      const sec = el('section', 'pmz-bulk-group');
+      const head = el('button', 'pmz-bulk-head');
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(!collapsed));
+      head.appendChild(el('span', 'pmz-caret', collapsed ? '▸' : '▾'));
+      const name = el('span', 'pmz-bulk-seller', g.seller);
+      if (g.online) name.classList.add('pmz-bulk-online');
+      head.appendChild(name);
+      head.appendChild(el('span', 'pmz-bulk-count', tr('sb.bulk.count', { n: g.items.length })));
+      head.addEventListener('click', () => {
+        if (state.bulkCollapsed.has(g.seller)) state.bulkCollapsed.delete(g.seller);
+        else state.bulkCollapsed.add(g.seller);
+        render();
+      });
+      sec.appendChild(head);
+
+      if (!collapsed) {
+        const list = el('div', 'pmz-bulk-list');
+        for (const x of g.items) {
+          const item = el('div', 'pmz-item pmz-bulk-item');
+          const top = el('div', 'pmz-item-top');
+          // 物品名照官方英文原名(傳奇 / 稀有:名字 + 基底)
+          const label = x.name && x.typeLine && x.name !== x.typeLine ? `${x.name} ${x.typeLine}` : (x.name || x.typeLine);
+          const nm = el('span', 'pmz-item-name', label);
+          nm.title = label;
+          top.appendChild(nm);
+          top.appendChild(el('span', 'pmz-bulk-price', fmtPrice(x.price)));
+          item.appendChild(top);
+          const acts = el('div', 'pmz-item-acts');
+          acts.appendChild(iconBtn('locate', tr('sb.bulk.find'), () => { locateRow(x.id); }));
+          acts.appendChild(iconBtn('bag', tr('sb.bulk.buy'), () => buyRow(x.id, g.seller)));
+          item.appendChild(acts);
+          list.appendChild(item);
+        }
+        sec.appendChild(list);
+      }
+      if (state.bulkMsg?.seller === g.seller) sec.appendChild(el('div', 'pmz-bulk-msg', state.bulkMsg.text));
+      body.appendChild(sec);
+    }
+  }
+
   function renderHistory(body) {
     renderGameTabs(body, countSiteByGame(state.history));
     otherScopeNote(body, state.history.filter((h) => !onThisSite(h)).length, 'sb.hist.otherScope');
@@ -2536,6 +2701,8 @@
     // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
     settingToggle(body, 'keepPanelOpen', tr('sb.set.keepPanelOpen'));
     settingToggle(body, 'autoInstantBuyout', tr('sb.set.autoInstantBuyout'));
+    // 大量賣家分頁:關掉時 rail 鈕與分頁即時藏起來(render → updateRail 依 tabEnabled)
+    settingToggle(body, 'bulkSellers', tr('sb.set.bulkSellers'));
 
     // ── 2. 顯示 ──
     // 中文化與雙語詞綴:與 popup 共用同一組 storage 鍵,兩邊改都算數。
@@ -2573,6 +2740,8 @@
     settingToggle(body, 'modFilterButtons', tr('sb.set.modFilterButtons'));
     // 階級徽章同理:tier-badge.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
     settingToggle(body, 'tierBadges', tr('sb.set.tierBadges'));
+    // 結果列 poedb / wiki 快捷鈕:result-links.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
+    settingToggle(body, 'resultLinks', tr('sb.set.resultLinks'));
     // 階級選單:tier-picker.js 監聽 settings 即時顯示 / 隱藏、換填值方式,這裡只負責存
     settingToggle(body, 'tierPicker', tr('sb.set.tierPicker'));
     if (state.settings.tierPicker !== false) {
@@ -2822,8 +2991,11 @@
   }
 
   function render() {
+    // 停在已被設定關掉的分頁(大量賣家)→ 退回書籤
+    if (!tabEnabled(state.tab)) state.tab = 'bookmarks';
     panel.querySelectorAll('.pmz-tab').forEach((t) => {
       t.classList.toggle('pmz-tab-active', t.dataset.tab === state.tab);
+      t.hidden = !tabEnabled(t.dataset.tab);
     });
     applyShellText(); // 介面語言可能在外殼建好後才切換
     updateRail(); // 面板內切分頁時 rail 的高亮也要跟著走
@@ -2834,6 +3006,7 @@
     if (state.tab === 'bookmarks') renderBookmarks(body);
     else if (state.tab === 'history') renderHistory(body);
     else if (state.tab === 'prices') renderPrices(body);
+    else if (state.tab === 'bulk') renderBulk(body);
     else renderSettings(body);
   }
 
@@ -2916,6 +3089,9 @@
     }
 
     buildShell();
+    // 大量賣家的資料:fetch-tap 送來的物品 JSON(含 listing);比它晚掛上時請它把送過的再送一次
+    window.addEventListener('message', onBulkItems);
+    try { window.postMessage({ __pmz: 'itemsReplay' }, location.origin); } catch (_) { /* 忽略 */ }
     // 「常駐維持展開」關掉時完全照舊:收合、書籤分頁
     const keepOpen = state.settings.keepPanelOpen !== false;
     if (keepOpen) state.tab = restoredTab(savedUi);

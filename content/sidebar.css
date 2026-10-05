@@ -985,3 +985,44 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
 .pmz-tour.pmz-tour-still .pmz-tour-card { transition: none; }
 /* 設定 → 進階 的「重新播放導覽」(content/sidebar.js) */
 .pmz-tour-replay { margin-left: auto; flex: none; }
+
+/* ── 大量賣家分頁(content/sidebar.js renderBulk)──
+   同一賣家 ≥2 筆上架的分組;配色沿用側邊欄暗金風(底 #14100c / 卡 #211b14 / 框 #4a3f2f / 金 #c9a66b)。 */
+.pmz-tab[hidden] { display: none; } /* 設定關掉「大量賣家」時藏分頁;.pmz-tab 是 flex 子項,hidden 要明講 */
+.pmz-bulk-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.pmz-bulk-summary { flex: 1; font-size: 12px; color: #7a6f5a; }
+.pmz-bulk-group { margin: 0 0 8px; }
+.pmz-bulk-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: linear-gradient(180deg, #3a2f1f, #211b14);
+  border: 1px solid #4a3f2f;
+  border-radius: 4px;
+  color: #cfc3a8;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.pmz-bulk-head:hover { background: linear-gradient(180deg, #4a3f2f, #241d15); }
+.pmz-bulk-head:focus-visible { outline: 2px solid #c9a66b; outline-offset: 1px; }
+.pmz-bulk-seller { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ffe8b8; }
+.pmz-bulk-seller.pmz-bulk-online::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: #7fae5a; vertical-align: middle; }
+.pmz-bulk-count { flex: none; font-size: 12px; color: #a99a7c; }
+.pmz-bulk-list { padding: 2px 0 0 12px; }
+.pmz-bulk-item .pmz-item-name { font-size: 13px; }
+.pmz-bulk-price { flex: none; font-size: 12px; color: #c9a66b; white-space: nowrap; }
+.pmz-bulk-msg { margin: 4px 0 0 12px; font-size: 12px; color: #e0a8a0; }
+
+/* 「定位」:交易站結果列外框暗金高亮,2 秒內漸隱(sidebar.js locateRow 加上 / 移除) */
+.resultset .row.pmz-row-highlight { animation: pmz-row-flash 2s ease-out forwards; }
+@keyframes pmz-row-flash {
+  from { box-shadow: inset 0 0 0 2px #debe84, 0 0 12px rgba(222, 190, 132, 0.55); }
+  to { box-shadow: inset 0 0 0 2px rgba(222, 190, 132, 0), 0 0 12px rgba(222, 190, 132, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resultset .row.pmz-row-highlight { animation: none; box-shadow: inset 0 0 0 2px #debe84; }
+}
+

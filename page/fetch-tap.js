@@ -7,6 +7,9 @@
 //     回推只會複製出中文,PoB 解析不了 —— 必須拿官方 JSON 組)
 //   - content/tier-badge.js:結果列每條詞綴的階級徽章(`mods[].tier` 與 `magnitudes`
 //     只在 JSON 裡,畫面上沒有)
+//   - content/sidebar.js:「大量賣家」分頁要賣家帳號與標價,所以 payload 另帶 `listing`
+//     (`{ id, item, listing }`;只讀 `.item` 的消費者不受影響)
+//   - content/result-links.js:結果列 poedb / wiki 快捷鈕(只讀 `.item` 的稀有度與名稱)
 //
 // ── 為什麼從 page/trade-data.js 拆出來(2026-10-01)──
 // trade-data.js 是**翻譯注入點**,只掛國際服(台服頁面本身就是中文,使用者裁定不載
@@ -28,7 +31,7 @@
   const origFetch = window.fetch;
   if (typeof origFetch !== 'function') return;
 
-  const kept = new Map(); // id → item(Map 保留插入順序,超量時從最舊的刪)
+  const kept = new Map(); // id → { item, listing }(Map 保留插入順序,超量時從最舊的刪)
 
   // fetch 的第一個參數可以是字串、URL 或 Request
   function urlOf(input) {
@@ -51,7 +54,7 @@
   function keep(items) {
     for (const r of items) {
       kept.delete(r.id); // 重新插到最後,讓「最近看過」的留得最久
-      kept.set(r.id, r.item);
+      kept.set(r.id, { item: r.item, listing: r.listing });
     }
     while (kept.size > KEEP_MAX) kept.delete(kept.keys().next().value);
   }
@@ -60,7 +63,7 @@
   function deliver(j) {
     const items = (j?.result ?? [])
       .filter((r) => r?.item?.id)
-      .map((r) => ({ id: r.item.id, item: r.item }));
+      .map((r) => ({ id: r.item.id, item: r.item, listing: r.listing }));
     if (!items.length) return;
     keep(items);
     post(items);
@@ -78,7 +81,7 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin) return;
     if (e.data?.__pmz !== 'itemsReplay' || !kept.size) return;
-    post([...kept].map(([id, item]) => ({ id, item })));
+    post([...kept].map(([id, k]) => ({ id, item: k.item, listing: k.listing })));
   });
 
   window.fetch = function (input, init) {

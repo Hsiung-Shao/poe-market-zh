@@ -124,6 +124,7 @@
         "shared/i18n.js",
         "shared/i18n-sidebar.js",
         "content/bookmarks-model.js",
+        "content/bulk-model.js",
         "content/pob-import.js",
         "content/sidebar.js",
         "content/tour.js"
