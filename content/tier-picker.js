@@ -108,6 +108,7 @@
   //   cat:葉類別(armour.chest)→ 只看它;群組類別(armour)→ meta.groups 展開;沒選 → 全部
   //   baseName:搜尋列的基底英文名;葉類別有變體(PoE2 胸甲 / 盾)時用來挑出它那個變體的家族
   // 排序:涵蓋目前範圍內較多葉類別的在前,同數依檔案順序(產生器已依涵蓋基底數排好)
+  //   PoE2 職業詞綴家族(f.i = marksman…,要裝符文才會出)一律排在原生家族之後,也不與原生合併
   function familiesFor(ladders, statId, cat, baseName) {
     const entry = ladders?.stats?.[statId];
     if (!entry) return [];
@@ -131,11 +132,11 @@
     }
     const merged = [];
     for (const x of cands) {
-      const sig = `${x.f.g}${JSON.stringify(x.f.t)}`;
+      const sig = `${x.f.i ? x.f.i + ':' : ''}${x.f.g}${JSON.stringify(x.f.t)}`;
       const vk = leaf ? x.f.v?.[leaf] : null;
       let m = merged.find((y) => y.sig === sig);
       if (!m) {
-        m = { sig, g: x.f.g, t: x.f.t, cats: [], vkeys: [], anyVariant: false, order: x.idx };
+        m = { sig, g: x.f.g, i: x.f.i ?? null, t: x.f.t, cats: [], vkeys: [], anyVariant: false, order: x.idx };
         merged.push(m);
       }
       for (const c of x.cats) if (!m.cats.includes(c)) m.cats.push(c);
@@ -144,7 +145,7 @@
         else for (const k of vk) if (!m.vkeys.includes(k)) m.vkeys.push(k);
       }
     }
-    merged.sort((a, b) => b.cats.length - a.cats.length || a.order - b.order);
+    merged.sort((a, b) => (a.i ? 1 : 0) - (b.i ? 1 : 0) || b.cats.length - a.cats.length || a.order - b.order);
     return merged;
   }
 
@@ -172,7 +173,8 @@
     return attrs.length ? attrs.map((a) => tr(`tierpick.attr.${a}`)).join('/') : String(key);
   }
 
-  // 家族標籤:只寫出彼此不同的那一項(前後綴 / 類別 / 變體),都一樣就編號
+  // 家族標籤:只寫出彼此不同的那一項(前後綴 / 類別 / 變體),都一樣就編號;
+  // 職業詞綴家族一律在最前面標「射手詞綴」等(不論是否與其他家族不同)
   function familyLabels(fams, catNames = {}) {
     const diffG = new Set(fams.map((f) => f.g)).size > 1;
     const diffC = new Set(fams.map((f) => [...f.cats].sort().join())).size > 1;
@@ -180,6 +182,7 @@
     const sep = tr('tierpick.sep');
     return fams.map((f, i) => {
       const parts = [];
+      if (f.i) parts.push(tr(`tierpick.infl.${f.i}`));
       if (diffG) parts.push(tr(f.g === 'S' ? 'tierpick.suffix' : 'tierpick.prefix'));
       if (diffC) {
         const names = f.cats.map((c) => catNames[c] ?? c);
