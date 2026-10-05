@@ -732,6 +732,7 @@
     if (!state.translate) {
       globalThis.__pmzModRow?.(root, { translate: false });
       globalThis.__pmzTierBadge?.(root); // 詞綴階級徽章(content/tier-badge.js)與語言無關,照掛
+      globalThis.__pmzResultLinks?.(root); // 結果列 poedb / wiki 快捷鈕(content/result-links.js)同理
       return;
     }
     // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
@@ -768,6 +769,8 @@
     globalThis.__pmzModRow?.(root);
     // 詞綴階級徽章(content/tier-badge.js):同一時機、同一個理由不另開監聽
     globalThis.__pmzTierBadge?.(root);
+    // 結果列 poedb / wiki 快捷鈕(content/result-links.js):同一時機、同一個理由不另開監聽
+    globalThis.__pmzResultLinks?.(root);
     reportStats();
   }
 

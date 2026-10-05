@@ -107,6 +107,7 @@
         "content/tier-picker.js",
         "content/item-text.js",
         "content/copy-item.js",
+        "content/result-links.js",
         "content/results.js"
       ],
       "run_at": "document_end"

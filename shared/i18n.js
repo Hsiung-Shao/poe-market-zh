@@ -90,6 +90,9 @@
       'modrow.exclude': '加入排除條件',
       'copy.done': '已複製物品文字(可貼進 Path of Building)',
       'copy.failed': '複製失敗',
+      // content/result-links.js(結果列 poedb / wiki 快捷鈕)
+      'links.wiki': '在 PoE Wiki 開啟',
+      'links.poedb': '在 poedb 開啟',
     },
     en: {
       'modrow.addMin': 'Add to filters with min {value}',
@@ -97,6 +100,8 @@
       'modrow.exclude': 'Add as "not" filter',
       'copy.done': 'Item text copied (paste into Path of Building)',
       'copy.failed': 'Copy failed',
+      'links.wiki': 'Open on PoE Wiki',
+      'links.poedb': 'Open on poedb',
     },
   });
 

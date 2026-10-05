@@ -1026,3 +1026,20 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
   .resultset .row.pmz-row-highlight { animation: none; box-shadow: inset 0 0 0 2px #debe84; }
 }
 
+/* ── 結果列 poedb / wiki 快捷鈕(content/result-links.js)──
+   只掛傳奇與寶石、只掛國際服;設定 resultLinks 開啟時 <html> 有 pmz-result-links-on。
+   顯示時機跟官方 refresh / searchBy 鈕一致:平時藏、滑過那一列才出現。 */
+.resultset .row .pmz-wiki-links { display: none; gap: 3px; margin-top: 4px; justify-content: center; }
+html.pmz-result-links-on .resultset .row:hover .pmz-wiki-links { display: inline-flex; }
+.pmz-link {
+  min-width: 24px;
+  padding: 1px 5px;
+  background: #211b14;
+  border: 1px solid #4a3f2f;
+  border-radius: 3px;
+  color: #c9a66b;
+  font: 600 11px/1.4 "Segoe UI", "Microsoft JhengHei", sans-serif;
+  cursor: pointer;
+}
+.pmz-link:hover { border-color: #c9a66b; color: #ffe8b8; background: #2a241c; }
+.pmz-link:focus-visible { outline: 2px solid #c9a66b; outline-offset: 1px; }
