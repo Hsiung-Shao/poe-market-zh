@@ -81,6 +81,8 @@
     tierPickerMode: 'inclusive',
     // 「大量賣家」分頁(預設關,使用者 2026-10-05 裁定):同一賣家有 ≥2 筆上架時分組列出;關掉時 rail 鈕與分頁都藏起來
     bulkSellers: false,
+    // 大量賣家每組預設展開(true)或收合(false);在分頁上直接切換(使用者 2026-10-06 要求),預設維持原本的展開
+    bulkExpand: true,
     // 結果列 poedb / wiki 快捷鈕(預設關;只掛傳奇與寶石、只掛國際服;content/result-links.js 讀同一個鍵)
     resultLinks: false,
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
@@ -134,7 +136,7 @@
     pendingImport: null, // { folders, report, isBackup, settings, history, exportedAt, counts, name }
     // 大量賣家:目前頁面已載入結果的 id → { item, listing }(page/fetch-tap.js 送來,只放記憶體)
     bulk: new Map(),
-    bulkCollapsed: new Set(), // 收起來的賣家(只放記憶體,換搜尋就清)
+    bulkFlipped: new Set(), // 手動點過、與預設(settings.bulkExpand)相反的賣家(只放記憶體,換搜尋或切預設就清)
     bulkMsg: null, // { seller, text }:「購買」找不到官網那顆鈕時,在那一組底下顯示一行
   };
 
@@ -1890,7 +1892,7 @@
   // ⚠ 不直接 clear():官網換網址與送出新一批結果的先後不保證,先到的新結果不能被清掉;
   //   舊結果的列此時多半已從畫面移除,留下的也會在 render 時被 DOM 過濾掉。
   function resetBulk() {
-    state.bulkCollapsed.clear();
+    state.bulkFlipped.clear();
     state.bulkMsg = null;
     pruneBulk();
   }
@@ -1986,8 +1988,29 @@
       return;
     }
 
+    // 預設展開 / 收合(存 settings):切換時清掉手動點過的組,全部跟著新預設
+    const expandByDefault = state.settings.bulkExpand !== false;
+    const pref = el('div', 'pmz-bulk-pref');
+    pref.appendChild(el('span', 'pmz-bulk-pref-label', tr('sb.bulk.defaultLabel')));
+    const seg = el('div', 'pmz-seg');
+    for (const [val, key] of [[true, 'sb.bulk.expand'], [false, 'sb.bulk.collapse']]) {
+      const btn = el('button', 'pmz-seg-btn', tr(key));
+      btn.type = 'button';
+      if (expandByDefault === val) btn.classList.add('pmz-seg-active');
+      btn.addEventListener('click', () => {
+        state.settings.bulkExpand = val;
+        persistSettings();
+        state.bulkFlipped.clear();
+        render();
+      });
+      seg.appendChild(btn);
+    }
+    pref.appendChild(seg);
+    body.appendChild(pref);
+
     for (const g of groups) {
-      const collapsed = state.bulkCollapsed.has(g.seller);
+      // 預設展開時:點過的收合;預設收合時:點過的展開
+      const collapsed = expandByDefault === state.bulkFlipped.has(g.seller);
       const sec = el('section', 'pmz-bulk-group');
       const head = el('button', 'pmz-bulk-head');
       head.type = 'button';
@@ -1998,8 +2021,8 @@
       head.appendChild(name);
       head.appendChild(el('span', 'pmz-bulk-count', tr('sb.bulk.count', { n: g.items.length })));
       head.addEventListener('click', () => {
-        if (state.bulkCollapsed.has(g.seller)) state.bulkCollapsed.delete(g.seller);
-        else state.bulkCollapsed.add(g.seller);
+        if (state.bulkFlipped.has(g.seller)) state.bulkFlipped.delete(g.seller);
+        else state.bulkFlipped.add(g.seller);
         render();
       });
       sec.appendChild(head);

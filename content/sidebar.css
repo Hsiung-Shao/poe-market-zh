@@ -991,6 +991,9 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
 .pmz-tab[hidden] { display: none; } /* 設定關掉「大量賣家」時藏分頁;.pmz-tab 是 flex 子項,hidden 要明講 */
 .pmz-bulk-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .pmz-bulk-summary { flex: 1; font-size: 12px; color: #7a6f5a; }
+/* 每組預設展開 / 收合:按鈕沿用設定頁的 .pmz-seg-btn */
+.pmz-bulk-pref { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pmz-bulk-pref-label { flex: 1; font-size: 12px; color: #7a6f5a; }
 .pmz-bulk-group { margin: 0 0 8px; }
 .pmz-bulk-head {
   display: flex;
