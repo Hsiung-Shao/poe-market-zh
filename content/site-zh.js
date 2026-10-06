@@ -262,8 +262,10 @@
     // 物品浮窗的格式字串(`Recovers {0} Life over {1} Seconds` →「{1} 秒內回復 {0} 生命」):
     // 英文轉成擷取正則,記下每個擷取群組是第幾號佔位符 —— 中文依編號填,不依位置(中英語序不同)。
     // 字面越長的越先試(越具體)。
+    // 參數是天賦名的詞綴(`Allocates {0}`、`Passives in Radius of {0} can be Allocated …`;遊戲檔處理器 passive_hash)
+    // 編成同樣的擷取正則,標 kind: 'passive' —— 擷取值只查天賦表(見 translateText 的 formatted)
     const PH = /\{(\d+)(?::[^}]*)?\}/;
-    const formats = Object.entries(sn.formats ?? {}).map(([en, zh]) => {
+    const compileFormat = (kind) => ([en, zh]) => {
       const order = [];
       const src = en.split(/(\{\d+(?::[^}]*)?\})/).map((part) => {
         const m = PH.exec(part);
@@ -272,8 +274,11 @@
       }).join('');
       let re = null;
       try { re = new RegExp(`^${src}$`); } catch (_) { /* 轉不成正則的格式不用 */ }
-      return { re, order, zh, weight: en.replace(/\{\d+(?::[^}]*)?\}/g, '').length };
-    }).filter((f) => f.re).sort((a, b) => b.weight - a.weight);
+      return { re, order, zh, kind, weight: en.replace(/\{\d+(?::[^}]*)?\}/g, '').length };
+    };
+    const formats = [...Object.entries(sn.formats ?? {}).map(compileFormat('value')),
+      ...Object.entries(sn.passiveFormats ?? {}).map(compileFormat('passive'))]
+      .filter((f) => f.re).sort((a, b) => b.weight - a.weight);
     // 聯盟名一律不翻(使用者 2026-09-26 裁定:ninja 是國際服在用,聯盟名維持英文)
     const leagues = new Set((sources.leagues ?? []).map((l) => String(l).toLowerCase()));
     // 稀有度 + 物品類別(`Rare Ring`):兩半各自來自交易站篩選 × 遊戲檔交叉比對(tools/gen-site-names.mjs rarityAndCats)
@@ -459,7 +464,10 @@
         // 含英文字的擷取值必須本身是一條完整的名稱 / 詞綴 / 格式(`{0} (Max)` 裡的 `20` 除外都是數字);
         // 不做單位逐字替換 —— 否則 `{0}% of base` 會把「Attack Speed: 300」整段當成數值吃進去
         // 怪物名只在這裡用(「Companion: {0}」的 {0}),不當一般名稱:怪物名常跟玩家角色名 / 其他字同形
-        const vals = m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) ?? D.monsters?.get(c) ?? null : c));
+        // 天賦名參數只查天賦表(含交易站配置名優先序);查不到整條不換,不拿其他來源湊
+        const vals = f.kind === 'passive'
+          ? m.slice(1).map((c) => D.passiveAll?.get(c) ?? null)
+          : m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) ?? D.monsters?.get(c) ?? null : c));
         if (vals.some((v) => v == null)) continue;
         return f.zh.replace(/\{(\d+)(?::[^}]*)?\}/g, (_m, n) => vals[f.order.indexOf(n)] ?? '');
       }
