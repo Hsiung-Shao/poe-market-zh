@@ -11,6 +11,9 @@
 //     (`{ id, item, listing }`;只讀 `.item` 的消費者不受影響)
 //   - content/result-links.js:結果列 poedb / wiki 快捷鈕(只讀 `.item` 的稀有度與名稱)
 //
+// 另外讀**回應標頭**裡的官方限流額度(X-Rate-Limit-*,2026-10-07),送 `{ __pmz:'rate', … }`
+// 給大量賣家的自動載入判斷「還能不能再載一批」。同樣只讀,不多發任何請求。
+//
 // ── 為什麼從 page/trade-data.js 拆出來(2026-10-01)──
 // trade-data.js 是**翻譯注入點**,只掛國際服(台服頁面本身就是中文,使用者裁定不載
 // 任何翻譯)。徽章兩站都要,所以把旁路拆成獨立一支、兩站都掛;攔截結果的地方
@@ -69,18 +72,62 @@
     post(items);
   }
 
+  // ── 限流額度(回應標頭)──
+  // 每個回應都送(含 429 與其他非 ok),但**沒有限流標頭就不送**:Cloudflare 錯誤頁之類的回應
+  // 會把已知的額度洗成「沒有限制」。最後一份留著,側邊欄晚掛監聽時開口要(rateReplay)再送一次;
+  // seq 讓對方分得出重送的是不是同一份。
+  let rateSeq = 0;
+  let lastRate = null;
+  function rateOf(res) {
+    const h = res?.headers;
+    const rules = typeof h?.get === 'function' ? h.get('x-rate-limit-rules') : null;
+    if (!rules) return null;
+    const limits = {};
+    const states = {};
+    for (const r of rules.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+      limits[r] = h.get(`x-rate-limit-${r}`) ?? '';
+      states[r] = h.get(`x-rate-limit-${r}-state`) ?? '';
+    }
+    return {
+      __pmz: 'rate',
+      seq: ++rateSeq,
+      at: Date.now(),
+      status: res.status,
+      policy: h.get('x-rate-limit-policy') ?? '',
+      rules,
+      limits,
+      states,
+      retryAfter: h.get('retry-after') ?? '',
+    };
+  }
+  function postRate(msg) {
+    try {
+      window.postMessage(msg, location.origin);
+    } catch (_) { /* 同 post():放棄這一份 */ }
+  }
+
   function tap(promise) {
     promise.then((res) => {
+      const rate = rateOf(res);
+      if (rate) {
+        lastRate = rate;
+        postRate(rate);
+      }
       if (!res?.ok) return;
       return res.clone().json().then(deliver);
     }).catch(() => {});
   }
 
-  // isolated world 開口要已經送過的物品(它比第一批結果晚掛上監聽時)。
+  // isolated world 開口要已經送過的物品 / 最後一份額度(它比第一批結果晚掛上監聽時)。
   // 只收自己這個視窗、自己這個來源的訊息 —— 頁面上的 iframe 或第三方腳本都能 postMessage。
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin) return;
-    if (e.data?.__pmz !== 'itemsReplay' || !kept.size) return;
+    const kind = e.data?.__pmz;
+    if (kind === 'rateReplay') {
+      if (lastRate) postRate(lastRate);
+      return;
+    }
+    if (kind !== 'itemsReplay' || !kept.size) return;
     post([...kept].map(([id, k]) => ({ id, item: k.item, listing: k.listing })));
   });
 

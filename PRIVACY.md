@@ -1,6 +1,6 @@
 # Poe Market Zh 隱私權政策 / Privacy Policy
 
-最後更新:2026-09-27
+最後更新:2026-10-08
 
 ## 中文
 
@@ -31,6 +31,9 @@
 - `poe.ninja`:**選用功能**。僅在使用者明確授權並開啟側邊欄的「物價查詢」後,讀取其公開的通貨價格資料;未授權時完全不會對其發出任何請求。價格資料來源於畫面上另有標示。
 
 上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
+
+### 大量賣家自動載入(選用功能)
+側邊欄「大量賣家」分頁預設關閉。使用者開啟並停在這個分頁時,本擴充會替使用者觸發交易站頁面原本的「載入下一批結果」,效果等同使用者自己往下捲動,預設最多載入到前 50 筆,使用者可改成前 100 筆或關閉。這些請求**由交易站頁面自己發出**,帶著使用者在 `pathofexile.com` / `pathofexile.tw` 的登入狀態,會用到使用者在官網的請求額度;本擴充只讀取官網回應中的請求額度資訊,用來在額度快用完時暫停。本擴充不另外發出任何請求,也不保存或傳送這些結果。
 
 ### poe.ninja / pobb.in 中文化(選用功能)
 使用者在彈出視窗開啟並於授權對話框同意後,本擴充才會在 `poe.ninja` 與 `pobb.in` 的頁面上執行,**只在使用者的瀏覽器內**把頁面上的英文字替換成中文顯示。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱;唯一會記在本機的是頁面聯盟選單裡的聯盟名稱(用來讓聯盟名維持英文、不被翻譯)。關閉開關後頁面即時還原為英文。此功能所需的名稱資料來自上述 `raw.githubusercontent.com`。
@@ -72,6 +75,9 @@ The Extension makes network requests solely to **fetch publicly available data**
 - `poe.ninja` — **optional**. Requested only after the user explicitly grants permission and enables the sidebar's price lookup; with no permission granted, no request is ever made to it. The price data source is also credited in the UI.
 
 These requests carry no user-identifying information and use no cookies.
+
+### Bulk sellers auto-load (optional)
+The sidebar's "Bulk sellers" tab is off by default. When the user turns it on and has that tab open, the Extension triggers the trade page's own "load the next batch of results", the same as the user scrolling down, up to the first 50 results by default (the user can change this to 100 or turn it off). These requests are **made by the trade page itself** with the user's signed-in session on `pathofexile.com` / `pathofexile.tw` and count toward the user's request allowance on the site; the Extension only reads the allowance information in the site's responses so it can pause before running out. The Extension makes no additional requests and does not store or send these results anywhere.
 
 ### poe.ninja / pobb.in localization (optional)
 Only after the user turns it on in the popup and approves the permission prompt does the Extension run on `poe.ninja` and `pobb.in` pages, replacing English text with Chinese **inside the user's browser only**. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. The only thing kept locally is the list of league names from the page's league selector (so league names stay in English); turning the switch off restores the English text immediately. The name data for this feature comes from `raw.githubusercontent.com` listed above.
