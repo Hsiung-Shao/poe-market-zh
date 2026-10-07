@@ -231,6 +231,8 @@
     // 同一個字大小寫不同在遊戲裡可能是不同的詞(物品欄位「Block chance」= 格擋機率、角色面板「Block Chance」= 格擋率):
     // 大小寫完全相同的先查,查不到才放寬大小寫
     const uiExact = new Map(Object.entries(sn.ui ?? {}).filter(([en, zh]) => en !== zh));
+    // 面板用詞 / 介面字的英文(含兩邊譯法不同而沒收進 lower 的):雙語判斷「這是欄位名」用,不拿來翻
+    const uiWords = new Set([...Object.keys(sn.panel ?? {}), ...Object.keys(sn.ui ?? {})].map((en) => en.toLowerCase()));
     // 介面字是人工核對過出處的,優先於面板用詞(同詞不同譯時以它為準)
     // 網站自己的字(人工譯名)蓋過面板用詞(「Defensive」面板給「防禦的」,在網站上當分區標題不通順);
     // 遊戲檔出處的 SITE_UI 最後蓋,優先序最高
@@ -296,7 +298,7 @@
       ...Object.entries(sources.uniqueMap ?? {}).map(([en, zh]) => [en, stripBilingual(en, zh)])]);
     const gemAll = new Map([...Object.entries(sn.skills ?? {}),
       ...Object.entries(sources.itemMap ?? {}).map(([en, zh]) => [en, stripBilingual(en, zh)])]);
-    return { names: flat, uiExact, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, anointPassives, uniqueAll, gemAll, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
+    return { names: flat, itemNames: new Set(Object.keys(sources.itemMap ?? {})), skillNames: new Set(Object.keys(sn.skills ?? {})), uiExact, uiWords, lower, gems, classNames, rarity, itemCats, monsters, passiveAll, atlasPassives, anointPassives, uniqueAll, gemAll, formats, leagues, statMap: sources.statMap ?? null, statTpl: sn.stats ?? null, conflicts };
   }
 
   function fillTemplate(zhTpl, nums) {
@@ -427,14 +429,30 @@
     return idx;
   }
 
+  // 裝備名(傳奇名 / 基底名):雙語不附英文(使用者 2026-10-08)。寶石也在物品表裡,以技能表與「 Support」分開
+  const isEquipName = (D, en) => (D.uniqueAll?.has(en) || D.itemNames?.has(en)) && !D.skillNames?.has(en) && !/ Support$/.test(en);
+
   // 一段文字 → 中文(保留前後空白);查不到回 null
-  function translateText(raw, D) {
+  const translateText = (raw, D) => translateDetail(raw, D).zh;
+  // 同上,另回報這次用到的是不是**遊戲內容**的表(2026-10-08 雙語顯示:只有遊戲內容在下方附英文原文)
+  //   game = true:名稱表(物品 / 傳奇 / 寶石 / 天賦 / 昇華 / 技能敘述 …)、詞綴(statMap / 帶序號模板)、
+  //   物品浮窗格式、怪物名、「Level N 職業」;只用到介面字 / 面板用詞 / 網站格式 / 稀有度 / 物品類別 → false
+  function translateDetail(raw, D) {
+    let game = false;
+    const zhOf = (z) => ({ zh: z, game: z != null && game });
+    return zhOf(translateCore(raw, D, () => { game = true; }));
+  }
+  function translateCore(raw, D, gameHit) {
+    // 標籤(「Evasion Rating: 158」「Life:」的前半)查表時不算遊戲內容:那是欄位名,不是物品 / 詞綴本身
+    let mute = false;
+    const hit = () => { if (!mute) gameHit(); };
     const s = String(raw ?? '');
     const t = s.trim().replace(/\s+/g, ' ');
     if (!t || !/[A-Za-z]{2}/.test(t) || CJK_RE.test(t)) return null;
     // 長段文字只做整句查表(技能敘述、通貨用法、傳說文字),不跑任何拆解規則
     if (t.length > MAX_LEN) {
       const whole = t.length <= MAX_TEXT_LEN ? D.names.get(t) : null;
+      if (whole) hit();
       return whole ? s.match(/^\s*/)[0] + whole + s.match(/\s*$/)[0] : null;
     }
     if (D.leagues?.has(t.toLowerCase())) return null;
@@ -445,11 +463,14 @@
     const itemCat = (x) => D.itemCats?.get(x) ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1-Handed'))
       ?? D.itemCats?.get(x.replace(/\b(One|Two) Handed\b/, '$1 Hand')) ?? null;
     const one = (x) => {
-      let zh = D.names.get(x) ?? D.uiExact?.get(x) ?? D.lower.get(x.toLowerCase());
+      let zh = D.names.get(x);
+      // 同時也是面板用詞 / 介面字的(Life、Armour、Energy Shield 也是小天賦名)當介面字:只附在真正的遊戲內容上
+      if (zh) { if (!D.lower.has(x.toLowerCase()) && !D.uiExact?.has(x) && !D.uiWords?.has(x.toLowerCase()) && !isEquipName(D, x)) hit(); return zh; }
+      zh = D.uiExact?.get(x) ?? D.lower.get(x.toLowerCase());
       // pobb.in 的寶石列省略「 Support」(`Burning Damage` = 燃燒傷害輔助)。
       // 只從寶石表補,不拿其他來源湊;名稱表本身查得到的優先(同名的主動技能)
-      if (!zh) zh = D.gems.get(`${x} Support`);
-      if (!zh) zh = renderStat(x, D.statMap, D.statTpl);
+      if (!zh) { zh = D.gems.get(`${x} Support`); if (zh) hit(); }
+      if (!zh) { zh = renderStat(x, D.statMap, D.statTpl); if (zh) hit(); }
       // 物品類別單數名(ninja 武器配置「Staff」「Wand / Sceptre」):其他來源都查不到才用
       if (!zh) zh = itemCat(x);
       return zh ?? null;
@@ -469,6 +490,7 @@
           ? m.slice(1).map((c) => D.passiveAll?.get(c) ?? null)
           : m.slice(1).map((c) => (/[A-Za-z]{2}/.test(c) ? one(c) ?? formatted(c) ?? D.monsters?.get(c) ?? null : c));
         if (vals.some((v) => v == null)) continue;
+        hit(); // 物品浮窗的屬性 / 詞綴格式
         return f.zh.replace(/\{(\d+)(?::[^}]*)?\}/g, (_m, n) => vals[f.order.indexOf(n)] ?? '');
       }
       return null;
@@ -515,7 +537,9 @@
       // 標籤可以帶括號(觸媒品質「Quality (Attribute Modifiers): +20%」)
       const m = /^([A-Za-z][A-Za-z &'\/()-]*?):\s*(.+)$/.exec(t);
       if (m) {
+        mute = true;
         const lab = one(m[1]);
+        mute = false;
         const val = lab && value(m[2]);
         if (lab && val) zh = `${lab}: ${val}`;
       }
@@ -543,14 +567,16 @@
     }
     // 標籤尾巴的冒號(`Evasion Rating:`)
     if (!zh && /[^:]:$/.test(t)) {
+      mute = true;
       const z = one(t.slice(0, -1));
+      mute = false;
       if (z) zh = `${z}:`;
     }
     // 角色標題「Level 100 Chieftain」:後半必須是職業 / 昇華名(不是任意名稱)
     if (!zh) {
       const m = /^Level (\d+) (.+)$/.exec(t);
       const cls = m && D.classNames?.get(m[2]);
-      if (cls) zh = `${D.lower.get('level') ?? 'Level'} ${m[1]} ${cls}`;
+      if (cls) { hit(); zh = `${D.lower.get('level') ?? 'Level'} ${m[1]} ${cls}`; }
     }
     // poe.ninja 把幾樣東西用「, 」接成一行:精通的多條效果、物價頁的「傳奇名, 變體, 基底」。
     // 整行查不到才拆;**每一段都要各自查得到**(名稱或完整詞綴;只有數字符號的段落原樣保留,如 `6L`),
@@ -586,7 +612,7 @@
     return zh ? lead + zh + trail : null;
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
+  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -601,7 +627,9 @@
   const written = new WeakMap(); // 文字節點 → 我們寫進去的字(用來分辨框架改回英文 vs 自己的寫入)
   const touched = []; // WeakRef<Text>,關掉開關時逐一還原
   const titled = []; // WeakRef<Element>,我們加的 title
+  const origed = []; // WeakRef<Element>,雙語顯示掛的 data-pmz-orig
   let dict = null;
+  let bilingual = false; // 與交易站共用「雙語顯示」(storage bilingualMods,使用者 2026-10-08 裁定)
   let dictGame = null;
   let enabled = false;
   const stat = { lines: 0, nodes: 0, restored: 0 };
@@ -657,6 +685,41 @@
     titled.push(new WeakRef(el));
   }
 
+  // ── 雙語顯示(2026-10-08):遊戲內容在中文下方附一行英文原文,樣式與交易站結果列的詞綴雙語相同 ──
+  // ⚠ 不新增節點(ninja 是 React、pobb.in 是 SolidJS,塞進去的節點會被框架重繪打掉或打亂):
+  //   英文寫在該行元素的 data-pmz-orig,由注入 <head> 的一段樣式以 ::after 顯示。
+  //   字級照 content/results.js 的 ptm-orig(11px、line-height 1.3);顏色見 ORIG_COLOR。
+  const ORIG_STYLE_ID = 'pmz-site-zh-style';
+  // 顏色:兩站底色較深,交易站的灰褐色太暗 → poe.ninja 與 pobb.in 都用亮綠(使用者 2026-10-08;交易市集維持灰褐)
+  const ORIG_COLOR = '#6ee7a8';
+  const ORIG_CSS = '[data-pmz-orig]::after{content:attr(data-pmz-orig);display:block;font-size:11px;'
+    + `color:${ORIG_COLOR};line-height:1.3;white-space:pre-line;font-weight:normal;font-style:normal;text-transform:none;letter-spacing:normal}`;
+  function ensureOrigStyle() {
+    if (document.getElementById(ORIG_STYLE_ID)) return;
+    const st = document.createElement('style');
+    st.id = ORIG_STYLE_ID;
+    st.textContent = ORIG_CSS;
+    (document.head ?? document.documentElement).appendChild(st);
+  }
+  // ::after 掛在 flex / grid 容器上會變成並排的一格:往下找唯一的子元素,找不到就不掛(退回 title)
+  function origHost(el) {
+    while (el && lays(el) && el.childElementCount === 1) el = el.firstElementChild;
+    return el && !lays(el) ? el : null;
+  }
+  // 譯文寫進去之後記原文:遊戲內容 + 雙語開 → 下方顯示英文;其他 → 照舊放 title(滑過才看得到)
+  // poe.ninja 只在角色頁(裝備 / 珠寶 / 天賦)附英文:流派列表、物價頁的職業格與清單很擠,附了反而難讀(使用者 2026-10-08);
+  // pobb.in 每頁都是一份 build,照附。SPA 換頁時新節點寫入當下才判斷,所以跟著網址走
+  const bilingualPage = () => SITE !== 'ninja' || /\/character\//.test(location.pathname);
+  function noteOrig(el, en, game) {
+    // 「統計」面板只有欄位名不附;面板裡的主要技能(寶石 = 技能表裡的名字)仍是遊戲內容
+    const host = bilingual && game && bilingualPage() && (sectionKind(el) !== 'stats' || dict?.skillNames?.has(en)) ? origHost(el) : null;
+    if (!host) { addTitle(el, en); return; }
+    if (host.dataset.pmzOrig === en) return;
+    if (host.dataset.pmzOrig === undefined) origed.push(new WeakRef(host));
+    host.dataset.pmzOrig = en;
+    ensureOrigStyle();
+  }
+
   // 目前這個節點的「英文原文」:我們寫過的就拿原文,框架改過的就拿現在的
   const englishOf = (n) => (written.get(n) === n.data ? original.get(n) : n.data);
 
@@ -664,26 +727,32 @@
     const nodes = textNodesIn(el);
     if (nodes.length < 2) return false; // 單一文字節點走下面逐節點那條即可
     const en = nodes.map(englishOf).join('');
-    const done = () => { addTitle(el, en.trim()); stat.lines++; return true; };
+    const done = (game) => { noteOrig(el, en.trim(), game); stat.lines++; return true; };
     // 逐段換:每個帶英文字的節點都要各自翻得出來才換(缺一個就不換),數值的顏色等樣式留在原節點上
     const piecewise = () => {
+      let game = false;
       const parts = nodes.map((n) => {
         const e = englishOf(n);
-        return /[A-Za-z]/.test(e) ? classText(n, e) ?? translateText(e, dict) : e;
+        if (!/[A-Za-z]/.test(e)) return e;
+        const c = classText(n, e);
+        if (c) { if (!isEquipName(dict, e.trim())) game = true; return c; }
+        const d = translateDetail(e, dict);
+        if (d.game) game = true;
+        return d.zh;
       });
       if (!parts.every((p) => p != null)) return false;
       nodes.forEach((n, i) => { if (parts[i] !== englishOf(n)) setText(n, parts[i]); });
-      return done();
+      return done(game);
     };
     // 「標籤: 數值」與需求列(`Cost` `:` `13 Mana`、`Requires ` `Level ` `70` `Str ` `35`)先試逐段。
     // 其他行(詞綴被拆成好幾段上色)先整行查,逐段換會變成逐字翻
     if (/^\s*(Requires\b|[A-Za-z][^:]{0,40}:\s)/.test(en) && piecewise()) return true;
-    const zh = translateText(en, dict);
+    const { zh, game } = translateDetail(en, dict);
     // 整行不是一條已知的東西,但每一段各自是(`Heart of the Well` + `Diamond` = 傳奇名 + 基底名)→ 逐段
     if (!zh) return piecewise();
     const first = nodes.findIndex((n) => englishOf(n).trim());
     nodes.forEach((n, i) => setText(n, i === first ? zh.trim() : ''));
-    return done();
+    return done(game);
   }
 
   // 這個文字節點所在的「視覺行」裡,除了它自己以外還有沒有別的英文字。
@@ -722,6 +791,8 @@
     [/^(Passives|Keystones|Masteries|Notables)$/i, 'passive'],
     [/^Atlas$/i, 'atlas'],
     [/^(Classes|Second Ascendancy|Ascendancy|Top Classes Per League)$/i, 'class'],
+    // 角色頁「統計」面板(能力值 / 移動速度 / 物品稀有度…):欄位名,雙語不附英文
+    [/^(Stats|Statistics)$/i, 'stats'],
   ];
   function sectionKind(node) {
     // 標題多半是 h2;流派首頁「Top Classes Per League」是 header 裡的 <a>
@@ -753,10 +824,12 @@
     const en = englishOf(node);
     if (written.get(node) === node.data) return true; // 已是我們的譯文
     if (hasOtherWords(node)) return false;
-    const zh = classText(node, en) ?? translateText(en, dict);
+    const c = classText(node, en);
+    const { zh, game } = c ? { zh: c, game: !isEquipName(dict, en.trim()) } : translateDetail(en, dict);
     if (!zh) return false;
     setText(node, zh);
-    addTitle(node.parentElement, en.trim());
+    // 雙語掛在整行(行內元素裡的 ::after 會把同一行後面的數字擠到下一行;交易站傭兵詞綴同一個坑)
+    noteOrig(game && bilingual ? lineOf(node) ?? node.parentElement : node.parentElement, en.trim(), game);
     stat.nodes++;
     return true;
   }
@@ -777,12 +850,13 @@
     const a = elText(el);
     const b = elText(next);
     if (!/[A-Za-z]{2}/.test(a) || !/[A-Za-z]{2}/.test(b) || a.length + b.length > MAX_LEN) return false;
-    const parts = translateText(`${a} ${b}`, dict)?.trim().split('\n');
+    const d = translateDetail(`${a} ${b}`, dict);
+    const parts = d.zh?.trim().split('\n');
     if (parts?.length !== 2) return false;
     writeEl(el, parts[0].trim());
     writeEl(next, parts[1].trim());
-    addTitle(el, a);
-    addTitle(next, b);
+    noteOrig(el, a, d.game);
+    noteOrig(next, b, d.game);
     stat.lines++;
     return true;
   }
@@ -802,7 +876,7 @@
   function translateBrBlock(p) {
     const nodes = textNodesIn(p);
     const en = [...p.childNodes].map((c) => (c.nodeName === 'BR' ? ' ' : c.nodeType === Node.TEXT_NODE ? englishOf(c) : textNodesIn(c).map(englishOf).join(''))).join('');
-    const zh = translateText(en, dict);
+    const { zh, game } = translateDetail(en, dict);
     if (!zh) {
       // 框架換了內容、新內容查不到:之前藏起來的 <br> 要放回來,否則英文會黏成一行
       for (const br of p.querySelectorAll(':scope > br')) br.style.removeProperty('display');
@@ -813,7 +887,7 @@
     for (const br of p.querySelectorAll(':scope > br')) {
       if (br.style.display !== 'none') { br.style.display = 'none'; hiddenBrs.push(new WeakRef(br)); }
     }
-    addTitle(p, en.replace(/\s+/g, ' ').trim());
+    noteOrig(p, en.replace(/\s+/g, ' ').trim(), game);
     stat.lines++;
     return true;
   }
@@ -1014,6 +1088,12 @@
       if (el?.dataset.pmzZhTitle) { el.removeAttribute('title'); delete el.dataset.pmzZhTitle; }
     }
     titled.length = 0;
+    for (const ref of origed) {
+      const el = ref.deref();
+      if (el) delete el.dataset.pmzOrig;
+    }
+    origed.length = 0;
+    document.getElementById(ORIG_STYLE_ID)?.remove();
     for (const ref of hiddenBrs) ref.deref()?.style.removeProperty('display');
     hiddenBrs.length = 0;
     for (const ref of placeholderSet) {
@@ -1051,12 +1131,21 @@
     const ui = uiLang === 'zh' || uiLang === 'en' ? uiLang : language !== undefined ? 'zh' : undefined;
     return siteZh === true && ui === 'zh' && (language ?? 'zh_tw') === 'zh_tw';
   }
-  const apply = () => shouldRun().then((on) => (on ? start() : stop()))
+  const readBilingual = async () => {
+    bilingual = (await chrome.storage.local.get('bilingualMods')).bilingualMods === true;
+  };
+  const apply = () => readBilingual().then(shouldRun).then((on) => (on ? start() : stop()))
     .catch((err) => console.warn('[PMZ] 網站中文化初始化失敗:', err));
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.siteZh || changes.language || changes.uiLang) { apply(); return; }
+    // 雙語顯示切換(popup / 交易站側邊欄):不重載字典,整頁還原後重翻一次 —— 不必重新整理
+    if (changes.bilingualMods) {
+      bilingual = changes.bilingualMods.newValue === true;
+      if (enabled) { restoreAll(); schedule(document.body); }
+      return;
+    }
     // 交易站資料建好 / 更新了 → 重載字典再翻一次(已翻的節點會被略過)
     const K = dictGame && KEYS[dictGame];
     if (enabled && K && (changes[K.itemMap] || changes[K.statMap] || changes[K.passiveMap] || changes[K.names])) {
