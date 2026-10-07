@@ -994,6 +994,15 @@ html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
 /* 每組預設展開 / 收合:按鈕沿用設定頁的 .pmz-seg-btn */
 .pmz-bulk-pref { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pmz-bulk-pref-label { flex: 1; font-size: 12px; color: #7a6f5a; }
+/* 自動載入的狀態列(sidebar.js paintBulkStatus 就地改字;data-phase = 目前階段) */
+.pmz-bulk-load { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -2px 0 8px; font-size: 12px; color: #a99a7c; }
+.pmz-bulk-load[hidden] { display: none; } /* 上面是 flex,hidden 要明講才藏得住 */
+.pmz-bulk-load[data-phase="waiting"], .pmz-bulk-load[data-phase="cap"] { color: #debe84; }
+.pmz-bulk-load[data-phase="stopped"], .pmz-bulk-load[data-phase="unavailable"], .pmz-bulk-load[data-phase="noRate"],
+.pmz-bulk-load[data-phase="policy"] { color: #e0a8a0; }
+.pmz-bulk-load-text { flex: 1 1 auto; min-width: 0; }
+.pmz-bulk-load-resume { flex: none; }
+.pmz-bulk-load-hover { flex-basis: 100%; color: #7a6f5a; }
 .pmz-bulk-group { margin: 0 0 8px; }
 .pmz-bulk-head {
   display: flex;

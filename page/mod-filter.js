@@ -428,5 +428,68 @@
     if (demo.expanded || demo.added || demo.ms) tourCleanup();
   });
 
-  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG, annotateFilters, setFilterValue, tourOps: TOUR_OPS, tourState: () => ({ expanded: demo.expanded, added: demo.added, open: !!demo.ms }) };
+  // ── 大量賣家自動載入(2026-10-07,2026-10-08 依活站改寫):替使用者按官網的「Load More」──
+  // ⚠ 活站的結果列已改成另一套前端(Vue 3,`dist/js/trade.<hash>.js` 的 ItemResultSet),不在 window.app
+  //   (舊 Vue 2)的元件樹裡 —— 第一版照舊 legacy bundle 走 $children 找 fetchNext,活站一個都找不到
+  //   (使用者 2026-10-08 實測 found: [])。新版結果列底部有官方的 `button.load-more-btn`:
+  //   按下 = 官網自己取還沒載入的前 10 個 id 發一次 fetch、畫出新的 10 列;載入中 disabled,全部載完按鈕消失,
+  //   429 時跳官方的「Too many requests」。這裡只按這顆鈕,**不自己組 API 請求**、不碰新前端的內部物件。
+  //   即時搜尋仍由舊 App 管(Vuex `transient.search.active.live`)。
+  // ⚠ 按之前在**同一個 task 內**再檢查一次:側邊欄的判斷到這裡之間,使用者可能已換搜尋或開即時搜尋。
+  const STEP_MSG = 'pmz:resultsStep';
+  const STEP_DONE = 'pmz:resultsStepDone';
+  const RESULTS_SEL = { set: '.resultset', row: '.row[data-id]', more: 'button.load-more-btn' };
+  const SITE_PAGE = 10; // 官網一批載入幾筆(= content/bulk-model.js 的 PAGE;不同 world,各寫一次)
+  // 「哪一次搜尋」:依結果區塊節點的身分編號(新前端每次搜尋重建一個 .resultset;同條件重搜搜尋編號可能不變)
+  const resultEpochs = new WeakMap();
+  let epochSeq = 0;
+  function epochOf(el) {
+    if (!resultEpochs.has(el)) resultEpochs.set(el, ++epochSeq);
+    return resultEpochs.get(el);
+  }
+  // 畫面上看得到的結果區塊(隱藏的舊搜尋不算)
+  const visibleSets = () => [...document.querySelectorAll(RESULTS_SEL.set)].filter((el) => el.isConnected && el.getClientRects().length > 0);
+  // d: { target, fire, epoch }。fire 為真且全部條件成立才按「Load More」;回傳目前狀態
+  function resultsStep(d) {
+    if (!window.app) return { ok: false, why: 'noApp' };
+    const sets = visibleSets();
+    if (!sets.length) return { ok: false, why: 'noResults' };
+    if (sets.length > 1) return { ok: false, why: 'ambiguous' };
+    const el = sets[0];
+    if (el.classList.contains('exchange')) return { ok: false, why: 'noResults' };
+    if (window.app.$store?.state?.transient?.search?.active?.live) return { ok: false, why: 'live' };
+    // 已載入 = 結果列數(抓不到的「Item not found」列也帶 data-id,同樣算載入過,與官網 fetchable 同一個判準)
+    const loaded = el.querySelectorAll(RESULTS_SEL.row).length;
+    const btn = el.querySelector(RESULTS_SEL.more);
+    const done = !btn; // 官網只在還有沒載入的 id 時畫這顆鈕
+    // 總數:畫面上沒有(列數上限 100 只在官網內部);沒載完時給「至少再一批」當下限,planStep 只用它判斷第一批
+    const total = done ? loaded : loaded + SITE_PAGE;
+    const epoch = epochOf(el);
+    const info = { ok: true, epoch, loaded, total, done, fetching: !!btn?.disabled, fired: false };
+    const target = Number(d?.target) || 0;
+    const sameSearch = d?.epoch == null || d.epoch === epoch;
+    // 第一批(官網自己抓的 10 筆 = content/bulk-model.js 的 PAGE)還沒到就不碰:那時鈕可能還能按,一按就重抓同一批
+    if (d?.fire === true && sameSearch && btn && !btn.disabled && loaded < target && loaded >= SITE_PAGE) {
+      btn.click();
+      // 新前端在下一個 tick 才把鈕設成 disabled,這裡讀不到;按的是可按的鈕,官網一定會發這一批
+      info.fired = true;
+      info.fetching = true;
+    }
+    return info;
+  }
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || e.origin !== location.origin) return;
+    const d = e.data;
+    if (!d || d.t !== STEP_MSG) return;
+    let r;
+    try {
+      r = resultsStep(d);
+    } catch (err) {
+      console.warn('[PTM] 大量賣家自動載入失敗:', err);
+      r = { ok: false, why: 'error' };
+    }
+    window.postMessage({ t: STEP_DONE, reqId: d.reqId, ...r }, location.origin);
+  });
+
+  window.__pmzModFilter = { findVms, findEntry, addStatFilter, refreshReady, MSG, annotateFilters, setFilterValue, tourOps: TOUR_OPS, tourState: () => ({ expanded: demo.expanded, added: demo.added, open: !!demo.ms }), resultsStep };
 })();

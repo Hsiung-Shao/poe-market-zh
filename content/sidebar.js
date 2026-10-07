@@ -83,6 +83,8 @@
     bulkSellers: false,
     // 大量賣家每組預設展開(true)或收合(false);在分頁上直接切換(使用者 2026-10-06 要求),預設維持原本的展開
     bulkExpand: true,
+    // 大量賣家分頁開著時自動載入到前幾筆:0 = 關、50、100(使用者 2026-10-07 要求;讀取一律過 pmzBulk.normLoad)
+    bulkLoad: 50,
     // 結果列 poedb / wiki 快捷鈕(預設關;只掛傳奇與寶石、只掛國際服;content/result-links.js 讀同一個鍵)
     resultLinks: false,
     // ⚠ 兩款的聯盟名不同(PoE1「Allflame」/ PoE2「Runes of Aldur」),**一定要分開存**
@@ -138,6 +140,11 @@
     bulk: new Map(),
     bulkFlipped: new Set(), // 手動點過、與預設(settings.bulkExpand)相反的賣家(只放記憶體,換搜尋或切預設就清)
     bulkMsg: null, // { seller, text }:「購買」找不到官網那顆鈕時,在那一組底下顯示一行
+    // 大量賣家自動載入的執行狀態(只放記憶體;目標筆數是另一回事,存 settings.bulkLoad)。
+    //   phase:idle / loading / first / busy / waiting / done / full / cap / stopped / noRate / policy / live / none / unavailable
+    //   (各自的意思見 pumpBulkLoad 一節與 pmzBulk.planStep)
+    bulkAuto: { phase: 'idle', epoch: null, loaded: 0, total: 0, steps: 0, retries: 0, rpcFails: 0, stopped: false, until: 0, rate: null, rateSeq: 0, lastFireAt: 0, lastRespAt: 0 },
+    bulkDirty: false, // 自動載入中滑鼠停在面板上 → 新資料先不重排名單,離開面板再畫
   };
 
   // 介面語言:改 PMZ_I18N 的語言 + 重填外殼文字(rail / 標頭 / 分頁列)。
@@ -1871,7 +1878,10 @@
 
   // ── 大量賣家 ──
   // 目前搜尋結果裡同一賣家有 ≥2 筆上架的分組(content/bulk-model.js)。只看頁面已載入的結果:
-  // 物品 JSON 由 page/fetch-tap.js 旁路送來,不打任何 API、不翻後續頁(使用者 2026-10-05 裁定)。
+  // 物品 JSON 由 page/fetch-tap.js 旁路送來。
+  // 2026-10-05 原裁定「不翻後續頁」;2026-10-07 使用者改為:分頁開著時自動載入到前 50 / 100 筆
+  // (settings.bulkLoad,0 = 關)。做法是請 page/mod-filter.js 按官網自己的「載入下一批」——
+  // 請求由官網發、列由官網畫,這裡不打任何 API,只依官方限流標頭決定什麼時候按(見「自動載入」一節)。
   // ── 官網 DOM 耦合點 ──
   const BULK_SEL = {
     row: '.resultset .row[data-id]',
@@ -1894,6 +1904,9 @@
   function resetBulk() {
     state.bulkFlipped.clear();
     state.bulkMsg = null;
+    state.bulkDirty = false;
+    // 自動載入:步數、重試、429 停手都跟著這次搜尋重來(額度不重來 —— rate 是官方回報的,與搜尋無關)
+    Object.assign(state.bulkAuto, { phase: 'idle', epoch: null, steps: 0, retries: 0, rpcFails: 0, stopped: false });
     pruneBulk();
   }
 
@@ -1909,7 +1922,17 @@
     }
     if (state.bulk.size > BULK_MAX) pruneBulk();
     // ⚠ 資料到了才 render(同步),render 裡不可再非同步 append(CLAUDE.md「render 是清空再重畫」)
-    if (state.open && state.tab === 'bulk') render();
+    // 自動載入中且滑鼠停在面板上:名單先不重排 —— 分組依筆數排序,游標下的「購買」可能換成別的賣家。
+    //   記 dirty、狀態列提示,滑鼠離開面板或載入告一段落再畫(watchBulkLoad / onBulkStepDone)。
+    if (state.open && state.tab === 'bulk') {
+      if (bulkHoldList()) {
+        state.bulkDirty = true;
+        paintBulkStatus();
+      } else {
+        render();
+      }
+    }
+    schedulePump(0); // 新的一批到了:看看要不要再載下一批
   }
 
   // 依 id 找結果列(id 是官方的 64 位十六進位,仍走 CSS.escape 以防萬一)
@@ -1967,6 +1990,205 @@
     return box;
   }
 
+  // ── 大量賣家:自動載入(2026-10-07)──
+  // 分頁開著時,替使用者把目前搜尋往下載入到前 settings.bulkLoad 筆。每一步 = 請 page/mod-filter.js
+  // 按一次官網的「載入下一批」(10 筆、1 次 fetch);要不要按由官方限流標頭決定(pmzBulk.loadWait)。
+  //   · 觸發點:畫這個分頁(renderBulk)、新物品 / 新額度到達、換網址、分頁回到前景、計時器。
+  //     每次 pump 都重新檢查全部條件,所以覆蓋掉先前排的計時器是安全的;同一時間只有一個詢問在飛。
+  //   · 只在「分頁開著、功能開著、目標 > 0、瀏覽器分頁在前景、不在功能導覽中」才動 ——
+  //     背景分頁也各自載入的話,一次開五個搜尋就把額度吃光。
+  //   · 快到上限 → 暫停到額度回復自動接續(使用者 2026-10-07 選擇)。
+  //     真的收到 429 → 這次搜尋停手,等使用者按「繼續」:收到 429 代表估計已失準,自動接續可能連吃懲罰。
+  //   · phase 只變狀態列(paintBulkStatus 就地改字),不整頁重畫。
+  //   · 節奏常數與「回覆之後怎麼走」都在 pmzBulk(TIMING / afterStep),verify-bulk 用限流模擬器整套跑過。
+  const BULK_LOADING = new Set(['idle', 'loading', 'first', 'busy', 'waiting']);
+  let bulkTimer = null;
+  let bulkReq = null; // 在飛的詢問 { id, fire, wait, gap, timer }
+  let bulkAgain = false; // 詢問在飛時又有觸發 → 回覆後再跑一次
+  let bulkReqSeq = 0;
+  let bulkStatusEl = null; // renderBulk 畫的狀態列節點
+  let panelHover = false;
+
+  function bulkTarget() {
+    return globalThis.pmzBulk ? globalThis.pmzBulk.normLoad(state.settings.bulkLoad) : 0;
+  }
+
+  function bulkActive() {
+    return state.open && state.tab === 'bulk' && state.settings.bulkSellers === true && bulkTarget() > 0
+      && document.visibilityState === 'visible' && !globalThis.__pmzTour?.isActive?.();
+  }
+
+  function bulkHoldList() {
+    return panelHover && BULK_LOADING.has(state.bulkAuto.phase) && bulkTarget() > 0;
+  }
+
+  function schedulePump(ms) {
+    clearTimeout(bulkTimer);
+    bulkTimer = setTimeout(() => {
+      bulkTimer = null;
+      pumpBulkLoad();
+    }, Math.max(0, ms));
+  }
+
+  function pumpBulkLoad() {
+    if (!bulkActive()) {
+      clearTimeout(bulkTimer);
+      bulkTimer = null;
+      return;
+    }
+    if (bulkReq) {
+      bulkAgain = true;
+      return;
+    }
+    const L = state.bulkAuto;
+    const { loadWait, TIMING } = globalThis.pmzBulk;
+    const now = Date.now();
+    const wait = L.rate ? loadWait(L.rate, now) : Infinity;
+    const gap = Math.max(L.lastFireAt + TIMING.gap, L.lastRespAt + TIMING.afterResp) - now;
+    const fire = !L.stopped && wait === 0 && gap <= 0;
+    const id = ++bulkReqSeq;
+    bulkReq = { id, fire, wait, gap, timer: setTimeout(() => onBulkStepTimeout(id), TIMING.rpcTimeout) };
+    try {
+      window.postMessage({ t: 'pmz:resultsStep', reqId: id, target: bulkTarget(), fire, epoch: L.epoch }, location.origin);
+    } catch (_) { /* 送不出去就交給逾時處理 */ }
+  }
+
+  function onBulkStepTimeout(id) {
+    if (!bulkReq || bulkReq.id !== id) return;
+    bulkReq = null;
+    bulkAgain = false;
+    const L = state.bulkAuto;
+    const { TIMING } = globalThis.pmzBulk;
+    L.rpcFails++;
+    // 結果列一次多一百筆、翻譯跑長任務時偶爾會逾時:退避重試,連續幾次才算找不到官網那一端
+    if (L.rpcFails >= TIMING.rpcMaxFails) {
+      L.phase = 'unavailable';
+      paintBulkStatus();
+      return;
+    }
+    schedulePump(TIMING.rpcBackoff * L.rpcFails);
+  }
+
+  // page/mod-filter.js 的回覆 → 決定下一步
+  function onBulkStepDone(r) {
+    if (!bulkReq || r.reqId !== bulkReq.id) return; // 逾時之後才到的舊回覆
+    const { fire, wait, gap } = bulkReq;
+    clearTimeout(bulkReq.timer);
+    bulkReq = null;
+    const L = state.bulkAuto;
+    L.rpcFails = 0;
+    const newSearch = r.ok === true && r.epoch !== L.epoch;
+    if (newSearch) Object.assign(L, { epoch: r.epoch, steps: 0, retries: 0, stopped: false });
+    if (r.ok === true) Object.assign(L, { loaded: r.loaded, total: r.total });
+    const d = globalThis.pmzBulk.afterStep({
+      reply: r, target: bulkTarget(), fire, wait, gap, stopped: L.stopped, hasRate: !!L.rate, newSearch, steps: L.steps, retries: L.retries,
+    });
+    Object.assign(L, { phase: d.phase, steps: d.steps, retries: d.retries });
+    if (r.fired === true) L.lastFireAt = Date.now();
+    if (d.phase === 'waiting') L.until = Date.now() + wait; // 狀態列顯示「約幾點繼續」
+    let next = d.next; // 下次 pump 的延遲;-1 = 不排,等事件
+    if (bulkAgain) {
+      bulkAgain = false;
+      next = 0;
+    }
+    if (next >= 0) schedulePump(next);
+    // 載入告一段落、或滑鼠已不在面板上:把先前延後的名單更新補上
+    if (state.bulkDirty && !bulkHoldList()) {
+      state.bulkDirty = false;
+      if (state.open && state.tab === 'bulk') {
+        render();
+        return;
+      }
+    }
+    paintBulkStatus();
+  }
+
+  // fetch-tap 送來的官方額度(每個 /fetch/ 回應一份;含使用者自己捲動、其他功能觸發的)
+  function onBulkRate(d) {
+    const L = state.bulkAuto;
+    if (!(d.seq > L.rateSeq)) return; // 重送的同一份或更舊的
+    const rate = globalThis.pmzBulk?.parseRate(d);
+    if (!rate) return; // 讀不懂就不覆蓋 —— 保留上一份已知額度
+    L.rateSeq = d.seq;
+    L.rate = rate;
+    L.lastRespAt = rate.at;
+    if (rate.status === 429) L.stopped = true;
+    schedulePump(0);
+  }
+
+  function onBulkLoadMsg(e) {
+    if (e.source !== window || e.origin !== location.origin) return;
+    const d = e.data;
+    if (d?.__pmz === 'rate') onBulkRate(d);
+    else if (d?.t === 'pmz:resultsStepDone') onBulkStepDone(d);
+  }
+
+  // init 時掛一次:訊息、滑鼠在不在面板上、分頁前景 / 背景、離開頁面
+  function watchBulkLoad() {
+    window.addEventListener('message', onBulkLoadMsg);
+    try { window.postMessage({ __pmz: 'rateReplay' }, location.origin); } catch (_) { /* 忽略 */ }
+    panel.addEventListener('pointerenter', () => { panelHover = true; });
+    panel.addEventListener('pointerleave', () => {
+      panelHover = false;
+      if (!state.bulkDirty) return;
+      state.bulkDirty = false;
+      if (state.open && state.tab === 'bulk') render();
+    });
+    document.addEventListener('visibilitychange', () => schedulePump(0));
+    window.addEventListener('pagehide', () => {
+      clearTimeout(bulkTimer);
+      bulkTimer = null;
+    });
+  }
+
+  const hms = (ts) => {
+    const d = new Date(ts);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+  };
+  const periodText = (s) => (s < 120 ? tr('sb.bulk.load.sec', { n: s })
+    : s < 7200 ? tr('sb.bulk.load.min', { n: Math.round(s / 60) }) : tr('sb.bulk.load.hour', { n: Math.round(s / 3600) }));
+
+  // 狀態列滑過的說明:最近一次回應的各視窗用量(也方便看登入後有沒有多一條帳號規則)
+  function bulkQuotaTitle() {
+    const rate = state.bulkAuto.rate;
+    if (!rate) return tr('sb.bulk.loadTip');
+    // 規則名照官方原文(Ip / Account / Client)大寫顯示,不翻:回報問題時對得上官方標頭
+    const lines = rate.windows.map((w) => tr('sb.bulk.load.quota', { rule: w.rule.toUpperCase(), period: periodText(w.period), hits: w.hits, max: w.max }));
+    return [tr('sb.bulk.loadTip'), tr('sb.bulk.load.quotaTitle', { time: hms(rate.at) }), ...lines].join('\n');
+  }
+
+  const BULK_PHASE_TEXT = {
+    idle: 'loading', loading: 'loading', first: 'loading', busy: 'loading', waiting: 'waiting',
+    done: 'done', full: 'full', cap: 'cap', stopped: 'stopped', noRate: 'noRate', policy: 'policy',
+    live: 'live', unavailable: 'unavailable',
+  };
+  // 就地改狀態列的字(節點已被 render 換掉就不動)。同步、只依 state 畫。
+  function paintBulkStatus() {
+    const box = bulkStatusEl;
+    if (!box?.isConnected) return;
+    const L = state.bulkAuto;
+    const target = bulkTarget();
+    const key = BULK_PHASE_TEXT[L.phase];
+    box.textContent = '';
+    box.dataset.phase = L.phase;
+    box.hidden = target === 0 || !key; // 關掉、或頁面上沒有一般搜尋結果(none)
+    if (box.hidden) return;
+    const n = L.epoch != null ? L.loaded : bulkDomIds().size;
+    box.appendChild(el('span', 'pmz-bulk-load-text', tr(`sb.bulk.load.${key}`, { n, target, time: hms(L.until) })));
+    if (L.phase === 'stopped') {
+      const btn = el('button', 'pmz-seg-btn pmz-bulk-load-resume', tr('sb.bulk.load.resume'));
+      btn.type = 'button';
+      btn.addEventListener('click', () => {
+        Object.assign(L, { stopped: false, retries: 0, phase: 'loading' });
+        paintBulkStatus();
+        schedulePump(0);
+      });
+      box.appendChild(btn);
+    }
+    if (state.bulkDirty) box.appendChild(el('span', 'pmz-bulk-load-hover', tr('sb.bulk.load.hover')));
+    box.title = bulkQuotaTitle();
+  }
+
   function renderBulk(body) {
     const ids = bulkDomIds();
     const entries = [];
@@ -1978,9 +2200,38 @@
     bar.appendChild(iconBtn('refresh', tr('sb.bulk.refresh'), () => {
       pruneBulk();
       state.bulkMsg = null;
+      state.bulkDirty = false;
+      // 自動載入放棄過(找不到官網那一端、重試用完)的話,重新整理就再試一次
+      Object.assign(state.bulkAuto, { retries: 0, rpcFails: 0 });
+      if (state.bulkAuto.phase === 'unavailable') state.bulkAuto.phase = 'idle';
       render();
     }));
     body.appendChild(bar);
+
+    // 自動載入:目標筆數三段鈕 + 狀態列。畫在「沒有分組」的早退之前 —— 正在載入時最需要看到進度
+    const target = bulkTarget();
+    const loadPref = el('div', 'pmz-bulk-pref');
+    loadPref.title = tr('sb.bulk.loadTip');
+    loadPref.appendChild(el('span', 'pmz-bulk-pref-label', tr('sb.bulk.loadLabel')));
+    const loadSeg = el('div', 'pmz-seg');
+    for (const [val, key] of [[0, 'sb.bulk.loadOff'], [50, 'sb.bulk.load50'], [100, 'sb.bulk.load100']]) {
+      const btn = el('button', 'pmz-seg-btn', tr(key));
+      btn.type = 'button';
+      if (target === val) btn.classList.add('pmz-seg-active');
+      btn.addEventListener('click', () => {
+        state.settings.bulkLoad = val;
+        persistSettings();
+        state.bulkAuto.retries = 0;
+        render();
+      });
+      loadSeg.appendChild(btn);
+    }
+    loadPref.appendChild(loadSeg);
+    body.appendChild(loadPref);
+    bulkStatusEl = el('div', 'pmz-bulk-load');
+    body.appendChild(bulkStatusEl);
+    paintBulkStatus();
+    schedulePump(0); // 只排計時器,不在 render 裡做任何非同步 append
 
     if (!groups.length) {
       body.appendChild(el('div', 'pmz-empty', tr('sb.bulk.emptyTitle')));
@@ -3138,6 +3389,8 @@
     // 大量賣家的資料:fetch-tap 送來的物品 JSON(含 listing);比它晚掛上時請它把送過的再送一次
     window.addEventListener('message', onBulkItems);
     try { window.postMessage({ __pmz: 'itemsReplay' }, location.origin); } catch (_) { /* 忽略 */ }
+    // 自動載入:官方額度(同樣請 fetch-tap 把最後一份再送一次)、官網那一端的回覆、滑鼠 / 前景狀態
+    watchBulkLoad();
     // 「常駐維持展開」關掉時完全照舊:收合、書籤分頁
     const keepOpen = state.settings.keepPanelOpen !== false;
     if (keepOpen) state.tab = restoredTab(savedUi);
