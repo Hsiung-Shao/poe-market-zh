@@ -252,13 +252,19 @@
   const PANEL = `${CTRL}-panel`;
   let openPanel = null; // { el, ctrl }
 
-  // 篩選列標題的純文字(拿掉我們自己掛的節點:雙語原文、階級控制項…)
+  // 篩選列標題的純文字。實站(2026-10-09 e2e):
+  //   <div class="filter-title"><i class="mutate-type …">隨機屬性</i> <span>+# 最大生命 (+# to maximum Life)</span></div>
+  // → 只取 <span>(不要前面的詞綴類型標記),拿掉我們自己掛的節點,再去掉翻譯附的「 (英文原文)」
   function titleOf(row) {
     const t = row?.querySelector(':scope > .filter-body > .filter-title') ?? row?.querySelector('.filter-title');
     if (!t) return '';
-    const c = t.cloneNode(true);
-    for (const el of c.querySelectorAll('[class*="ptm-"], [class*="pmz-"]')) el.remove();
-    return c.textContent.replace(/\s+/g, ' ').trim();
+    const src = t.querySelector('span') ?? t;
+    const c = src.cloneNode(true);
+    for (const el of c.querySelectorAll('[class*="ptm-"], [class*="pmz-"], .mutate-type')) el.remove();
+    let s = c.textContent.replace(/\s+/g, ' ').trim();
+    const m = /^(.*[㐀-鿿].*?) \(([^()㐀-鿿]*[A-Za-z][^()㐀-鿿]*)\)$/.exec(s);
+    if (m) s = m[1];
+    return s;
   }
   const rangeText = (a, b) => (a === b ? fmt(a) : `(${fmt(a)}—${fmt(b)})`);
   // 一階的完整詞綴文字;title 的 # 數與該階的數值段數相同才換,否則回 null(呼叫端改顯示範圍)
@@ -484,6 +490,10 @@
       const d = { sig, statId, fams, inv, partial, failed: false };
       ctrlData.set(ctrl, d);
       fillControl(ctrl, d);
+    } else {
+      // 簽章只看階梯本身(清單要不要重建);階級表換新版但階梯不變(例:加了詞綴名稱 nm)時,面板仍要用新資料
+      old.fams = fams;
+      old.partial = partial;
     }
     syncControl(ctrl);
     return ctrl;
