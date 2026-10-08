@@ -612,7 +612,53 @@
     return zh ? lead + zh + trail : null;
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
+  // ── poe.ninja「搜尋篩選」的中英建議(使用者 2026-10-09 要求)──
+  // ninja 的篩選框只做英文子字串比對;中文化之後清單都是中文,使用者卻只能打英文。
+  // 這裡從字典的分區表收一份「中文 ↔ 英文」候選,打中文或英文都列出來,選了把英文寫回去讓 ninja 自己篩。
+  // 只收名稱類(職業 / 天賦 / 傳奇 / 寶石與物品 / 怪物),不收說明句與介面字。
+  function buildSearchPool(D) {
+    const pool = [];
+    const seen = new Set();
+    const tables = [D.classNames, D.passiveAll, D.atlasPassives, D.anointPassives, D.uniqueAll, D.gemAll, D.monsters];
+    for (const t of tables) {
+      for (const [en, zh] of t ?? []) {
+        if (!en || !zh || en === zh || en.length > 60 || /[.!?]/.test(en) || !CJK_RE.test(zh)) continue;
+        const k = `${en}\u0000${zh}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        pool.push({ en, zh, enL: en.toLowerCase() });
+      }
+    }
+    return pool;
+  }
+
+  // 只留 ninja 篩選清單裡真的有的名字。text = ninja 篩選字典(/api/builds/dictionary/…)解成的一大段文字;
+  // 沒抓到(改版 / 失敗)就整個候選池照用 —— 寧可多列,不能讓功能整個失效
+  function filterPool(pool, text) {
+    if (!text) return pool;
+    const kept = pool.filter((p) => text.includes(p.en));
+    return kept.length ? kept : pool;
+  }
+
+  // 含中文比中文、否則比英文(不分大小寫);完全相同 > 開頭相同 > 包含,同級短的先
+  function searchPool(pool, q, limit = 30) {
+    const s = String(q ?? '').trim();
+    if (!s) return [];
+    const zhMode = CJK_RE.test(s);
+    if (!zhMode && s.length < 2) return [];
+    const needle = zhMode ? s : s.toLowerCase();
+    const hits = [];
+    for (const p of pool) {
+      const hay = zhMode ? p.zh : p.enL;
+      const i = hay.indexOf(needle);
+      if (i < 0) continue;
+      hits.push({ p, rank: hay === needle ? 0 : i === 0 ? 1 : 2, len: hay.length });
+    }
+    hits.sort((a, b) => a.rank - b.rank || a.len - b.len || a.p.en.localeCompare(b.p.en));
+    return hits.slice(0, limit).map((h) => ({ en: h.p.en, zh: h.p.zh }));
+  }
+
+  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, buildSearchPool, filterPool, searchPool, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -939,6 +985,151 @@
     }
   }
 
+  // ── poe.ninja「搜尋篩選」中英建議清單(候選與排序見上方 buildSearchPool / searchPool)──
+  // ⚠ 清單節點掛在 document.body 最後(React root 之外)、帶 data-pmz-no-zh 讓翻譯跳過;
+  //   React 管的節點一個都不碰,監聽也掛在 document(事件委派)。選了就用原生 value setter + input 事件
+  //   把英文寫回輸入框(React 受控元件只認這種寫法),之後由 ninja 自己篩。
+  const SEARCH_EN = 'Search filters...';
+  const SUGGEST_ID = 'pmz-ninja-suggest';
+  let searchPoolCache = null; // { key, pool }
+  let ninjaText = { key: null, text: null, loading: null };
+  let suggest = null; // { box, input, items, active }
+  let picking = false;
+
+  const isFilterInput = (el) => SITE === 'ninja' && el?.tagName === 'INPUT'
+    && (placeholderOrig.get(el)?.en ?? el.getAttribute('placeholder')) === SEARCH_EN;
+
+  // ninja 篩選清單的字典(自訂二進位格式,字串直接串接):找本頁載過的網址再抓一次(走 HTTP 快取)
+  function loadNinjaText() {
+    const key = location.pathname;
+    if (ninjaText.key === key) return ninjaText.loading;
+    const urls = [...new Set(performance.getEntriesByType('resource').map((e) => e.name)
+      .filter((u) => /\/api\/builds\/dictionary\//.test(u)))];
+    const rec = { key, text: null, loading: null };
+    ninjaText = rec;
+    if (!urls.length) { rec.key = null; return null; } // 字典還沒載:下次再找
+    rec.loading = Promise.all(urls.map((u) => fetch(u).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null)))
+      .then((bufs) => {
+        const dec = new TextDecoder();
+        rec.text = bufs.filter(Boolean).map((b) => dec.decode(b)).join('\n') || null;
+        if (rec === ninjaText) searchPoolCache = null;
+      });
+    return rec.loading;
+  }
+
+  function currentPool() {
+    if (!dict) return [];
+    const key = `${dictGame}|${ninjaText.key}|${!!ninjaText.text}`;
+    if (searchPoolCache?.key === key && searchPoolCache.dict === dict) return searchPoolCache.pool;
+    const pool = filterPool(buildSearchPool(dict), ninjaText.text);
+    searchPoolCache = { key, dict, pool };
+    return pool;
+  }
+
+  function closeSuggest() {
+    suggest?.box.remove();
+    suggest = null;
+  }
+
+  function placeSuggest() {
+    if (!suggest) return;
+    const r = suggest.input.getBoundingClientRect();
+    if (!suggest.input.isConnected || !r.width) { closeSuggest(); return; }
+    Object.assign(suggest.box.style, { left: `${r.left}px`, top: `${r.bottom + 2}px`, width: `${Math.max(r.width, 260)}px` });
+  }
+
+  function highlight(i) {
+    if (!suggest) return;
+    suggest.active = i;
+    [...suggest.box.children].forEach((row, k) => { row.style.background = k === i ? '#2b3a4a' : ''; });
+    suggest.box.children[i]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function pickSuggest(i) {
+    const it = suggest?.items[i];
+    if (!it) return;
+    const input = suggest.input;
+    closeSuggest();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, it.en);
+    picking = true; // 自己派的 input 事件不再開清單
+    try { input.dispatchEvent(new Event('input', { bubbles: true })); } finally { picking = false; }
+  }
+
+  function showSuggest(input) {
+    const items = searchPool(currentPool(), input.value);
+    if (!items.length) { closeSuggest(); return; }
+    if (!suggest || suggest.input !== input) {
+      closeSuggest();
+      const box = document.createElement('div');
+      box.id = SUGGEST_ID;
+      box.dataset.pmzNoZh = '';
+      box.setAttribute('role', 'listbox');
+      Object.assign(box.style, {
+        position: 'fixed', zIndex: 2147483000, maxHeight: '320px', overflowY: 'auto', background: '#1b2430',
+        border: '1px solid #3a4656', borderRadius: '4px', boxShadow: '0 6px 18px rgba(0,0,0,.5)', fontSize: '13px',
+      });
+      box.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // 不讓輸入框失焦
+        const row = e.target.closest('[data-i]');
+        if (row) pickSuggest(Number(row.dataset.i));
+      });
+      box.addEventListener('mousemove', (e) => {
+        const row = e.target.closest('[data-i]');
+        if (row && Number(row.dataset.i) !== suggest?.active) highlight(Number(row.dataset.i));
+      });
+      document.body.appendChild(box);
+      suggest = { box, input, items: [], active: -1 };
+    }
+    suggest.items = items;
+    suggest.box.replaceChildren(...items.map((it, i) => {
+      const row = document.createElement('div');
+      row.dataset.i = String(i);
+      row.setAttribute('role', 'option');
+      Object.assign(row.style, { padding: '5px 10px', cursor: 'pointer', borderBottom: '1px solid #273241', lineHeight: '1.35' });
+      const zh = document.createElement('div');
+      zh.textContent = it.zh;
+      Object.assign(zh.style, { color: '#e6e6e6', fontWeight: '600' });
+      const en = document.createElement('div');
+      en.textContent = it.en;
+      Object.assign(en.style, { color: ORIG_COLOR, fontSize: '12px' });
+      row.append(zh, en);
+      return row;
+    }));
+    highlight(-1);
+    placeSuggest();
+  }
+
+  const onSearchInput = (e) => {
+    if (picking || !isFilterInput(e.target) || e.isComposing) return;
+    const p = loadNinjaText();
+    p?.then(() => { if (suggest?.input === e.target) showSuggest(e.target); });
+    showSuggest(e.target);
+  };
+  const onSearchKey = (e) => {
+    if (!suggest || e.target !== suggest.input || e.isComposing) return;
+    const n = suggest.items.length;
+    if (e.key === 'ArrowDown') { e.preventDefault(); highlight((suggest.active + 1) % n); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((suggest.active - 1 + n) % n); }
+    else if (e.key === 'Enter') { e.preventDefault(); pickSuggest(Math.max(0, suggest.active)); }
+    else if (e.key === 'Escape') closeSuggest();
+  };
+  const onSearchFocus = (e) => { if (isFilterInput(e.target) && e.target.value.trim()) onSearchInput(e); };
+  const onSearchBlur = (e) => { if (suggest && e.target === suggest.input) closeSuggest(); };
+  const onSearchMove = () => placeSuggest();
+
+  function bindSearch(on) {
+    if (SITE !== 'ninja') return;
+    const m = on ? 'addEventListener' : 'removeEventListener';
+    document[m]('input', onSearchInput, true);
+    document[m]('compositionend', onSearchInput, true);
+    document[m]('keydown', onSearchKey, true);
+    document[m]('focusin', onSearchFocus, true);
+    document[m]('focusout', onSearchBlur, true);
+    window[m]('scroll', onSearchMove, true);
+    window[m]('resize', onSearchMove);
+    if (!on) closeSuggest();
+  }
+
   function collectText(root, out) {
     if (root.nodeType === Node.TEXT_NODE) { out.push(root); return; }
     if (root.nodeType !== Node.ELEMENT_NODE || SKIP_TAGS.has(root.tagName)) return;
@@ -1112,6 +1303,7 @@
     runId++;
     dictGame = undefined; // 強制 flush 重載字典並整頁掃一次
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    bindSearch(true);
     schedule(document.body);
   }
 
@@ -1120,6 +1312,7 @@
     enabled = false;
     runId++; // 進行中的字典載入一律作廢(見 flush)
     observer.disconnect();
+    bindSearch(false);
     restoreAll();
     dict = null;
     dictGame = null;
