@@ -855,7 +855,7 @@ html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
 /* ── 篩選列的詞綴階級選單(content/tier-picker.js)──────────────────────────
    插在 MIN 前那個 .sep 之前。display:table-cell 與官網的 .sep 同型:官網的 .filter-body 是
    display:table,標題吃剩下的寬度;實測用 float 會把 MIN/MAX 擠到下一行,table-cell 則只讓標題縮短。
-   原生 <select> 疊在字上(透明),點下去是瀏覽器自己的清單 —— 鍵盤、捲動、分組都不必自己做。 */
+   原生 <select> 疊在字上(透明)當值的來源;點下去改開下方的階級面板(2026-10-09),不開瀏覽器自己的清單。 */
 .pmz-tier-pick {
   display: table-cell;
   position: relative;
@@ -900,6 +900,65 @@ html.pmz-hide-tier-badges .pmz-tier-badge { display: none; }
 }
 html.pmz-hide-tier-picker .pmz-tier-pick,
 html.pmz-hide-tier-picker .pmz-tier-pick-ph { display: none; }
+
+/* 階級面板(點「≈T▾」開,掛在 document.body;使用者 2026-10-09 要求像 poedb 一階一列):
+   T | 詞綴名 | 等級 | 完整詞綴文字,T 大的在上。原生 select 仍疊在「≈T▾」上當值的來源,只是不再開原生清單。 */
+.pmz-tier-pick-panel {
+  position: fixed;
+  z-index: 10001;
+  overflow-y: auto;
+  background: #16181b;
+  border: 1px solid #5a4a2f;
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+  font: 13px/1.35 system-ui, sans-serif;
+  color: #e6dcc6;
+}
+.pmz-tier-pick-panel-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #24211b;
+  border-bottom: 1px solid #5a4a2f;
+  color: #e6b450;
+  font-weight: bold;
+}
+.pmz-tier-pick-panel-head > span { flex: 1; min-width: 0; }
+.pmz-tier-pick-panel-close {
+  border: 0;
+  background: none;
+  color: #cfc3a8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pmz-tier-pick-panel-close:hover { color: #fff8e1; }
+.pmz-tier-pick-panel-group {
+  padding: 4px 10px;
+  background: #1e1c18;
+  color: #a99a7c;
+  font-size: 12px;
+}
+.pmz-tier-pick-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #26282c;
+  cursor: pointer;
+}
+.pmz-tier-pick-panel-row:hover { background: #2a2620; }
+.pmz-tier-pick-panel-row.pmz-tier-pick-panel-on { background: #22301f; }
+.pmz-tier-pick-panel-row.pmz-tier-pick-panel-on .pmz-tier-pick-panel-t { color: #7fd67f; }
+.pmz-tier-pick-panel-none { color: #a99a7c; }
+.pmz-tier-pick-panel-t { flex: 0 0 30px; font-weight: bold; color: #e6b450; }
+.pmz-tier-pick-panel-name { flex: 0 0 110px; display: flex; flex-direction: column; }
+.pmz-tier-pick-panel-en { font-size: 11px; color: #7a6f5a; }
+.pmz-tier-pick-panel-lvl { flex: 0 0 28px; text-align: right; color: #cfc3a8; }
+.pmz-tier-pick-panel-text { flex: 1; min-width: 0; }
 
 /* ── 功能導覽(content/tour.js)──
    整組 append 到 document.body(不進 .pmz-body:render() 會清空它)。z-index 高於 rail(9999)、

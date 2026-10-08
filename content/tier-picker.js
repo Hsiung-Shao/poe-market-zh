@@ -12,7 +12,8 @@
 // 看不到 Vue 的是這裡,看得到的是 page/mod-filter.js(MAIN world):它把每一列的 stat id、
 // 群組 / 列索引寫成 DOM 屬性(data-pmz-stat-id / -gi / -fi / -gtype),物品類別、基底寫在 <html>;
 // 填值則由這裡 postMessage `pmz:setFilterValue` 請它呼叫官網自己的 updateFilter。
-// **不讀篩選標題文字**(那是我們翻過的中文,關掉翻譯又變英文)—— 全程用 stat id。
+// **計算與填值不讀篩選標題文字**(那是我們翻過的中文,關掉翻譯又變英文)—— 全程用 stat id;
+// 唯一讀標題的是階級面板的顯示文字(titleOf / tierText,把 # 換成該階範圍),讀不到或對不上只影響顯示。
 //
 // ── 計算規則(沿用 tierfill 的 compute.mjs 包含模式,github.com/Sknoww/tierfill,MIT License)──
 //   一律填該階級的最低數值:MIN = 該階級下限;`Adds # to #` 取兩個下限的平均((loMin+hiMin)/2)
@@ -126,7 +127,7 @@
       const vk = leaf ? x.f.v?.[leaf] : null;
       let m = merged.find((y) => y.sig === sig);
       if (!m) {
-        m = { sig, g: x.f.g, i: x.f.i ?? null, t: x.f.t, cats: [], vkeys: [], anyVariant: false, order: x.idx };
+        m = { sig, g: x.f.g, i: x.f.i ?? null, t: x.f.t, nm: x.f.nm ?? null, cats: [], vkeys: [], anyVariant: false, order: x.idx };
         merged.push(m);
       }
       for (const c of x.cats) if (!m.cats.includes(c)) m.cats.push(c);
@@ -147,7 +148,7 @@
   }
 
   // ── 文字 ──
-  const state = { lang: 'zh', enabled: true, ladders: null, laddersText: null };
+  const state = { lang: 'zh', enabled: true, ladders: null, laddersText: null, bilingual: false }; // bilingual = 交易站「雙語顯示」(面板詞綴名附英文)
 
   // 字串表在 shared/i18n.js;語言依本擴充自己的介面語言(uiLang),台服站也一樣
   function tr(key, vars) {
@@ -234,8 +235,150 @@
     const sel = document.createElement('select');
     sel.className = `${CTRL}-select`;
     sel.addEventListener('change', () => onPick(ctrl));
+    // 點下去不開瀏覽器原生清單,改開階級面板(select 仍是值的來源:面板選一列 = 設 select.value + change)
+    sel.addEventListener('mousedown', (e) => { e.preventDefault(); togglePanel(ctrl); });
+    sel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || (e.altKey && e.key === 'ArrowDown')) { e.preventDefault(); togglePanel(ctrl); }
+    });
     ctrl.append(label, sel);
     return ctrl;
+  }
+
+  // ── 階級面板(使用者 2026-10-09 要求:像 poedb 一樣一階一列「T7 敏捷的 2 增加 (4—8)% 閃避值」)──
+  // 掛在 document.body(官網 Vue 樹之外)、position:fixed 貼著控制項;T 大的在上、T1 在最下(同 poedb)。
+  // 詞綴名稱來自階級表的 nm(GGPK Mods.Name);沒有 nm 的舊階級表就不顯示名稱欄。
+  // 完整詞綴文字 = 篩選列標題(只用於顯示,填值仍只靠 stat id 與階級表)把 # 依序換成該階範圍;
+  // # 的數目對不上就只顯示範圍,不硬湊。
+  const PANEL = `${CTRL}-panel`;
+  let openPanel = null; // { el, ctrl }
+
+  // 篩選列標題的純文字(拿掉我們自己掛的節點:雙語原文、階級控制項…)
+  function titleOf(row) {
+    const t = row?.querySelector(':scope > .filter-body > .filter-title') ?? row?.querySelector('.filter-title');
+    if (!t) return '';
+    const c = t.cloneNode(true);
+    for (const el of c.querySelectorAll('[class*="ptm-"], [class*="pmz-"]')) el.remove();
+    return c.textContent.replace(/\s+/g, ' ').trim();
+  }
+  const rangeText = (a, b) => (a === b ? fmt(a) : `(${fmt(a)}—${fmt(b)})`);
+  // 一階的完整詞綴文字;title 的 # 數與該階的數值段數相同才換,否則回 null(呼叫端改顯示範圍)
+  function tierText(title, t) {
+    const segs = t.length >= 5 ? [rangeText(t[1], t[2]), rangeText(t[3], t[4])] : [rangeText(t[1], t[2])];
+    const holes = (String(title).match(/#/g) ?? []).length;
+    if (!title || holes !== segs.length) return null;
+    let i = 0;
+    return title.replace(/#/g, () => segs[i++]);
+  }
+
+  function closePanel() {
+    if (!openPanel) return;
+    openPanel.el.remove();
+    openPanel = null;
+    document.removeEventListener('mousedown', onDocDown, true);
+    document.removeEventListener('keydown', onDocKey, true);
+    window.removeEventListener('resize', closePanel);
+    window.removeEventListener('scroll', onScroll, true);
+  }
+  const onDocDown = (e) => {
+    if (!openPanel) return;
+    if (openPanel.el.contains(e.target) || openPanel.ctrl.contains(e.target)) return;
+    closePanel();
+  };
+  const onDocKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePanel(); } };
+  const onScroll = (e) => { if (openPanel && !openPanel.el.contains(e.target)) closePanel(); };
+
+  function togglePanel(ctrl) {
+    if (openPanel?.ctrl === ctrl) { closePanel(); return; }
+    closePanel();
+    const d = ctrlData.get(ctrl);
+    const sel = ctrl.querySelector('select');
+    if (!d || !sel) return;
+    const title = titleOf(ctrl.closest(`[${ATTR.stat}]`));
+    const el = document.createElement('div');
+    el.className = PANEL;
+    el.setAttribute('role', 'listbox');
+    const head = document.createElement('div');
+    head.className = `${PANEL}-head`;
+    const ht = document.createElement('span');
+    ht.textContent = title || tr('tierpick.panel.title');
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = `${PANEL}-close`;
+    x.textContent = '×';
+    x.title = tr('tierpick.panel.close');
+    x.addEventListener('click', closePanel);
+    head.append(ht, x);
+    el.appendChild(head);
+    const choose = (value) => {
+      closePanel();
+      if (sel.value === value) return;
+      sel.value = value;
+      sel.dispatchEvent(new Event('change'));
+    };
+    const addRow = (value, cells, cls = '') => {
+      const r = document.createElement('div');
+      r.className = `${PANEL}-row${cls}${sel.value === value ? ` ${PANEL}-on` : ''}`;
+      r.setAttribute('role', 'option');
+      r.setAttribute('data-value', value);
+      for (const [c, content] of cells) {
+        const s = document.createElement('span');
+        s.className = `${PANEL}-${c}`;
+        if (Array.isArray(content)) s.append(...content); else s.textContent = content;
+        r.appendChild(s);
+      }
+      r.addEventListener('click', () => choose(value));
+      el.appendChild(r);
+    };
+    addRow('', [['none', tr('tierpick.none')]], ` ${PANEL}-none-row`);
+    const labels = familyLabels(d.fams, catNames);
+    d.fams.forEach((f, fi) => {
+      if (d.fams.length > 1) {
+        const g = document.createElement('div');
+        g.className = `${PANEL}-group`;
+        g.textContent = labels[fi];
+        el.appendChild(g);
+      }
+      // T 大的在上、T1 在最下(poedb 同序)
+      for (let ti = f.t.length - 1; ti >= 0; ti--) {
+        const t = f.t[ti];
+        const nm = f.nm?.[ti];
+        const name = [];
+        if (nm) {
+          const zh = document.createElement('span');
+          zh.textContent = (state.lang === 'en' ? nm[0] : nm[1] ?? nm[0]) ?? '';
+          name.push(zh);
+          if (state.lang !== 'en' && state.bilingual && nm[1]) {
+            const en = document.createElement('span');
+            en.className = `${PANEL}-en`;
+            en.textContent = nm[0];
+            name.push(en);
+          }
+        }
+        addRow(`${fi}:${ti}`, [
+          ['t', `T${ti + 1}`],
+          ...(d.fams.some((ff) => ff.nm) ? [['name', name]] : []),
+          ['lvl', String(t[0])],
+          ['text', tierText(title, t) ?? tierInfo(t).range],
+        ]);
+      }
+    });
+    document.body.appendChild(el);
+    openPanel = { el, ctrl };
+    // 位置:控制項下方靠左對齊;放不下就往上 / 往左收
+    const r = ctrl.getBoundingClientRect?.() ?? { left: 0, bottom: 0, top: 0 };
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const w = Math.min(560, vw - 16);
+    el.style.width = `${w}px`;
+    el.style.left = `${Math.max(8, Math.min(r.left, vw - w - 8))}px`;
+    const below = vh - r.bottom - 8;
+    if (below >= 220 || below >= r.top) { el.style.top = `${r.bottom + 2}px`; el.style.maxHeight = `${Math.max(160, below)}px`; }
+    else { el.style.bottom = `${vh - r.top + 2}px`; el.style.maxHeight = `${Math.max(160, r.top - 8)}px`; }
+    el.querySelector(`.${PANEL}-on`)?.scrollIntoView?.({ block: 'nearest' });
+    document.addEventListener('mousedown', onDocDown, true);
+    document.addEventListener('keydown', onDocKey, true);
+    window.addEventListener('resize', closePanel);
+    window.addEventListener('scroll', onScroll, true);
   }
 
   function fillControl(ctrl, d) {
@@ -321,7 +464,7 @@
     const statId = row.getAttribute(ATTR.stat);
     const body = row.querySelector(':scope > .filter-body');
     const existing = body?.querySelector(`:scope > .${CTRL}`) ?? null;
-    const drop = () => { if (existing) existing.remove(); return null; };
+    const drop = () => { if (existing) { if (openPanel?.ctrl === existing) closePanel(); existing.remove(); } return null; };
     if (!statId || !body) return drop();
     if (row.getAttribute(ATTR.gtype) === 'not') return drop(); // 排除群組不需要數值
     if (excludedReason(state.ladders, statId)) return drop();
@@ -378,6 +521,7 @@
   }
   // 功能關掉:選單與空格全部拿掉(只動我們自己插的節點)
   function clearAll(root) {
+    closePanel();
     for (const el of [...root.querySelectorAll(`.${CTRL}`), ...root.querySelectorAll(`.${PH}`)]) el.remove();
   }
 
@@ -500,7 +644,8 @@
   }
   let lastLang = { uiLang: undefined, language: undefined };
   try {
-    chrome.storage.local.get(['settings', 'uiLang', 'language']).then((got) => {
+    chrome.storage.local.get(['settings', 'uiLang', 'language', 'bilingualMods']).then((got) => {
+      state.bilingual = got?.bilingualMods === true;
       lastLang = { uiLang: got?.uiLang, language: got?.language };
       applyLang(lastLang.uiLang, lastLang.language);
       state.enabled = false; // 讓 applySetting 把「開」當成剛打開,觸發載入
@@ -509,6 +654,7 @@
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
       if (changes[CACHE_KEY]) useLadders(changes[CACHE_KEY].newValue?.text);
+      if (changes.bilingualMods) state.bilingual = changes.bilingualMods.newValue === true; // 下次開面板生效
       if (changes.uiLang || changes.language) {
         if (changes.uiLang) lastLang.uiLang = changes.uiLang.newValue;
         if (changes.language) lastLang.language = changes.language.newValue;
@@ -523,5 +669,6 @@
   globalThis.__pmzTierPickerInternals = {
     tierInfo, computeValue, excludedReason, familiesFor, familyLabels, isPartial, variantLabel,
     renderRow, rescan, useLadders, applySetting, applyLang, state, targets, stat, GAME, CACHE_KEY, VERIFIED_TEXT_ONLY, PH,
+    tierText, titleOf, togglePanel, closePanel, PANEL,
   };
 })();
