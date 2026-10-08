@@ -658,7 +658,18 @@
     return hits.slice(0, limit).map((h) => ({ en: h.p.en, zh: h.p.zh }));
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, buildSearchPool, filterPool, searchPool, SITE_UI, SITE_UI_MANUAL };
+  // 按 Enter 要換成哪一筆(-1 = 不換,保留使用者打的字):
+  // 用 ↑↓ 選過就用那筆;沒選時英文原樣交給 ninja 篩(打「Divinity」不能被補成「Light of Divinity」,使用者 2026-10-09 回報);
+  // 中文 ninja 看不懂,中文完全相同的那筆優先,否則取第一筆
+  function enterChoice(items, q, active) {
+    if (active >= 0 && active < items.length) return active;
+    const s = String(q ?? '').trim();
+    if (!items.length || !CJK_RE.test(s)) return -1;
+    const exact = items.findIndex((it) => it.zh === s);
+    return exact >= 0 ? exact : 0;
+  }
+
+  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, buildSearchPool, filterPool, searchPool, enterChoice, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -1110,7 +1121,12 @@
     const n = suggest.items.length;
     if (e.key === 'ArrowDown') { e.preventDefault(); highlight((suggest.active + 1) % n); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((suggest.active - 1 + n) % n); }
-    else if (e.key === 'Enter') { e.preventDefault(); pickSuggest(Math.max(0, suggest.active)); }
+    else if (e.key === 'Enter') {
+      const i = enterChoice(suggest.items, suggest.input.value, suggest.active);
+      if (i < 0) { closeSuggest(); return; } // 不攔 Enter,原樣交給 ninja
+      e.preventDefault();
+      pickSuggest(i);
+    }
     else if (e.key === 'Escape') closeSuggest();
   };
   const onSearchFocus = (e) => { if (isFilterInput(e.target) && e.target.value.trim()) onSearchInput(e); };
