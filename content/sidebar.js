@@ -77,8 +77,8 @@
     modFilterButtons: true, // 結果列每條詞綴右側的 ＋/− 篩選按鈕(content/mod-row.js 讀同一個鍵)
     tierBadges: true, // 結果列每條詞綴的階級徽章「T2 高」(content/tier-badge.js 讀同一個鍵)
     tierPicker: true, // 篩選列每條詞綴 MIN 左側的階級選單「≈T▾」(content/tier-picker.js、bg/tiers.js 讀同一個鍵)
-    // 階級選單的填值方式:'inclusive' = 該階級下限;'strict' = 排除較低階級擲得到的值(tierfill 的兩種模式)
-    tierPickerMode: 'inclusive',
+    // ⚠ 舊的 tierPickerMode(inclusive / strict)2026-10-09 使用者裁定移除:階級選單一律填階級下限。
+    //   舊使用者 storage 裡留著無害,讀取端不再看它。
     // 「大量賣家」分頁(預設關,使用者 2026-10-05 裁定):同一賣家有 ≥2 筆上架時分組列出;關掉時 rail 鈕與分頁都藏起來
     bulkSellers: false,
     // 大量賣家每組預設展開(true)或收合(false);在分頁上直接切換(使用者 2026-10-06 要求),預設維持原本的展開
@@ -3039,18 +3039,8 @@
     settingToggle(body, 'tierBadges', tr('sb.set.tierBadges'));
     // 結果列 poedb / wiki 快捷鈕:result-links.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
     settingToggle(body, 'resultLinks', tr('sb.set.resultLinks'));
-    // 階級選單:tier-picker.js 監聽 settings 即時顯示 / 隱藏、換填值方式,這裡只負責存
+    // 階級選單:tier-picker.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存(一律填階級下限,沒有填值方式可選)
     settingToggle(body, 'tierPicker', tr('sb.set.tierPicker'));
-    if (state.settings.tierPicker !== false) {
-      segRow(body, tr('sb.set.tierPickerMode'),
-        [['inclusive', tr('sb.set.tierPickerInclusive')], ['strict', tr('sb.set.tierPickerStrict')]],
-        (val) => (state.settings.tierPickerMode === 'strict' ? 'strict' : 'inclusive') === val,
-        (val) => {
-          state.settings.tierPickerMode = val;
-          persistSettings();
-          render();
-        }).parentElement.dataset.pmzSetting = 'tierPickerMode';
-    }
 
     // ── 3. 資料來源 ──
     body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data'))).dataset.pmzSection = 'data';

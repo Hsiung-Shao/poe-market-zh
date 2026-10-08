@@ -14,12 +14,10 @@
 // 填值則由這裡 postMessage `pmz:setFilterValue` 請它呼叫官網自己的 updateFilter。
 // **不讀篩選標題文字**(那是我們翻過的中文,關掉翻譯又變英文)—— 全程用 stat id。
 //
-// ── 計算規則(沿用 tierfill 的 compute.mjs,github.com/Sknoww/tierfill,MIT License)──
-//   包含模式(inclusive):MIN = 該階級下限;`Adds # to #` 取兩個下限的平均((loMin+hiMin)/2)
-//   嚴格模式(strict):MIN = max(下限, 較弱各階上限的最大值 + 一步)
-//     一步 = 平均值類 0.5、整數 1、帶小數 0.01(交易站可填的下一個值)
-//   反向(inv:越小越好,搜尋值為負):對稱地填 MAX —— 包含 = 該階級上限;
-//     嚴格 = min(上限, 較弱各階下限的最小值 − 一步)
+// ── 計算規則(沿用 tierfill 的 compute.mjs 包含模式,github.com/Sknoww/tierfill,MIT License)──
+//   一律填該階級的最低數值:MIN = 該階級下限;`Adds # to #` 取兩個下限的平均((loMin+hiMin)/2)
+//   反向(inv:越小越好,搜尋值為負):對稱地填 MAX = 該階級上限
+//   ⚠ 使用者 2026-10-09 裁定移除「嚴格」模式與「填值方式」設定(舊設定值 tierPickerMode 留在 storage 無害,不再讀)。
 //
 // ── 不放選單的(寧缺勿錯,尚未實站驗證)──
 //   sgn:-1(交易站文字是 negate 變體,搜尋值與階梯值正負相反)、
@@ -78,21 +76,13 @@
     return { lvl, lo: Math.min(a, b), hi: Math.max(a, b), avg: false, ints: isInt(a) && isInt(b), range: a === b ? fmt(a) : `${fmt(a)}–${fmt(b)}` };
   }
 
-  // 第 i 階(0 = T1)要填的值 → { bound:'min'|'max', value }
-  function computeValue(tiers, i, mode, inv) {
-    const infos = tiers.map(tierInfo);
-    const me = infos[i];
-    if (!me) return null;
-    const weaker = infos.slice(i + 1); // T1 在前,後面的都比較弱
-    const ints = infos.every((x) => x.ints);
-    const step = me.avg ? (ints ? 0.5 : 0.01) : ints ? 1 : 0.01;
-    const strict = mode === 'strict' && weaker.length > 0;
-    if (!inv) {
-      const v = strict ? Math.max(me.lo, Math.max(...weaker.map((x) => x.hi)) + step) : me.lo;
-      return { bound: 'min', value: round2(v) };
-    }
-    const v = strict ? Math.min(me.hi, Math.min(...weaker.map((x) => x.lo)) - step) : me.hi;
-    return { bound: 'max', value: round2(v) };
+  // 第 i 階(0 = T1)要填的值 → { bound:'min'|'max', value }:一律該階級的最低數值
+  // (一般 = 下限填 MIN;inv 越小越好 = 上限填 MAX)
+  function computeValue(tiers, i, inv) {
+    const t = tiers?.[i];
+    if (!t) return null;
+    const me = tierInfo(t);
+    return inv ? { bound: 'max', value: round2(me.hi) } : { bound: 'min', value: round2(me.lo) };
   }
 
   // 不放選單的原因;可以放回 null
@@ -157,7 +147,7 @@
   }
 
   // ── 文字 ──
-  const state = { lang: 'zh', enabled: true, mode: 'inclusive', ladders: null, laddersText: null };
+  const state = { lang: 'zh', enabled: true, ladders: null, laddersText: null };
 
   // 字串表在 shared/i18n.js;語言依本擴充自己的介面語言(uiLang),台服站也一樣
   function tr(key, vars) {
@@ -264,7 +254,7 @@
         sel.appendChild(parent);
       }
       f.t.forEach((t, ti) => {
-        const r = computeValue(f.t, ti, state.mode, d.inv);
+        const r = computeValue(f.t, ti, d.inv);
         const info = tierInfo(t);
         const o = document.createElement('option');
         o.value = `${fi}:${ti}`;
@@ -287,8 +277,7 @@
     const text = val ? `T${tg.n}▾` : `${tr('tierpick.label')}▾`;
     if (label.textContent !== text) label.textContent = text;
     ctrl.classList.toggle(`${CTRL}-set`, !!val);
-    const lines = [tr('tierpick.tip.title'), tr(d.inv ? 'tierpick.tip.fillMax' : 'tierpick.tip.fillMin'),
-      tr(state.mode === 'strict' ? 'tierpick.tip.strict' : 'tierpick.tip.inclusive')];
+    const lines = [tr('tierpick.tip.title'), tr(d.inv ? 'tierpick.tip.fillMax' : 'tierpick.tip.fillMin')];
     if (d.fams.length > 1) lines.push(tr('tierpick.tip.families', { count: d.fams.length }));
     if (d.partial) lines.push(tr('tierpick.tip.partial'));
     if (val) lines.push(tr('tierpick.tip.target', { n: tg.n }));
@@ -313,7 +302,7 @@
     }
     const [fi, ti] = v.split(':').map(Number);
     const fam = d.fams[fi];
-    const r = fam && computeValue(fam.t, ti, state.mode, d.inv);
+    const r = fam && computeValue(fam.t, ti, d.inv);
     const gi = Number(row.getAttribute(ATTR.gi));
     const rfi = Number(row.getAttribute(ATTR.fi));
     if (!r || !Number.isInteger(gi) || !Number.isInteger(rfi)) { d.failed = true; syncControl(ctrl); return; }
@@ -343,7 +332,7 @@
     const anchor = min.previousElementSibling?.classList.contains('sep') ? min.previousElementSibling : min;
     const inv = state.ladders.stats[statId].inv === 1;
     const partial = isPartial(state.ladders, statId, ctx.cat);
-    const sig = JSON.stringify([statId, fams.map((f) => [f.sig, f.cats, f.vkeys, f.anyVariant]), state.mode, state.lang, catNamesRaw, inv]);
+    const sig = JSON.stringify([statId, fams.map((f) => [f.sig, f.cats, f.vkeys, f.anyVariant]), state.lang, catNamesRaw, inv]);
     let ctrl = existing;
     if (!ctrl) { ctrl = buildControl(); stat.inserted++; }
     if (ctrl.nextElementSibling !== anchor) body.insertBefore(ctrl, anchor);
@@ -469,7 +458,7 @@
     });
   } catch (_) { /* 離線驗證殼沒有 MutationObserver */ }
 
-  // 已插的控制項就地重畫(換語言 / 換模式 / 換類別名稱;rescan 會依 sig 判斷要不要重建清單)
+  // 已插的控制項就地重畫(換語言 / 換類別名稱;rescan 會依 sig 判斷要不要重建清單)
   function refreshAll() { rescan(); }
 
   // ── 階級表 ──
@@ -496,11 +485,10 @@
     } catch (_) { /* 沒有 chrome.*(離線驗證殼) */ }
   }
 
-  // ── 使用者開關(settings.tierPicker,預設開)、填值方式與介面語言 ──
+  // ── 使用者開關(settings.tierPicker,預設開)與介面語言 ──
   function applySetting(settings) {
     const was = state.enabled;
     state.enabled = settings?.tierPicker !== false;
-    state.mode = settings?.tierPickerMode === 'strict' ? 'strict' : 'inclusive';
     document.documentElement.classList.toggle(HIDE_CLASS, !state.enabled);
     if (!state.enabled && targets.size) { targets.clear(); writeTargets(); } // 關掉選單 = 徽章不再比目標
     if (state.enabled && !was) loadLadders();
@@ -529,7 +517,7 @@
       }
       if (changes.settings) applySetting(changes.settings.newValue);
     });
-  } catch (_) { /* 沒有 chrome.storage(離線驗證殼)就維持預設:開、包含模式、中文 */ }
+  } catch (_) { /* 沒有 chrome.storage(離線驗證殼)就維持預設:開、中文 */ }
 
   // 供離線驗證腳本呼叫真正的實作(不另外複製一份,避免測試與實機分歧)
   globalThis.__pmzTierPickerInternals = {

@@ -8,6 +8,8 @@
 // 我們只動第三個:`Chilled` → 「冷凍的」。
 // ⚠ **階級那一格(.lc.l)一個字都不碰。** 曾經做過 `P9` → 「前 T9」與「T 數階梯
 //   浮層」,2026-08-30 由使用者裁定移除 —— 需要的只是「把這條詞綴丟進篩選區」。
+// ⚠ **＋/− 都不帶數值**(2026-10-09 使用者裁定):＋ 只加入那條詞綴、MIN / MAX 留空;
+//   曾帶「這件物品的數值當下限」(2026-08-30 起)與「所屬階級下限」(2026-10-09 試做),都已移除。
 //
 // ⚠ **非破壞性**:結果列是官網 Vue 渲染的,清空重建或增刪既有節點會讓 virtual DOM
 //   與實際 DOM 不符,重繪時 diff 中斷、整個結果區卡死(results.js 的 setModText
@@ -42,7 +44,7 @@
     mod: '.item-mod',
     name: '.lc.r', // 詞綴群組名 + 等級要求
     inner: '.d', // 群組名的實際文字包在這一層裡
-    text: '.s.lc', // 詞綴文字本體;這件物品上的實際數值就在這裡面
+    text: '.s.lc', // 詞綴文字本體(＋ 不讀它的數值:2026-10-09 起 ＋ 不帶值)
   };
   const DONE_ATTR = 'pmzModRow'; // → data-pmz-mod-row,與 results.js 的 data-ptm-done 分開
 
@@ -108,8 +110,6 @@
  box-shadow:0 1px 2px rgba(0,0,0,.6)}
 .pmz-mod-btn.pmz-add{color:#7fd67f;border-color:#4f8a4f}
 .pmz-mod-btn.pmz-add:hover{background:#7fd67f;color:#0d1a0d;border-color:#9ae59a}
-.pmz-mod-btn.pmz-plain{color:#e6c88c;border-color:#7a6a4a}
-.pmz-mod-btn.pmz-plain:hover{background:#e6c88c;color:#1a1612;border-color:#f2d9a4}
 .pmz-mod-btn.pmz-ex{color:#e87f7f;border-color:#8a4f4f}
 .pmz-mod-btn.pmz-ex:hover{background:#e87f7f;color:#1a0d0d;border-color:#f59a9a}`;
     (document.head ?? document.documentElement).appendChild(s);
@@ -146,39 +146,23 @@
     return field.startsWith(FIELD_PREFIX) ? field.slice(FIELD_PREFIX.length) : null;
   }
 
-  // 這一條詞綴在這件物品上的實際數值,拿來當篩選的下限。
-  // 取**第一個**數字:與 content/pob-import.js:322 的既有做法一致
-  // (`if (values.length) filter.value = { min: values[0] }`),不另立一套規則。
-  // 「附加 24 至 50 火焰傷害」→ 24(下限取低的那個才不會把物品濾掉);
-  // 「+103 命中值」→ 103。負數要連負號一起吃(有 `-12% 最大抗性` 這種詞綴)。
-  const NUM_RE = /-?\d+(?:\.\d+)?/;
-  function modValue(mod) {
-    const el = mod.querySelector(SELECTORS.text) ?? mod;
-    const m = NUM_RE.exec(el.textContent ?? '');
-    if (!m) return null;
-    const n = Number(m[0]);
-    return Number.isFinite(n) ? n : null;
-  }
-
   function addButtons(mod) {
     const statId = statIdOf(mod);
     if (!statId || mod.querySelector('.pmz-mod-btns')) return;
     ensureStyle();
-    const value = modValue(mod);
     const wrap = document.createElement('span');
     wrap.className = 'pmz-mod-btns';
-    // 兩顆:加入 / 排除。
-    // 抽得到數值就帶下限進去,抽不到就純加入 —— 同一顆按鈕、同一個位置。
-    // ⚠ 2026-08-31 使用者裁定**移除中間那顆「純加入(不帶數值)」**:多一顆選擇
-    //   讓每一列都要多想一次,而下限填錯了在篩選面板上改比較快。不要再加回來。
+    // 兩顆:加入 / 排除,**兩顆都不帶任何數值**(MIN / MAX 都留空,值由使用者在篩選面板自己填)。
+    // ⚠ 2026-10-09 使用者裁定:＋ 只加入那條詞綴、不帶數值 —— 取代舊的「帶這件物品的數值當下限」
+    //   與同日稍早試做的「帶所屬階級下限 + 同步階級選單」。要哪一階請用篩選列的階級選單(≈T▾)。
+    // ⚠ 2026-08-31 使用者裁定移除過中間那顆「純加入(不帶數值)」第三顆鈕;現在是 ＋ 本身就是純加入,
+    //   按鈕仍只有 ＋/− 兩顆。不要再加第三顆,也不要讓 ＋ 帶回數值。
     const t = (k, v) => globalThis.PMZ_I18N?.t(k, v) ?? k;
     const specs = [
-      value != null
-        ? ['+', false, 'pmz-add', t('modrow.addMin', { value }), value]
-        : ['+', false, 'pmz-plain', t('modrow.addPlain'), null],
-      ['−', true, 'pmz-ex', t('modrow.exclude'), null],
+      ['+', false, 'pmz-add', t('modrow.addPlain')],
+      ['−', true, 'pmz-ex', t('modrow.exclude')],
     ];
-    for (const [label, exclude, cls, tip, min] of specs) {
+    for (const [label, exclude, cls, tip] of specs) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `pmz-mod-btn ${cls}`.trim();
@@ -188,9 +172,7 @@
         // 結果卡整列都是可點的(會展開/選取),按鈕不能把事件漏下去
         ev.preventDefault();
         ev.stopPropagation();
-        const msg = { t: MSG, statId, exclude };
-        if (min != null) msg.min = min;
-        window.postMessage(msg, location.origin);
+        window.postMessage({ t: MSG, statId, exclude }, location.origin);
       });
       wrap.appendChild(b);
     }
@@ -285,6 +267,6 @@
 
   // 供離線驗證腳本呼叫真正的實作(不另外複製一份,避免測試與實機分歧)
   globalThis.__pmzModRowInternals = {
-    SELECTORS, modNameZh, setFirstText, state, stat, modValue, ensureTail, TAIL_CLASS,
+    SELECTORS, modNameZh, setFirstText, state, stat, ensureTail, TAIL_CLASS, applyButtonsSetting,
   };
 })();
