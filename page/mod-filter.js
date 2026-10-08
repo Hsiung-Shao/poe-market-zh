@@ -74,7 +74,11 @@
 
   const nextTick = () => new Promise((r) => setTimeout(r, 0));
 
-  async function addStatFilter(statId, exclude, min) {
+  // 只加詞綴、不帶數值(使用者 2026-10-09 裁定:結果列 ＋/− 都不帶值,MIN / MAX 留空)。
+  // ⚠ 刻意**不呼叫 updateFilter**:selectFilter 加進去的那一筆在 Vuex 是 `{ id }`、沒有 value
+  //   (2026-08-30 活站實測;帶值時才會經 updateFilter 變成 `{ id, disabled:false, value:{ min } }`),
+  //   所以篩選列的 MIN / MAX 就是空的。訊息裡就算夾了 min / max 也一律不理。
+  async function addStatFilter(statId, exclude) {
     let { panel, groups } = findVms();
     if (!groups.length) return { ok: false, why: '找不到詞綴篩選群組' };
 
@@ -100,41 +104,18 @@
     if (!entry) return { ok: false, why: `篩選清單裡沒有這個詞綴(${statId})` };
 
     target.selectFilter(entry);
-
-    // 帶數值下限:selectFilter 只是把詞綴加進去,值要另外用 updateFilter 設。
-    // 2026-08-30 活站實測:`updateFilter(index, { min })` 之後,Vuex 的
-    // `state.persistent.stats[g].filters[i]` 會從 `{ id }` 變成
-    // `{ id, disabled:false, value:{ min } }` —— 那正是送去 API 的查詢值。
-    // index 取剛加進去的那一筆(官網是 push 到尾端)。
-    if (Number.isFinite(min)) {
-      const idx = target.filters.length - 1;
-      if (idx >= 0) {
-        try {
-          target.updateFilter(idx, { min });
-        } catch (err) {
-          // 值設不上去不該讓「加入詞綴」也跟著失敗 —— 詞綴已經進去了,
-          // 使用者自己補一個數字就好,比整條消失好
-          console.warn('[PTM] 詞綴已加入,但數值下限設定失敗:', err);
-          return { ok: true, exclude, group: target.group?.id, minFailed: true };
-        }
-      }
-    }
-    return { ok: true, exclude, group: target.group?.id, min: Number.isFinite(min) ? min : undefined };
+    return { ok: true, exclude, group: target.group?.id };
   }
 
   window.addEventListener('message', async (e) => {
-    // 只收自己這一頁發出來的訊息
-    if (e.source !== window) return;
+    // 只收自己這個視窗、自己這個來源送出的訊息(iframe / 第三方腳本也能 postMessage)
+    if (e.source !== window || e.origin !== location.origin) return;
     const d = e.data;
     if (!d || d.t !== MSG || typeof d.statId !== 'string' || !d.statId) return;
     try {
-      const min = typeof d.min === 'number' && Number.isFinite(d.min) ? d.min : undefined;
-      const r = await addStatFilter(d.statId, d.exclude === true, min);
+      const r = await addStatFilter(d.statId, d.exclude === true);
       if (!r.ok) console.warn('[PTM] 加入篩選失敗:', r.why);
-      else {
-        dbg(`[PTM] 已${r.exclude ? '排除' : '加入篩選'}:${d.statId}` +
-          `${r.min != null ? `(下限 ${r.min})` : ''}(群組 ${r.group})`);
-      }
+      else dbg(`[PTM] 已${r.exclude ? '排除' : '加入篩選'}:${d.statId}(群組 ${r.group})`);
     } catch (err) {
       console.warn('[PTM] 加入篩選發生例外:', err);
     }

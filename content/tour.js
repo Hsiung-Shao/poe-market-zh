@@ -70,8 +70,9 @@
   // sidebar.js 設定列 / 區塊標題上的穩定屬性(不靠文字、不靠 class 順序)
   const SETTING_ATTR = 'data-pmz-setting';
   const SECTION_ATTR = 'data-pmz-section';
-  // 「在設定調整」那步框的四列:結果列 ＋/−、階級標記、階級選單、填值方式(選單關掉時那列不存在)
-  const MOD_SETTING_KEYS = ['modFilterButtons', 'tierBadges', 'tierPicker', 'tierPickerMode'];
+  // 「在設定調整」那步框的三列:結果列 ＋/−、階級標記、階級選單
+  // (2026-10-09 起階級選單的「填值方式」與 ＋ 的「帶入數值」設定都已移除)
+  const MOD_SETTING_KEYS = ['modFilterButtons', 'tierBadges', 'tierPicker'];
 
   // 篩選區示範(page/mod-filter.js 代辦;見檔頭)
   const DEMO_MSG = 'pmz:tourDemo';
@@ -300,7 +301,7 @@
       ],
       miss: 'sb.tour.tail.miss',
     },
-    // 上面三樣(＋/−、階級標記、階級選單 + 填值方式)在 設定 → 顯示 的開關
+    // 上面三樣(＋/−、階級標記、階級選單)在 設定 → 顯示 的開關
     {
       id: 'modSettings',
       when: (c) => c.sidebar,
