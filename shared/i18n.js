@@ -146,6 +146,8 @@
     zh: {
       'tierpick.label': '≈T',
       'tierpick.none': '— 不指定階級',
+      'tierpick.panel.title': '詞綴階級',
+      'tierpick.panel.close': '關閉',
       'tierpick.opt.min': 'T{n} ≥ {value}  [{range}] 等級 {lvl}',
       'tierpick.opt.max': 'T{n} ≤ {value}  [{range}] 等級 {lvl}',
       'tierpick.prefix': '前綴',
@@ -174,6 +176,8 @@
     en: {
       'tierpick.label': '≈T',
       'tierpick.none': '— No tier',
+      'tierpick.panel.title': 'Modifier tiers',
+      'tierpick.panel.close': 'Close',
       'tierpick.opt.min': 'T{n} ≥ {value}  [{range}] lvl {lvl}',
       'tierpick.opt.max': 'T{n} ≤ {value}  [{range}] lvl {lvl}',
       'tierpick.prefix': 'Prefix',
