@@ -13,7 +13,7 @@
 // 群組 / 列索引寫成 DOM 屬性(data-pmz-stat-id / -gi / -fi / -gtype),物品類別、基底寫在 <html>;
 // 填值則由這裡 postMessage `pmz:setFilterValue` 請它呼叫官網自己的 updateFilter。
 // **計算與填值不讀篩選標題文字**(那是我們翻過的中文,關掉翻譯又變英文)—— 全程用 stat id;
-// 唯一讀標題的是階級面板的顯示文字(titleOf / tierText,把 # 換成該階範圍),讀不到或對不上只影響顯示。
+// 唯一讀標題的是階級面板標題列的顯示文字(titleOf),讀不到只影響顯示。
 //
 // ── 計算規則(沿用 tierfill 的 compute.mjs 包含模式,github.com/Sknoww/tierfill,MIT License)──
 //   一律填該階級的最低數值:MIN = 該階級下限;`Adds # to #` 取兩個下限的平均((loMin+hiMin)/2)
@@ -244,36 +244,36 @@
     return ctrl;
   }
 
-  // ── 階級面板(使用者 2026-10-09 要求:像 poedb 一樣一階一列「T7 敏捷的 2 增加 (4—8)% 閃避值」)──
+  // ── 階級面板(使用者 2026-10-09 要求:像 poedb 一樣一階一列「T7 敏捷的 2 …」)──
   // 掛在 document.body(官網 Vue 樹之外)、position:fixed 貼著控制項;T 大的在上、T1 在最下(同 poedb)。
-  // 詞綴名稱來自階級表的 nm(GGPK Mods.Name);沒有 nm 的舊階級表就不顯示名稱欄。
-  // 完整詞綴文字 = 篩選列標題(只用於顯示,填值仍只靠 stat id 與階級表)把 # 依序換成該階範圍;
-  // # 的數目對不上就只顯示範圍,不硬湊。
+  // 每列:T | 詞綴名稱(階級表 nm,GGPK Mods.Name;舊階級表沒有 nm 就不顯示這欄)| 需求等級 | 數值區間(tierInfo().range)。
+  // 數值欄只顯示區間(使用者同日裁定):不把 # 換進篩選標題 —— 局部詞綴的雙語標題有巢狀括號,硬湊容易錯。
   const PANEL = `${CTRL}-panel`;
   let openPanel = null; // { el, ctrl }
 
-  // 篩選列標題的純文字。實站(2026-10-09 e2e):
+  // 面板標題列:篩選列標題的純文字(只用於顯示)。實站(2026-10-09 e2e):
   //   <div class="filter-title"><i class="mutate-type …">隨機屬性</i> <span>+# 最大生命 (+# to maximum Life)</span></div>
-  // → 只取 <span>(不要前面的詞綴類型標記),拿掉我們自己掛的節點,再去掉翻譯附的「 (英文原文)」
+  // → 只取 <span>(不要前面的詞綴類型標記),拿掉我們自己掛的節點
   function titleOf(row) {
     const t = row?.querySelector(':scope > .filter-body > .filter-title') ?? row?.querySelector('.filter-title');
     if (!t) return '';
-    const src = t.querySelector('span') ?? t;
-    const c = src.cloneNode(true);
+    const c = (t.querySelector('span') ?? t).cloneNode(true);
     for (const el of c.querySelectorAll('[class*="ptm-"], [class*="pmz-"], .mutate-type')) el.remove();
-    let s = c.textContent.replace(/\s+/g, ' ').trim();
-    const m = /^(.*[㐀-鿿].*?) \(([^()㐀-鿿]*[A-Za-z][^()㐀-鿿]*)\)$/.exec(s);
-    if (m) s = m[1];
-    return s;
+    return c.textContent.replace(/\s+/g, ' ').trim();
   }
-  const rangeText = (a, b) => (a === b ? fmt(a) : `(${fmt(a)}—${fmt(b)})`);
-  // 一階的完整詞綴文字;title 的 # 數與該階的數值段數相同才換,否則回 null(呼叫端改顯示範圍)
-  function tierText(title, t) {
-    const segs = t.length >= 5 ? [rangeText(t[1], t[2]), rangeText(t[3], t[4])] : [rangeText(t[1], t[2])];
-    const holes = (String(title).match(/#/g) ?? []).length;
-    if (!title || holes !== segs.length) return null;
-    let i = 0;
-    return title.replace(/#/g, () => segs[i++]);
+
+  // 面板位置(純計算):控制項下方靠左;下方放不下就放上方,兩邊都不夠就貼齊視窗上緣、高度縮到視窗內。
+  // r = 控制項的框、h = 面板內容高度;回傳 { left, top, maxHeight }(一律用 top,不會超出視窗)
+  function placePanel(r, h, vw, vh, w) {
+    const M = 8;
+    const left = Math.max(M, Math.min(r.left, vw - w - M));
+    const below = vh - r.bottom - 2 - M;
+    const above = r.top - 2 - M;
+    if (h <= below) return { left, top: r.bottom + 2, maxHeight: below };
+    if (h <= above) return { left, top: r.top - 2 - h, maxHeight: above };
+    // 兩邊都放不下完整內容:放空間大的那邊、可捲動;空間太小(< 120)就整個視窗都給它
+    if (Math.max(below, above) < 120) return { left, top: M, maxHeight: vh - 2 * M };
+    return below >= above ? { left, top: r.bottom + 2, maxHeight: below } : { left, top: M, maxHeight: above };
   }
 
   function closePanel() {
@@ -315,9 +315,10 @@
     x.addEventListener('click', closePanel);
     head.append(ht, x);
     el.appendChild(head);
+    // 點已選的那一階也照樣送 change:使用者手動改過 MIN 後,再點同一階要重新填值(使用者 2026-10-09 要求)
     const choose = (value) => {
       closePanel();
-      if (sel.value === value) return;
+      if (!ctrl.isConnected) return; // 篩選列已被官網重畫掉
       sel.value = value;
       sel.dispatchEvent(new Event('change'));
     };
@@ -337,6 +338,7 @@
     };
     addRow('', [['none', tr('tierpick.none')]], ` ${PANEL}-none-row`);
     const labels = familyLabels(d.fams, catNames);
+    const hasNames = d.fams.some((f) => f.nm); // 任一家族有名稱就整個面板顯示名稱欄(欄位對齊)
     d.fams.forEach((f, fi) => {
       if (d.fams.length > 1) {
         const g = document.createElement('div');
@@ -362,24 +364,24 @@
         }
         addRow(`${fi}:${ti}`, [
           ['t', `T${ti + 1}`],
-          ...(d.fams.some((ff) => ff.nm) ? [['name', name]] : []),
+          ...(hasNames ? [['name', name]] : []),
           ['lvl', String(t[0])],
-          ['text', tierText(title, t) ?? tierInfo(t).range],
+          ['text', tierInfo(t).range],
         ]);
       }
     });
     document.body.appendChild(el);
     openPanel = { el, ctrl };
-    // 位置:控制項下方靠左對齊;放不下就往上 / 往左收
-    const r = ctrl.getBoundingClientRect?.() ?? { left: 0, bottom: 0, top: 0 };
+    // 位置:先定寬度,量內容高度,再交給 placePanel(放不下就往上、兩邊都不夠就縮進視窗)
+    const r = ctrl.getBoundingClientRect?.() ?? { left: 0, top: 0, bottom: 0 };
     const vw = window.innerWidth || 1280;
     const vh = window.innerHeight || 800;
     const w = Math.min(560, vw - 16);
     el.style.width = `${w}px`;
-    el.style.left = `${Math.max(8, Math.min(r.left, vw - w - 8))}px`;
-    const below = vh - r.bottom - 8;
-    if (below >= 220 || below >= r.top) { el.style.top = `${r.bottom + 2}px`; el.style.maxHeight = `${Math.max(160, below)}px`; }
-    else { el.style.bottom = `${vh - r.top + 2}px`; el.style.maxHeight = `${Math.max(160, r.top - 8)}px`; }
+    const p = placePanel(r, el.scrollHeight || 0, vw, vh, w);
+    el.style.left = `${p.left}px`;
+    el.style.top = `${p.top}px`;
+    el.style.maxHeight = `${p.maxHeight}px`;
     el.querySelector(`.${PANEL}-on`)?.scrollIntoView?.({ block: 'nearest' });
     document.addEventListener('mousedown', onDocDown, true);
     document.addEventListener('keydown', onDocKey, true);
@@ -487,6 +489,7 @@
     if (ctrl.nextElementSibling !== anchor) body.insertBefore(ctrl, anchor);
     const old = ctrlData.get(ctrl);
     if (!old || old.sig !== sig) {
+      if (openPanel?.ctrl === ctrl) closePanel(); // 清單要重建 → 開著的面板內容已過期
       const d = { sig, statId, fams, inv, partial, failed: false };
       ctrlData.set(ctrl, d);
       fillControl(ctrl, d);
@@ -569,6 +572,8 @@
     }
     // 有任何一列放了選單 → 其餘列補同寬空格;一列都沒有 → 空格全部拿掉(官方原樣)
     for (const row of bare) if (n) ensurePlaceholder(row); else dropPlaceholder(row);
+    // 開著面板的那一列被官網重畫掉(控制項已不在頁面上)→ 收掉面板,不留一個點了沒反應的面板
+    if (openPanel && !openPanel.ctrl.isConnected) closePanel();
     // 篩選列被刪掉的詞綴就不再是目標(只在搜尋面板還在時判斷 —— 切到歷史分頁不算刪)
     let changed = false;
     for (const k of [...targets.keys()]) if (!seen.has(k)) { targets.delete(k); changed = true; }
@@ -679,6 +684,6 @@
   globalThis.__pmzTierPickerInternals = {
     tierInfo, computeValue, excludedReason, familiesFor, familyLabels, isPartial, variantLabel,
     renderRow, rescan, useLadders, applySetting, applyLang, state, targets, stat, GAME, CACHE_KEY, VERIFIED_TEXT_ONLY, PH,
-    tierText, titleOf, togglePanel, closePanel, PANEL,
+    placePanel, titleOf, togglePanel, closePanel, PANEL,
   };
 })();
