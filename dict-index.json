@@ -1,0 +1,66 @@
+{
+  "version": 17,
+  "generatedAt": "2026-10-09T22:15:02.036Z",
+  "files": {
+    "translate.zh_TW.json": {
+      "sha256": "97daf23e4660d6fd514175c93fefddc7513d5865910e06bc2643c74422a1a28a",
+      "size": 81953
+    },
+    "clusterJewel.json": {
+      "sha256": "1368c48f521525bdc6f99bdf81f271302396e67f045cdb22de0ae76161a6cf34",
+      "size": 83215
+    },
+    "passivesNotable.json": {
+      "sha256": "1c5807c39865b4b949803c5a6a61e973084675f6e74a432d2c9465c27e91aedd",
+      "size": 122484
+    },
+    "ggpk.json": {
+      "sha256": "66655b16c9818487443a6b0f056d2d75533563cb734298806d164169dc611f75",
+      "size": 3889412
+    },
+    "ggpk2.json": {
+      "sha256": "d60335148089943105b6e7b5bef2b7d16e7cbb9a3ea7f305da4d30c0d6e0f818",
+      "size": 3388419
+    },
+    "api-us.json": {
+      "sha256": "6c6f1662a2acc50d591b27b0fd49b5b015a06999eb870f8e8dee1f79485959fd",
+      "size": 2656444,
+      "entries": 25718
+    },
+    "api-tw.json": {
+      "sha256": "9faf7c0ed43b1f37bbcfcad59e1a691561f6032937e7da90333c36e770eaf83a",
+      "size": 2468293,
+      "entries": 25541
+    },
+    "api2-us.json": {
+      "sha256": "c54419de48b1570b83ec270922c7c6fb5054db17d3da3f392569a7509be8905f",
+      "size": 1229657,
+      "entries": 13050
+    },
+    "api2-tw.json": {
+      "sha256": "4eaa42160e3c25c5287088d6e76cc234c50f0f44c96a857370bd90447a1cd5a6",
+      "size": 970758,
+      "entries": 10720
+    },
+    "sitenames1.json": {
+      "sha256": "eaa8f00220df4a6e72a00b0fbfc2c3265f613260e6e38759e19e34dd59b33780",
+      "size": 3283224,
+      "entries": 34686
+    },
+    "sitenames2.json": {
+      "sha256": "f058787807292ecf49fdd40077ff96bfccdd91c76d5416c12c522ba4324819cc",
+      "size": 3173375,
+      "entries": 29718
+    },
+    "tierladders1.json": {
+      "sha256": "887b875c11e0be42bf03ae62f727579decd038d593c6167ccefafbb2f03e1d09",
+      "size": 144558,
+      "entries": 386
+    },
+    "tierladders2.json": {
+      "sha256": "0bf5f92dfdf1ea8bf857b917eb6bcc743ab6dba42b8dc0d4627fed74b955e0df",
+      "size": 163407,
+      "entries": 467
+    }
+  }
+}
