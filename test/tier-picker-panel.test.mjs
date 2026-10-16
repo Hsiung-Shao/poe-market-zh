@@ -113,6 +113,8 @@ class Element extends Target {
     while (n.parentNode) n = n.parentNode;
     return n === this.ownerDocument;
   }
+  // 版面量測掛鉤:由測試在 document.scrollHeightOf 指定(預設 0,等同沒有版面)
+  get scrollHeight() { return this.ownerDocument.scrollHeightOf?.(this) ?? 0; }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
   set textContent(v) { for (const c of [...this.children]) c.remove(); this._text = String(v); }
   appendChild(c) {
@@ -258,6 +260,8 @@ test('P2 下方不夠、上方夠時改放上方', () => {
   // 仍放下方(溢出視窗)或貼齊上緣就會失敗
   assert.equal(p.top, r.top - 2 - h);
   assert.ok(p.top >= 8, `top=${p.top}`);
+  // 高度沒限制在上方空間(往上溢出)就會失敗
+  assert.equal(p.maxHeight, r.top - 2 - 8);
 });
 
 test('P3 兩邊都小於 120 時佔滿視窗', () => {
@@ -299,6 +303,57 @@ test('P6 左右位置夾在視窗內', () => {
     // 沒夾右邊(面板右側溢出)或沒夾左邊(負座標)就會失敗
     assert.ok(p.left >= 8 && p.left <= VW - W - 8, `r.left=${left} → left=${p.left}`);
   }
+});
+
+// 控制項在視窗外 / 半截超出時,面板本身仍須完整落在視窗內(上下各留 8px)
+function assertInViewport(r, h = 200, vh = 800) {
+  const p = placePanel(r, h, VW, vh, W);
+  const msg = `r=${JSON.stringify(r)} → ${JSON.stringify(p)}`;
+  // 面板頂端跑出視窗上緣
+  assert.ok(p.top >= 8, `top<8:${msg}`);
+  // 面板底端跑出視窗下緣
+  assert.ok(p.top + Math.min(h, p.maxHeight) <= vh - 8, `底端超出 ${vh - 8}:${msg}`);
+  // 高度被算成 0 或負數(面板看不見)
+  assert.ok(p.maxHeight > 0, `maxHeight≤0:${msg}`);
+}
+
+test('P7 控制項在視窗上方外時面板仍在視窗內', () => {
+  assertInViewport({ left: 100, top: -300, bottom: -280 });
+});
+
+test('P8 控制項在視窗下方外時面板仍在視窗內', () => {
+  assertInViewport({ left: 100, top: 1000, bottom: 1020 });
+});
+
+test('P9 控制項半截超出上緣時面板仍在視窗內', () => {
+  assertInViewport({ left: 100, top: -10, bottom: 10 });
+});
+
+// ── T:togglePanel 把位置寫進樣式 ──
+function openWithLayout(rect, scrollHeight) {
+  const t = load();
+  t.ctrl.getBoundingClientRect = () => ({ ...rect });
+  t.document.scrollHeightOf = (el) => (el.classList.contains(t.I.PANEL) ? scrollHeight : 0);
+  t.I.togglePanel(t.ctrl);
+  const el = t.panelEl();
+  assert.ok(el, '前置:面板已開');
+  return el.style;
+}
+
+test('T1 開面板時把放上方的位置寫進樣式', () => {
+  const s = openWithLayout({ left: 100, top: 700, bottom: 720 }, 300);
+  // 沒量控制項框 / 內容高度、或沒把 placePanel 結果寫進 style 就會失敗
+  assert.equal(s.left, '100px');
+  assert.equal(s.top, '398px');
+  assert.equal(s.maxHeight, '690px');
+  assert.equal(s.width, '560px');
+});
+
+test('T2 開面板時把放下方的位置寫進樣式', () => {
+  const s = openWithLayout({ left: 100, top: 100, bottom: 120 }, 200);
+  // 誤放上方或高度沒依下方空間限制就會失敗
+  assert.equal(s.top, '122px');
+  assert.equal(s.maxHeight, '670px');
 });
 
 // ── C:點選列 ──

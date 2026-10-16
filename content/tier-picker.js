@@ -267,13 +267,17 @@
   function placePanel(r, h, vw, vh, w) {
     const M = 8;
     const left = Math.max(M, Math.min(r.left, vw - w - M));
-    const below = vh - r.bottom - 2 - M;
-    const above = r.top - 2 - M;
-    if (h <= below) return { left, top: r.bottom + 2, maxHeight: below };
-    if (h <= above) return { left, top: r.top - 2 - h, maxHeight: above };
+    // 控制項被捲到視窗外(鍵盤聚焦後捲動再按 Enter)→ 上下緣先夾進視窗,面板就貼著視窗上 / 下緣出現
+    const clampY = (y) => Math.min(vh - M + 2, Math.max(M - 2, y));
+    const rTop = clampY(r.top);
+    const rBottom = clampY(r.bottom);
+    const below = vh - rBottom - 2 - M;
+    const above = rTop - 2 - M;
+    if (h <= below) return { left, top: rBottom + 2, maxHeight: below };
+    if (h <= above) return { left, top: rTop - 2 - h, maxHeight: above };
     // 兩邊都放不下完整內容:放空間大的那邊、可捲動;空間太小(< 120)就整個視窗都給它
     if (Math.max(below, above) < 120) return { left, top: M, maxHeight: vh - 2 * M };
-    return below >= above ? { left, top: r.bottom + 2, maxHeight: below } : { left, top: M, maxHeight: above };
+    return below >= above ? { left, top: rBottom + 2, maxHeight: below } : { left, top: M, maxHeight: above };
   }
 
   function closePanel() {
