@@ -547,6 +547,9 @@
   let observer = null;
   let reportTimer = null;
   function rescan() {
+    // 開著面板的那一列被官網重畫掉(控制項已不在頁面上)→ 收掉面板,不留一個點了沒反應的面板;
+    // 放在所有提早 return 之前:整個搜尋面板被拿掉、階級表清空時也要收
+    if (openPanel && !openPanel.ctrl.isConnected) closePanel();
     // 沒有搜尋面板(大宗通貨 / 歷史分頁、官網還沒掛上)就沒有篩選列:不必請 MAIN 走一遍元件樹
     const root = panel();
     if (!state.enabled || !state.ladders) {
@@ -572,8 +575,6 @@
     }
     // 有任何一列放了選單 → 其餘列補同寬空格;一列都沒有 → 空格全部拿掉(官方原樣)
     for (const row of bare) if (n) ensurePlaceholder(row); else dropPlaceholder(row);
-    // 開著面板的那一列被官網重畫掉(控制項已不在頁面上)→ 收掉面板,不留一個點了沒反應的面板
-    if (openPanel && !openPanel.ctrl.isConnected) closePanel();
     // 篩選列被刪掉的詞綴就不再是目標(只在搜尋面板還在時判斷 —— 切到歷史分頁不算刪)
     let changed = false;
     for (const k of [...targets.keys()]) if (!seen.has(k)) { targets.delete(k); changed = true; }
