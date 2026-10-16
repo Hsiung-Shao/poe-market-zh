@@ -326,7 +326,15 @@ test('P8 控制項在視窗下方外時面板仍在視窗內', () => {
 });
 
 test('P9 控制項半截超出上緣時面板仍在視窗內', () => {
-  assertInViewport({ left: 100, top: -10, bottom: 10 });
+  assertInViewport({ left: 100, top: -20, bottom: 2 });
+});
+
+test('P10 控制項在視窗上方外且內容放不下時面板仍在視窗內', () => {
+  assertInViewport({ left: 100, top: -300, bottom: -280 }, 1000);
+});
+
+test('P11 控制項在視窗下方外且內容放不下時面板仍在視窗內', () => {
+  assertInViewport({ left: 100, top: 1000, bottom: 1020 }, 1000);
 });
 
 // ── T:togglePanel 把位置寫進樣式 ──
