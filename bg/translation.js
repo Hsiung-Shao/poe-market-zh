@@ -368,8 +368,65 @@ function translateStatic(usStatic, twStatic) {
   return out;
 }
 
+// 傳奇物品下拉(`option.knownItem`):選項不在 filters 資料裡,官網自己從 items 組,
+//   uniques        → { id: entry.name, text: entry.name }   ← 讀 name,不是 text
+//   cards/currency → { id: entry.type, text: entry.text || entry.type }
+// name 同時是搜尋送出的值、必須維持英文,所以翻 items 的 text 管不到傳奇那一段
+// (「完成地圖獎勵」下拉整排英文,2026-10-25 回報)。這裡把 knownItem 展開成靜態 options:
+// id 照舊、text 改成「中文 (English)」。
+// ⚠ 組法與順序必須和官網 trade bundle 一致(tools/verify-known-item.mjs 以逐筆 id 比對鎖住):
+//   七個類別依序、每個類別內以 name 去重、類別之間不去重。
+// ⚠ 第一個選項「任何」要自己放:官網只在「不是(property 篩選器且沒有 knownItem)」時才補,
+//   展開成 options 之後它就不補了。
+const KNOWN_UNIQUE_CATS = ['weapon', 'armour', 'accessory', 'gem', 'jewel', 'flask', 'map'];
+function anyOptionText(twFilters) {
+  for (const g of twFilters?.result ?? []) {
+    for (const f of g.filters ?? []) {
+      for (const o of f.option?.options ?? []) if (o.id == null && o.text) return o.text;
+    }
+  }
+  return 'Any';
+}
+function expandKnownItem(field, ctx, anyText) {
+  const cat = (id) => ctx.items?.result?.find((c) => c.id === id)?.entries ?? [];
+  const { knownItem, ...rest } = field.option;
+  const opts = [{ id: null, text: anyText }];
+  if (knownItem.uniques) {
+    for (const id of KNOWN_UNIQUE_CATS) {
+      const seen = new Set();
+      for (const e of cat(id)) {
+        if (!e.flags?.unique || seen.has(e.name)) continue;
+        seen.add(e.name);
+        opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name), e.name) });
+      }
+    }
+  }
+  if (knownItem.cards) for (const e of cat('card')) opts.push({ id: e.type, text: e.text || e.type });
+  if (knownItem.currency) for (const e of cat('currency')) opts.push({ id: e.type, text: e.text || e.type });
+  field.option = { ...rest, options: opts };
+}
+
+// 英文傳奇名 → 中文(純中文,查不到回 null)。優先序同 translateItems:遊戲檔 → 官方層 → 承襲字典;
+// 字典整個載入失敗時退回「上一輪已展開的選項」,不讓失敗的建置把已翻好的下拉洗回英文
+// (失敗路徑不得產出比現況差的狀態)。
+function makeUniqueZh({ ggpk, officialItems, fallbackItems, prevFilters }) {
+  const prevZh = new Map();
+  for (const g of prevFilters?.result ?? []) {
+    for (const f of g.filters ?? []) {
+      for (const o of f.option?.options ?? []) {
+        if (typeof o.id === 'string' && o.text && o.text !== o.id) prevZh.set(o.id, stripEnSuffix(o.text));
+      }
+    }
+  }
+  return (name) => {
+    const raw = ggpk.uniques?.[name] ?? ggpk.items?.[name] ?? officialItems[name] ?? fallbackItems[name];
+    return raw ? stripEnSuffix(raw) : (prevZh.get(name) ?? null);
+  };
+}
+
 // filters:群組與欄位依 id 對接,標題用純中文;下拉選項雙語
-function translateFilters(usFilters, twFilters) {
+// ctx = { items, uniqueZh }(翻譯後的 items 與「英文傳奇名 → 中文」查詢);沒給就不展開 knownItem
+function translateFilters(usFilters, twFilters, ctx = null) {
   const out = structuredClone(usFilters);
   const twGroups = new Map((twFilters?.result ?? []).map((g) => [g.id, g]));
   for (const group of out.result ?? []) {
@@ -388,6 +445,14 @@ function translateFilters(usFilters, twFilters) {
           const zh = twOpts.get(String(opt.id));
           if (zh && opt.text) opt.text = bilingual(zh, opt.text);
         }
+      }
+    }
+  }
+  if (ctx) {
+    const anyText = anyOptionText(twFilters);
+    for (const group of out.result ?? []) {
+      for (const field of group.filters ?? []) {
+        if (field.option?.knownItem) expandKnownItem(field, ctx, anyText);
       }
     }
   }
@@ -682,6 +747,7 @@ export const _test = {
   translateItems,
   translateStatic,
   translateFilters,
+  makeUniqueZh,
   buildStatMap,
   buildPassiveMap,
   addLineTrimAliases,
@@ -911,14 +977,19 @@ async function buildOne(game) {
 
       const fallbackItems = mergeFallbackItems(ggpk.legacyItems, ggpk.items);
       const officialItems = mergeOfficialItems(ggpk.legacyItems, ggpk.items);
+      const translatedItems = keep(
+        itemsDictOk,
+        translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items, ggpk.uniques),
+        prev[K.translation]?.items
+      );
       const translation = {
-        items: keep(
-          itemsDictOk,
-          translateItems(us.items, tw?.items, fallbackItems, officialItems, ggpk.items, ggpk.uniques),
-          prev[K.translation]?.items
-        ),
+        items: translatedItems,
         static: translateStatic(us.static, tw?.static),
-        filters: translateFilters(us.filters, tw?.filters),
+        // 傳奇物品下拉(完成地圖獎勵等)要用翻譯後的 items 與傳奇名字典展開,見 expandKnownItem
+        filters: translateFilters(us.filters, tw?.filters, {
+          items: translatedItems,
+          uniqueZh: makeUniqueZh({ ggpk, officialItems, fallbackItems, prevFilters: prev[K.translation]?.filters }),
+        }),
       };
       // stats 不可用時沿用上次成功的快照;從未成功過就整個不寫,
       // bootstrap 便不覆寫官網的 stats 快取,官網用自己的資料
