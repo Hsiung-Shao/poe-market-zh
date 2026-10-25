@@ -369,8 +369,7 @@ function translateStatic(usStatic, twStatic) {
 }
 
 // 傳奇物品下拉(`option.knownItem`):選項不在 filters 資料裡,官網自己從 items 組,
-//   uniques        → { id: entry.name, text: entry.name }   ← 讀 name,不是 text
-//   cards/currency → { id: entry.type, text: entry.text || entry.type }
+//   uniques → { id: entry.name, text: entry.name }   ← 讀 name,不是 text
 // name 同時是搜尋送出的值、必須維持英文,所以翻 items 的 text 管不到傳奇那一段
 // (「完成地圖獎勵」下拉整排英文,2026-10-25 回報)。這裡把 knownItem 展開成靜態 options:
 // id 照舊、text 改成「中文 (English)」。
@@ -378,6 +377,14 @@ function translateStatic(usStatic, twStatic) {
 //   七個類別依序、每個類別內以 name 去重、類別之間不去重。
 // ⚠ 第一個選項「任何」要自己放:官網只在「不是(property 篩選器且沒有 knownItem)」時才補,
 //   展開成 options 之後它就不補了。
+// ⚠ **只展開下面這一個**(2026-10-25 實測體積):整份 filters 會被 bootstrap.js 寫進官網網域的
+//   localStorage(lscache-tradefilters),而那個 5 MB 額度已被 stats / items 吃掉大半(4.4 MB)。
+//   展開一個 1370 筆的傳奇下拉 = +76.8 KB 字元;三個全展開 = +310 KB(額度的頭房都不夠)。
+//   沒展開的兩個維持英文:`ultimatum_output`(傳奇獎勵,+76.8 KB)、`ultimatum_input`
+//   (獻祭物,傳奇 + 命運卡 + 通貨,+156.9 KB)。要加就加進這個集合,並先量額度。
+//   含 cards / currency 的 knownItem 這裡不處理(原樣保留),哪天官網給「完成地圖獎勵」加了卡片
+//   也不會被靜默丟掉。
+const KNOWN_ITEM_EXPAND = new Set(['map_completion_reward']);
 const KNOWN_UNIQUE_CATS = ['weapon', 'armour', 'accessory', 'gem', 'jewel', 'flask', 'map'];
 function anyOptionText(twFilters) {
   for (const g of twFilters?.result ?? []) {
@@ -388,21 +395,18 @@ function anyOptionText(twFilters) {
   return 'Any';
 }
 function expandKnownItem(field, ctx, anyText) {
-  const cat = (id) => ctx.items?.result?.find((c) => c.id === id)?.entries ?? [];
   const { knownItem, ...rest } = field.option;
+  if (!knownItem.uniques || knownItem.cards || knownItem.currency) return;
+  const cat = (id) => ctx.items?.result?.find((c) => c.id === id)?.entries ?? [];
   const opts = [{ id: null, text: anyText }];
-  if (knownItem.uniques) {
-    for (const id of KNOWN_UNIQUE_CATS) {
-      const seen = new Set();
-      for (const e of cat(id)) {
-        if (!e.flags?.unique || seen.has(e.name)) continue;
-        seen.add(e.name);
-        opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name), e.name) });
-      }
+  for (const id of KNOWN_UNIQUE_CATS) {
+    const seen = new Set();
+    for (const e of cat(id)) {
+      if (!e.flags?.unique || seen.has(e.name)) continue;
+      seen.add(e.name);
+      opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name), e.name) });
     }
   }
-  if (knownItem.cards) for (const e of cat('card')) opts.push({ id: e.type, text: e.text || e.type });
-  if (knownItem.currency) for (const e of cat('currency')) opts.push({ id: e.type, text: e.text || e.type });
   field.option = { ...rest, options: opts };
 }
 
@@ -452,7 +456,7 @@ function translateFilters(usFilters, twFilters, ctx = null) {
     const anyText = anyOptionText(twFilters);
     for (const group of out.result ?? []) {
       for (const field of group.filters ?? []) {
-        if (field.option?.knownItem) expandKnownItem(field, ctx, anyText);
+        if (field.option?.knownItem && KNOWN_ITEM_EXPAND.has(field.id)) expandKnownItem(field, ctx, anyText);
       }
     }
   }
