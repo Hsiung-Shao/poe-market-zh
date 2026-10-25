@@ -386,10 +386,17 @@ function translateStatic(usStatic, twStatic) {
 //   也不會被靜默丟掉。
 const KNOWN_ITEM_EXPAND = new Set(['map_completion_reward']);
 const KNOWN_UNIQUE_CATS = ['weapon', 'armour', 'accessory', 'gem', 'jewel', 'flask', 'map'];
-function anyOptionText(twFilters) {
-  for (const g of twFilters?.result ?? []) {
+// 「任何」的中文:找美服「空代號且文字是 Any」的選項,取台服同群組同欄位的空選項文字。
+// ⚠ 不能直接取台服第一個空代號選項:trade_filters 的空選項是「否」「任何時間」…,
+//   群組順序一變就取錯。
+function anyOptionText(usFilters, twFilters) {
+  const twField = new Map();
+  for (const g of twFilters?.result ?? []) for (const f of g.filters ?? []) twField.set(`${g.id}/${f.id}`, f);
+  for (const g of usFilters?.result ?? []) {
     for (const f of g.filters ?? []) {
-      for (const o of f.option?.options ?? []) if (o.id == null && o.text) return o.text;
+      if (!(f.option?.options ?? []).some((o) => o.id == null && o.text === 'Any')) continue;
+      const zh = twField.get(`${g.id}/${f.id}`)?.option?.options?.find((o) => o.id == null)?.text;
+      if (zh) return zh;
     }
   }
   return 'Any';
@@ -404,15 +411,40 @@ function expandKnownItem(field, ctx, anyText) {
     for (const e of cat(id)) {
       if (!e.flags?.unique || seen.has(e.name)) continue;
       seen.add(e.name);
-      opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name), e.name) });
+      opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name, e), e.name) });
     }
   }
   field.option = { ...rest, options: opts };
 }
 
-// 英文傳奇名 → 中文(純中文,查不到回 null)。優先序同 translateItems:遊戲檔 → 官方層 → 承襲字典;
-// 字典整個載入失敗時退回「上一輪已展開的選項」,不讓失敗的建置把已翻好的下拉洗回英文
-// (失敗路徑不得產出比現況差的狀態)。
+// 從物品下拉已翻好的文字取中文傳奇名:translateItems 把傳奇組成「傳奇名 基底名(遺產)」,
+// 基底名查得到時,去掉結尾的基底(與遺產標記)就是傳奇名。承襲字典只有「傳奇名 基底名」的組合鍵、
+// 沒有單獨的傳奇名,單看名字查不到(2026-10-25 交叉審查量到 16 個傳奇在物品下拉是中文、這裡是英文)。
+// 對不上就回 null,不猜。
+const CJK_RE = /[一-鿿]/;
+function zhNameFromItemText(entry, officialItems, fallbackItems) {
+  if (!entry?.text || !CJK_RE.test(entry.text)) return null;
+  const base = officialItems[entry.type] ?? fallbackItems[entry.type];
+  if (!base) return null;
+  // 英文尾巴不用 stripEnSuffix:遺產版的英文自帶括號「(… (Legacy))」,它的 [^()] 吃不下
+  const en = `${entry.name} ${entry.type}`;
+  let zhCombo = null;
+  for (const e of [en, ...UNIQUE_SUFFIX.map(([enSfx]) => en + enSfx)]) {
+    const tail = ` (${e})`;
+    if (entry.text.endsWith(tail)) { zhCombo = entry.text.slice(0, -tail.length); break; }
+  }
+  zhCombo ??= stripEnSuffix(entry.text);
+  const zhBase = stripEnSuffix(base);
+  for (const sfx of ['', ...UNIQUE_SUFFIX.map(([, zh]) => zh)]) {
+    const tail = ` ${zhBase}${sfx}`;
+    if (zhCombo.length > tail.length && zhCombo.endsWith(tail)) return zhCombo.slice(0, -tail.length);
+  }
+  return null;
+}
+
+// 英文傳奇名 → 中文(純中文,查不到回 null)。優先序:遊戲檔 → 官方層 → 承襲字典(同 translateItems)
+// → 物品下拉已翻好的組合文字;字典整個載入失敗時退回「上一輪已展開的選項」,不讓失敗的建置
+// 把已翻好的下拉洗回英文(失敗路徑不得產出比現況差的狀態)。呼叫端傳 (名稱, 物品條目)。
 function makeUniqueZh({ ggpk, officialItems, fallbackItems, prevFilters }) {
   const prevZh = new Map();
   for (const g of prevFilters?.result ?? []) {
@@ -422,9 +454,10 @@ function makeUniqueZh({ ggpk, officialItems, fallbackItems, prevFilters }) {
       }
     }
   }
-  return (name) => {
+  return (name, entry) => {
     const raw = ggpk.uniques?.[name] ?? ggpk.items?.[name] ?? officialItems[name] ?? fallbackItems[name];
-    return raw ? stripEnSuffix(raw) : (prevZh.get(name) ?? null);
+    if (raw) return stripEnSuffix(raw);
+    return zhNameFromItemText(entry, officialItems, fallbackItems) ?? prevZh.get(name) ?? null;
   };
 }
 
@@ -453,10 +486,17 @@ function translateFilters(usFilters, twFilters, ctx = null) {
     }
   }
   if (ctx) {
-    const anyText = anyOptionText(twFilters);
+    const anyText = anyOptionText(usFilters, twFilters);
     for (const group of out.result ?? []) {
       for (const field of group.filters ?? []) {
-        if (field.option?.knownItem && KNOWN_ITEM_EXPAND.has(field.id)) expandKnownItem(field, ctx, anyText);
+        if (!field.option?.knownItem || !KNOWN_ITEM_EXPAND.has(field.id)) continue;
+        // 展開是加強功能:出任何錯都只讓這個欄位維持官網原樣(expandKnownItem 最後才一次寫入 option),
+        // 不能連累整份 filters、甚至整個第二階段(items / stats / static / filters 四份都不更新)
+        try {
+          expandKnownItem(field, ctx, anyText);
+        } catch (err) {
+          console.warn(`[PTM] 傳奇下拉「${field.id}」展開失敗,維持官網原樣:`, err);
+        }
       }
     }
   }
