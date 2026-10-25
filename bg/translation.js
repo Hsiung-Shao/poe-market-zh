@@ -345,24 +345,70 @@ function mergeOfficialItems(legacyItems, ggpkItems = {}) {
   return mergeFallbackItems(legacyItems, ggpkItems);
 }
 
-// static(通貨等大宗交易項目):依 entry.id 對接
+// 分隔列(`{ id: 'sep', text: '標題' }`,大宗交易選單的小標題,例如「Low-Tier Contracts」)
+// 的 id 全是 `sep`,不能靠 id 對接:同一個鍵會互相覆蓋,Map 只留最後一筆(那筆字是空的),
+// 有字的 9 筆全部不翻,台服哪天最後一筆有字就會把 23 筆都蓋成同一句。
+// 身分 = 所在群組 + 緊接其後第一個非分隔列的 id(那個 id 兩服相同)。不用位置:台服與美服
+// 同群組筆數相同也可能整排錯一格。後面沒有項目就用「結尾」;連續幾個分隔列共用同一個身分、
+// 或兩服任一邊同身分出現兩次 → 沒有身分可分,不翻(寧可英文也不錯位)。
+// 回傳 Map<身分, 分隔列物件>,重複的身分不放進去。
+const SEP_ID = 'sep';
+function sepKey(group, entries, i) {
+  const next = entries.slice(i + 1).find((e) => e.id !== SEP_ID);
+  return `${group.id}\u0000${next ? next.id : '\u0000end'}`;
+}
+function indexSeparators(groups) {
+  const found = new Map(); // 身分 → 分隔列;重複 → null
+  for (const group of groups ?? []) {
+    const entries = group.entries ?? [];
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].id !== SEP_ID) continue;
+      const key = sepKey(group, entries, i);
+      found.set(key, found.has(key) ? null : entries[i]);
+    }
+  }
+  return found;
+}
+
+// static(通貨等大宗交易項目):依 entry.id 對接;分隔列另走 indexSeparators。
+// text 雙語(「中文 (English)」,下拉選項慣例);subtext(官網 currencyText 組成
+// 「text (subtext)」)與 description(滑過項目的提示、選單搜尋也比對它)是整句說明,
+// 與 filters 的 title 一樣用純中文;分隔列標題同群組標題 label,也是純中文。
+// 這三種欄位台服沒有值(或美服本來就沒有)就維持原樣,不憑空新增。
 function translateStatic(usStatic, twStatic) {
   const out = structuredClone(usStatic);
   const twIndex = new Map();
   for (const group of twStatic?.result ?? []) {
     for (const entry of group.entries ?? []) {
-      if (entry.id) twIndex.set(entry.id, entry);
+      if (entry.id && entry.id !== SEP_ID) twIndex.set(entry.id, entry);
     }
   }
+  const twSeps = indexSeparators(twStatic?.result);
+  const usSeps = indexSeparators(usStatic?.result);
   const twGroupLabel = new Map(
     (twStatic?.result ?? []).map((g) => [g.id, g.label])
   );
+  const zhStr = (v) => (typeof v === 'string' && v ? v : null);
   for (const group of out.result ?? []) {
     const zhLabel = twGroupLabel.get(group.id);
     if (zhLabel) group.label = zhLabel;
-    for (const entry of group.entries ?? []) {
+    const entries = group.entries ?? [];
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry.id === SEP_ID) {
+        const key = sepKey(group, entries, i);
+        const zh = zhStr(twSeps.get(key)?.text);
+        // 美服本來就空字的分隔列不填字(只翻譯、不新增標題)
+        if (zh && usSeps.get(key) && entry.text) entry.text = zh;
+        continue;
+      }
       const tw = twIndex.get(entry.id);
-      if (tw?.text) entry.text = bilingual(tw.text, entry.text);
+      if (!tw) continue;
+      if (tw.text) entry.text = bilingual(tw.text, entry.text);
+      for (const field of ['subtext', 'description']) {
+        const zh = zhStr(tw[field]);
+        if (zh && typeof entry[field] === 'string') entry[field] = zh;
+      }
     }
   }
   return out;
@@ -490,6 +536,9 @@ function translateFilters(usFilters, twFilters, ctx = null) {
       if (!tw) continue;
       if (tw.text) field.text = tw.text;
       if (tw.title) field.title = tw.title;
+      // tip:滑過篩選名稱旁「(?)」顯示的說明(官網原樣渲染成 `.filter-tip`,不經 `__` 字典,
+      // 所以字典裡有中文也管不到)。整句說明用純中文;美服沒有 tip 的欄位不憑空新增
+      if (typeof field.tip === 'string' && typeof tw.tip === 'string' && tw.tip) field.tip = tw.tip;
       if (field.option?.options && tw.option?.options) {
         const twOpts = new Map(tw.option.options.map((o) => [String(o.id), o.text]));
         for (const opt of field.option.options) {
