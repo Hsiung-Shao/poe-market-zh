@@ -164,7 +164,7 @@
       'tierpick.infl.chronomancy': '時空術師詞綴',
       'tierpick.infl.soul': '靈魂詞綴',
       // PoE2 詞綴來源家族(poe2db 池 breach_*;戒指/腰帶/項鍊,創生之樹只有戒指/腰帶)
-      'tierpick.infl.otherworldly': '異界的(畸變的錨骨 / 創生之樹)',
+      'tierpick.infl.otherworldly': '異界的(畸變的鎖骨 / 創生之樹)',
       'tierpick.infl.genesis_minion': '創生之樹 召喚物',
       'tierpick.infl.genesis_caster': '創生之樹 法術',
       'tierpick.sep': '、',

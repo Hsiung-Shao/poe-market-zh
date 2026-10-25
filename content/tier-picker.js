@@ -267,13 +267,17 @@
   function placePanel(r, h, vw, vh, w) {
     const M = 8;
     const left = Math.max(M, Math.min(r.left, vw - w - M));
-    const below = vh - r.bottom - 2 - M;
-    const above = r.top - 2 - M;
-    if (h <= below) return { left, top: r.bottom + 2, maxHeight: below };
-    if (h <= above) return { left, top: r.top - 2 - h, maxHeight: above };
+    // 控制項被捲到視窗外(鍵盤聚焦後捲動再按 Enter)→ 上下緣先夾進視窗,面板就貼著視窗上 / 下緣出現
+    const clampY = (y) => Math.min(vh - M + 2, Math.max(M - 2, y));
+    const rTop = clampY(r.top);
+    const rBottom = clampY(r.bottom);
+    const below = vh - rBottom - 2 - M;
+    const above = rTop - 2 - M;
+    if (h <= below) return { left, top: rBottom + 2, maxHeight: below };
+    if (h <= above) return { left, top: rTop - 2 - h, maxHeight: above };
     // 兩邊都放不下完整內容:放空間大的那邊、可捲動;空間太小(< 120)就整個視窗都給它
     if (Math.max(below, above) < 120) return { left, top: M, maxHeight: vh - 2 * M };
-    return below >= above ? { left, top: r.bottom + 2, maxHeight: below } : { left, top: M, maxHeight: above };
+    return below >= above ? { left, top: rBottom + 2, maxHeight: below } : { left, top: M, maxHeight: above };
   }
 
   function closePanel() {
@@ -547,6 +551,9 @@
   let observer = null;
   let reportTimer = null;
   function rescan() {
+    // 開著面板的那一列被官網重畫掉(控制項已不在頁面上)→ 收掉面板,不留一個點了沒反應的面板;
+    // 放在所有提早 return 之前:整個搜尋面板被拿掉、階級表清空時也要收
+    if (openPanel && !openPanel.ctrl.isConnected) closePanel();
     // 沒有搜尋面板(大宗通貨 / 歷史分頁、官網還沒掛上)就沒有篩選列:不必請 MAIN 走一遍元件樹
     const root = panel();
     if (!state.enabled || !state.ladders) {
@@ -572,8 +579,6 @@
     }
     // 有任何一列放了選單 → 其餘列補同寬空格;一列都沒有 → 空格全部拿掉(官方原樣)
     for (const row of bare) if (n) ensurePlaceholder(row); else dropPlaceholder(row);
-    // 開著面板的那一列被官網重畫掉(控制項已不在頁面上)→ 收掉面板,不留一個點了沒反應的面板
-    if (openPanel && !openPanel.ctrl.isConnected) closePanel();
     // 篩選列被刪掉的詞綴就不再是目標(只在搜尋面板還在時判斷 —— 切到歷史分頁不算刪)
     let changed = false;
     for (const k of [...targets.keys()]) if (!seen.has(k)) { targets.delete(k); changed = true; }
