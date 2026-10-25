@@ -370,21 +370,27 @@ function translateStatic(usStatic, twStatic) {
 
 // 傳奇物品下拉(`option.knownItem`):選項不在 filters 資料裡,官網自己從 items 組,
 //   uniques → { id: entry.name, text: entry.name }   ← 讀 name,不是 text
+//   cards / currency → { id: entry.type, text: entry.text || entry.type }  ← items 的 text 本來就是雙語
 // name 同時是搜尋送出的值、必須維持英文,所以翻 items 的 text 管不到傳奇那一段
 // (「完成地圖獎勵」下拉整排英文,2026-10-25 回報)。這裡把 knownItem 展開成靜態 options:
-// id 照舊、text 改成「中文 (English)」。
+// id 照舊、text 改成「中文 (English)」(卡片與通貨沿用 items 已翻好的 text)。
 // ⚠ 組法與順序必須和官網 trade bundle 一致(tools/verify-known-item.mjs 以逐筆 id 比對鎖住):
-//   七個類別依序、每個類別內以 name 去重、類別之間不去重。
+//   傳奇(七個類別依序、每個類別內以 name 去重、類別之間不去重)→ 卡片 → 通貨;
+//   卡片與通貨**不去重**(官方 currency 類別自己就有 26 個重複 type,官網照單全收,真頁面 795 筆)。
 // ⚠ 第一個選項「任何」要自己放:官網只在「不是(property 篩選器且沒有 knownItem)」時才補,
 //   展開成 options 之後它就不補了。
-// ⚠ **只展開下面這一個**(2026-10-25 實測體積):整份 filters 會被 bootstrap.js 寫進官網網域的
-//   localStorage(lscache-tradefilters),而那個 5 MB 額度已被 stats / items 吃掉大半(4.4 MB)。
-//   展開一個 1370 筆的傳奇下拉 = +76.8 KB 字元;三個全展開 = +310 KB(額度的頭房都不夠)。
-//   沒展開的兩個維持英文:`ultimatum_output`(傳奇獎勵,+76.8 KB)、`ultimatum_input`
-//   (獻祭物,傳奇 + 命運卡 + 通貨,+156.9 KB)。要加就加進這個集合,並先量額度。
-//   含 cards / currency 的 knownItem 這裡不處理(原樣保留),哪天官網給「完成地圖獎勵」加了卡片
-//   也不會被靜默丟掉。
-const KNOWN_ITEM_EXPAND = new Set(['map_completion_reward']);
+// ⚠ 展開的代價是體積:整份 filters 會被 bootstrap.js 寫進官網網域的 localStorage(lscache-tradefilters)。
+//   2026-10-25 在使用者 Chrome 量到該網域總用量 3.95M / 5.24M 字元(頭房 1.29M;上限是假設值、未實測;
+//   同網域其他擴充另佔約 0.5M)。完成地圖獎勵 ≈ +77 KB、最後通牒的傳奇獎勵 ≈ +79 KB、
+//   獻祭物(傳奇 + 卡片 467 + 通貨 795)≈ +161 KB;三個合計比完全沒展開多約 +311 KB
+//   (filters 17.5 → 328 KB),相對「只展開一個」的舊狀態多約 +231 KB。
+//   使用者 2026-10-25 要求三個都翻;若 popup 回報 filters 寫入失敗(lscacheError),
+//   先把 `ultimatum_input` 從這個集合拿掉,再評估「服務端展開 + 緊湊名單」。
+//   要再加別的欄位:先量額度,並在 tools/verify-known-item.mjs 的 B9 調整體積區間。
+// ⚠ knownItem 帶 uniques / cards / currency 以外的旗標時整個欄位原樣保留:哪天官網加了新的選項來源,
+//   不能靜默丟掉那一段。
+const KNOWN_ITEM_EXPAND = new Set(['map_completion_reward', 'ultimatum_output', 'ultimatum_input']);
+const KNOWN_ITEM_SOURCES = ['uniques', 'cards', 'currency'];
 const KNOWN_UNIQUE_CATS = ['weapon', 'armour', 'accessory', 'gem', 'jewel', 'flask', 'map'];
 // 「任何」的中文:找美服「空代號且文字是 Any」的選項,取台服同群組同欄位的空選項文字。
 // ⚠ 不能直接取台服第一個空代號選項:trade_filters 的空選項是「否」「任何時間」…,
@@ -403,17 +409,22 @@ function anyOptionText(usFilters, twFilters) {
 }
 function expandKnownItem(field, ctx, anyText) {
   const { knownItem, ...rest } = field.option;
-  if (!knownItem.uniques || knownItem.cards || knownItem.currency) return;
+  if (Object.keys(knownItem).some((k) => !KNOWN_ITEM_SOURCES.includes(k))) return;
+  if (!KNOWN_ITEM_SOURCES.some((k) => knownItem[k])) return;
   const cat = (id) => ctx.items?.result?.find((c) => c.id === id)?.entries ?? [];
   const opts = [{ id: null, text: anyText }];
-  for (const id of KNOWN_UNIQUE_CATS) {
-    const seen = new Set();
-    for (const e of cat(id)) {
-      if (!e.flags?.unique || seen.has(e.name)) continue;
-      seen.add(e.name);
-      opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name, e), e.name) });
+  if (knownItem.uniques) {
+    for (const id of KNOWN_UNIQUE_CATS) {
+      const seen = new Set();
+      for (const e of cat(id)) {
+        if (!e.flags?.unique || seen.has(e.name)) continue;
+        seen.add(e.name);
+        opts.push({ id: e.name, text: bilingual(ctx.uniqueZh?.(e.name, e), e.name) });
+      }
     }
   }
+  if (knownItem.cards) for (const e of cat('card')) opts.push({ id: e.type, text: e.text || e.type });
+  if (knownItem.currency) for (const e of cat('currency')) opts.push({ id: e.type, text: e.text || e.type });
   field.option = { ...rest, options: opts };
 }
 
