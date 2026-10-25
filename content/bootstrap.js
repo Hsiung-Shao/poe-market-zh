@@ -121,6 +121,8 @@ const SEEN_REFRESH_MS = 24 * 60 * 60 * 1000;
 // 擴充的 unlimitedStorage 權限管不到頁面自己的 localStorage —— 而 PoE1 + PoE2
 // 兩份中文化快取加起來就 4.4 MB。空間不夠時先清掉沒在用的那一款讓路:
 // 官網下次開那一款會自己重抓,不會壞掉,只是那一次會多一趟 API。
+// ⚠ 那一款的簽章鍵刻意不在這裡清:開那一款時 main() 會發現「簽章相符但資料鍵全無」而自動重寫
+//   (lscacheDataPresent),連已經孤立的舊狀態也一併補好;只清簽章救不了既有的孤立狀態。
 const OTHER_LSCACHE_KEYS = Object.values(
   PMZ_TABLE[PMZ_GAME.id === 'poe1' ? 'poe2' : 'poe1'].lscache
 );
@@ -207,6 +209,17 @@ function clearLscache() {
   }
 }
 
+// 這一款的官網快取資料鍵還有沒有任何一把。只掃鍵名、不讀值(值動輒數 MB)。
+// 簽章相符不代表資料還在:freeOtherGameCache 為了讓路會清掉另一款的資料鍵,卻不碰它的簽章;
+// 之後開那一款時簽章仍然相符 → 不重寫 → page/trade-data.js 讀不到資料而放行英文,
+// 要等快照逾時重建、簽章改變才恢復。資料鍵一把都不在 = 被清掉了,視同簽章不符。
+// ⚠ 用「任何一把」而不是「四把都在」:某種資料本來就沒有時,「四把都在」會讓每次開頁都重寫好幾 MB。
+function lscacheDataPresent() {
+  const want = new Set(Object.values(LSCACHE_KEYS));
+  for (let i = 0; i < localStorage.length; i++) if (want.has(localStorage.key(i))) return true;
+  return false;
+}
+
 function lscacheSignature(updated, parts) {
   return [updated ?? 0, chrome.runtime.id, ...parts].join('|');
 }
@@ -276,6 +289,8 @@ async function main() {
 
   const sig = lscacheSignature(updated, []);
   const localSig = localStorage.getItem(LSCACHE_SIG);
+  // 簽章相符且資料鍵還在,才算本頁的 lscache 是最新的(見 lscacheDataPresent)
+  const upToDate = sig === localSig && lscacheDataPresent();
   dbg(
     `[PTM/${PMZ_TAG}] 翻譯快照:建置於 ${updated ? new Date(updated).toLocaleString() : '無'}、` +
       `本頁簽章 ${localSig ?? '無'}`
@@ -289,7 +304,7 @@ async function main() {
   //   translation 還不存在。那個窗口裡本頁一定還沒寫過 lscache(localSig 是 null)
   //   → sig 必不相符 → 照樣會去拿 translation,拿到 undefined 就走下面的建置分支,
   //   與改動前完全一樣。不要把這裡改成「有 updated 就跳過」。
-  const needTranslation = !updated || sig !== localSig;
+  const needTranslation = !updated || !upToDate;
   const translation = needTranslation
     ? (await chrome.storage.local.get(K.translation))[K.translation]
     : null;
@@ -302,7 +317,7 @@ async function main() {
     return;
   }
 
-  if (sig !== localSig) {
+  if (!upToDate) {
     const failed = writeLscache(translation);
     if (failed.length) {
       // ⚠ 寫不進去 = 那幾類的下拉會維持英文,而且以前**完全無聲**(只有一行
