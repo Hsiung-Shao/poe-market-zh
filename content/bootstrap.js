@@ -120,9 +120,12 @@ const SEEN_REFRESH_MS = 24 * 60 * 60 * 1000;
 // 「現在沒在看的那一款」的 lscache 鍵。localStorage 是 **per-origin 5 MB**,
 // 擴充的 unlimitedStorage 權限管不到頁面自己的 localStorage —— 而 PoE1 + PoE2
 // 兩份中文化快取加起來就 4.4 MB。空間不夠時先清掉沒在用的那一款讓路:
-// 官網下次開那一款會自己重抓,不會壞掉,只是那一次會多一趟 API。
-// ⚠ 那一款的簽章鍵刻意不在這裡清:開那一款時 main() 會發現「簽章相符但資料鍵全無」而自動重寫
-//   (lscacheDataPresent),連已經孤立的舊狀態也一併補好;只清簽章救不了既有的孤立狀態。
+// 下次開那一款時 main() 會重寫(見下面 lscacheDataPresent);空間只夠放一款的使用者,
+// 每次換款都要多搬一次 translation、重寫好幾 MB —— 這是已知代價。
+// ⚠ 官網自 3.29.3b 起每次都重新 fetch、不再讀 lscache:被清掉的那一款在重寫完成前讀到的是
+//   官方英文,重寫若晚於官網的 fetch,那一次仍是英文,重新整理後才是中文。
+// ⚠ 那一款的簽章鍵刻意不在這裡清:開那一款時 main() 會發現「簽章相符但資料鍵全無」而自動重寫,
+//   連已經孤立的舊狀態也一併補好;只清簽章救不了既有的孤立狀態。
 const OTHER_LSCACHE_KEYS = Object.values(
   PMZ_TABLE[PMZ_GAME.id === 'poe1' ? 'poe2' : 'poe1'].lscache
 );
