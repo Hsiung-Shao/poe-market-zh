@@ -380,12 +380,15 @@ function translateStatic(usStatic, twStatic) {
 // ⚠ 第一個選項「任何」要自己放:官網只在「不是(property 篩選器且沒有 knownItem)」時才補,
 //   展開成 options 之後它就不補了。
 // ⚠ 展開的代價是體積:整份 filters 會被 bootstrap.js 寫進官網網域的 localStorage(lscache-tradefilters)。
-//   2026-10-25 在使用者 Chrome 量到該網域總用量 3.95M / 5.24M 字元(頭房 1.29M;上限是假設值、未實測;
+//   2026-10-25 在使用者 Chrome 量到該網域總用量 3.95M / 5.24M 字元(上限是假設值、未實測;
 //   同網域其他擴充另佔約 0.5M)。完成地圖獎勵 ≈ +77 KB、最後通牒的傳奇獎勵 ≈ +79 KB、
 //   獻祭物(傳奇 + 卡片 467 + 通貨 795)≈ +161 KB;三個合計比完全沒展開多約 +311 KB
 //   (filters 17.5 → 328 KB),相對「只展開一個」的舊狀態多約 +231 KB。
+//   ⚠ 那台只有 PoE1 的快取(約 3.3M)。PoE2 的 lscache 約 1.48M 字元(實跑建置量到)與它共用同一個網域:
+//   兩款都玩、沒有其他擴充時,頭房約從 0.34M 縮到 0.11M;再加其他擴充就超過,bootstrap 會清掉另一款讓路。
 //   使用者 2026-10-25 要求三個都翻;若 popup 回報 filters 寫入失敗(lscacheError),
-//   先把 `ultimatum_input` 從這個集合拿掉,再評估「服務端展開 + 緊湊名單」。
+//   先把 `ultimatum_input` 從這個集合拿掉(省約 161 KB),仍寫不進再拿掉 `ultimatum_output`,
+//   再評估「服務端展開 + 緊湊名單」。
 //   要再加別的欄位:先量額度,並在 tools/verify-known-item.mjs 的 B9 調整體積區間。
 // ⚠ knownItem 帶 uniques / cards / currency 以外的旗標時整個欄位原樣保留:哪天官網加了新的選項來源,
 //   不能靜默丟掉那一段。
