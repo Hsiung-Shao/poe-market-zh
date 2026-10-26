@@ -49,12 +49,14 @@
   // 詞綴下拉每列開頭的類型前綴:官網 Vue 3 版的 addStatFilterLabel 直接串英文 type
   // (「(pseudo) …」),不查 `__` 字典,這裡改查。只換開頭那一組括號,英文段的括號不動。
   // ⚠ 只認字典的自有字串屬性:`__.constructor` 之類的原型成員不能被當成譯名。
+  // ⚠ 讀裸識別字 `__`,跟 page/ui-strings.js 同一套:別的腳本先以全域 `const __` 宣告時,
+  //   ui-strings.js 會把字併進對方物件、不設 window.__,只看 window.__ 會整個退回英文。
   function translateTypePrefix(label) {
     if (typeof label !== 'string') return label;
     let dict;
     try {
       if (localStorage.getItem('ptm-ui-mode') !== 'zh') return label;
-      dict = window.__;
+      dict = typeof __ !== 'undefined' ? __ : window.__;
     } catch (_) {
       return label;
     }
@@ -296,20 +298,25 @@
 
   // .multiselect 元素 → 它的元件實例。Vue 2 有 el.__vue__;Vue 3 production 不在元素上掛反向參照,
   // 改從 window.app 的元件樹找 $el 相同的那個(compat 模式下 $children 仍可用)。
+  // ⚠ 外包元件的根若就是 <multiselect>,它的 $el 也是同一個元素:只認真的下拉實例(有 filteredOptions),
+  //   否則會停在外包層、兩條 patch 路都失敗而靜默不啟用。
+  const isMultiselect = (v) =>
+    v?.$options?.name === 'vue-multiselect' || !!v?._computedWatchers?.filteredOptions ||
+    !!(v?.$?.ctx && Object.getOwnPropertyDescriptor(v.$.ctx, 'filteredOptions'));
   const vmByEl = new WeakMap();
-  function vmOf(root) {
+  function vmOf(root, app = window.app) {
     if (!root) return null;
-    if (root.__vue__) return root.__vue__;
+    if (root.__vue__ && isMultiselect(root.__vue__)) return root.__vue__;
     if (vmByEl.has(root)) return vmByEl.get(root);
     let hit = null;
     const seen = new Set();
     const walk = (v, depth) => {
       if (hit || !v || seen.has(v) || depth > 40) return;
       seen.add(v);
-      if (v.$el === root) { hit = v; return; }
+      if (v.$el === root && isMultiselect(v)) { hit = v; return; }
       for (const c of v.$children ?? []) walk(c, depth + 1);
     };
-    try { walk(window.app, 0); } catch (_) { /* 結構不符就當找不到 */ }
+    try { walk(app, 0); } catch (_) { /* 結構不符就當找不到 */ }
     if (hit) vmByEl.set(root, hit);
     return hit;
   }
@@ -347,6 +354,6 @@
 
   // 離線驗證用(tools/verify-fuzzy.mjs);不影響官網行為
   if (typeof window !== 'undefined') {
-    window.__ptmSearch = { tightMatch, fuzzyScore, qualifies, splitLabel, merge, patch, FUZZY_LIMIT, translateTypePrefix };
+    window.__ptmSearch = { tightMatch, fuzzyScore, qualifies, splitLabel, merge, patch, FUZZY_LIMIT, translateTypePrefix, vmOf };
   }
 })();
