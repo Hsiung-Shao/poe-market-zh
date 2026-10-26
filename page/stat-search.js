@@ -63,14 +63,23 @@
       Object.hasOwn(dict, type) && typeof dict[type] === 'string' && dict[type] ? `(${dict[type]}) ` : m);
   }
 
-  // 補充層比對用的標籤也套類型前綴中文化,打「偽屬性 冰冷」才找得到(官網原生比對的是英文前綴)
   function labelOf(ms, opt) {
     if (opt == null) return '';
     if (typeof opt === 'string') return opt;
     try {
-      if (typeof ms.customLabel === 'function') return translateTypePrefix(String(ms.customLabel(opt, ms.label) ?? ''));
+      if (typeof ms.customLabel === 'function') return String(ms.customLabel(opt, ms.label) ?? '');
     } catch (_) { /* 官網自訂 label 失敗就退回欄位取值 */ }
-    return translateTypePrefix(String(ms.label ? opt[ms.label] ?? '' : opt));
+    return String(ms.label ? opt[ms.label] ?? '' : opt);
+  }
+
+  // 補充層比對用的標籤:畫面上是中文前綴(「偽屬性 冰冷」要找得到),但打英文類型字
+  // (「pseudo 冰冷」)也要找得到,所以 full 另外附上原本的英文前綴(官網原生比對的就是英文)
+  function segOf(ms, opt) {
+    const raw = labelOf(ms, opt);
+    const shown = translateTypePrefix(raw);
+    const seg = splitLabel(shown);
+    if (shown !== raw) seg.full += ` ${raw.slice(0, raw.indexOf(') ') + 1).toLowerCase()}`;
+    return seg;
   }
 
   // label 形如「中文 (English)」(bg/translation.js 的 bilingual())。
@@ -98,11 +107,11 @@
   const segCache = new WeakMap();
   function segsOf(ms, opt) {
     const opts = ms.options;
-    if (!opts || typeof opts !== 'object') return splitLabel(labelOf(ms, opt));
+    if (!opts || typeof opts !== 'object') return segOf(ms, opt);
     let m = segCache.get(opts);
     if (!m) segCache.set(opts, (m = new Map()));
     let seg = m.get(opt);
-    if (!seg) m.set(opt, (seg = splitLabel(labelOf(ms, opt))));
+    if (!seg) m.set(opt, (seg = segOf(ms, opt)));
     return seg;
   }
 
