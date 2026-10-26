@@ -8,10 +8,11 @@
 //   2. 子序列模糊 —— 查詢字元依序出現即可,依「命中緊湊度」排序
 // 官網原生命中永遠排最前且順序不變,補充項另立群組標籤,不干擾既有習慣。
 //
-// 作法:focusin 時對 .multiselect 的 Vue 2 實例做一次性 patch ——
-// 改寫 _computedWatchers.filteredOptions 的 getter(Vue 內部以
-// getter.call(vm, vm) 求值)。官網改版導致結構不符時,find 不到
-// watcher 就靜默不啟用,任何例外都退回原生過濾,不影響其他功能。
+// 作法:focusin 時對 .multiselect 的元件實例做一次性 patch ——
+// Vue 2 改寫 _computedWatchers.filteredOptions 的 getter;Vue 3(官網 2026-10 起)
+// 改寫內部實例 ctx 上的 filteredOptions getter(見 patchVue3)。同時把每列開頭的
+// 類型前綴「(pseudo)」換成中文(translateTypePrefix)。官網改版導致結構不符時
+// 兩條路都找不到就靜默不啟用,任何例外都退回原生過濾,不影響其他功能。
 
 (() => {
   // 開發診斷 log:發佈打包(tools/pack.mjs)會把下行替換為 no-op,勿改動格式
@@ -45,13 +46,31 @@
 
   const CJK_RE = /[㐀-䶿一-鿿豈-﫿]/;
 
+  // 詞綴下拉每列開頭的類型前綴:官網 Vue 3 版的 addStatFilterLabel 直接串英文 type
+  // (「(pseudo) …」),不查 `__` 字典,這裡改查。只換開頭那一組括號,英文段的括號不動。
+  // ⚠ 只認字典的自有字串屬性:`__.constructor` 之類的原型成員不能被當成譯名。
+  function translateTypePrefix(label) {
+    if (typeof label !== 'string') return label;
+    let dict;
+    try {
+      if (localStorage.getItem('ptm-ui-mode') !== 'zh') return label;
+      dict = window.__;
+    } catch (_) {
+      return label;
+    }
+    if (!dict || typeof dict !== 'object') return label;
+    return label.replace(/^\(([a-z_]+)\) /, (m, type) =>
+      Object.hasOwn(dict, type) && typeof dict[type] === 'string' && dict[type] ? `(${dict[type]}) ` : m);
+  }
+
+  // 補充層比對用的標籤也套類型前綴中文化,打「偽屬性 冰冷」才找得到(官網原生比對的是英文前綴)
   function labelOf(ms, opt) {
     if (opt == null) return '';
     if (typeof opt === 'string') return opt;
     try {
-      if (typeof ms.customLabel === 'function') return String(ms.customLabel(opt, ms.label) ?? '');
+      if (typeof ms.customLabel === 'function') return translateTypePrefix(String(ms.customLabel(opt, ms.label) ?? ''));
     } catch (_) { /* 官網自訂 label 失敗就退回欄位取值 */ }
-    return String(ms.label ? opt[ms.label] ?? '' : opt);
+    return translateTypePrefix(String(ms.label ? opt[ms.label] ?? '' : opt));
   }
 
   // label 形如「中文 (English)」(bg/translation.js 的 bilingual())。
@@ -187,36 +206,103 @@
     return [...native, ...add];
   }
 
-  function patch(ms) {
-    if (!ms || ms[PATCHED]) return;
+  // 原生結果後面補上多關鍵字與模糊比對的命中
+  function augment(self, native) {
+    try {
+      const raw = String(self.search ?? '').trim();
+      if (!raw) return native;
+      const extra = [];
+      const tokens = raw.toLowerCase().split(/\s+/).filter(Boolean);
+      if (tokens.length >= 2) extra.push(...tokenAndPick(self, tokens));
+      if (qualifies(raw)) extra.push(...fuzzyPick(self, raw));
+      if (!extra.length) return native;
+      const merged = merge(self, native, extra);
+      if (merged.length !== native.length) {
+        const grouped = !!(self.groupValues && self.groupLabel);
+        const added = merged.length - native.length - (grouped ? 1 : 0);
+        dbg(`[PTM] 下拉「${raw}」:原生 ${native.length} + 補充 ${added}`);
+      }
+      return merged;
+    } catch (_) {
+      return native; // 任何意外退回原生過濾
+    }
+  }
+
+  // 下拉每列與已選值的顯示文字(vue-multiselect 的 getOptionLabel)套類型前綴中文化
+  function wrapOptionLabel(host) {
+    const orig = host?.getOptionLabel;
+    if (typeof orig !== 'function') return;
+    host.getOptionLabel = function (...args) {
+      return translateTypePrefix(orig.apply(this, args));
+    };
+  }
+
+  // Vue 2:改寫 computed watcher 的 getter(Vue 內部以 getter.call(vm, vm) 求值,自帶快取)
+  function patchVue2(ms) {
     const w = ms._computedWatchers?.filteredOptions;
-    if (!w || typeof w.getter !== 'function') return; // 結構不符:靜默不啟用
+    if (!w || typeof w.getter !== 'function') return false;
     const orig = w.getter;
     w.getter = function (vm) {
       const self = vm ?? this;
-      const native = orig.call(self, self); // 原生失敗就照原本行為往外拋
-      try {
-        const raw = String(self.search ?? '').trim();
-        if (!raw) return native;
-        const extra = [];
-        const tokens = raw.toLowerCase().split(/\s+/).filter(Boolean);
-        if (tokens.length >= 2) extra.push(...tokenAndPick(self, tokens));
-        if (qualifies(raw)) extra.push(...fuzzyPick(self, raw));
-        if (!extra.length) return native;
-        const merged = merge(self, native, extra);
-        if (merged.length !== native.length) {
-          const grouped = !!(self.groupValues && self.groupLabel);
-          const added = merged.length - native.length - (grouped ? 1 : 0);
-          dbg(`[PTM] 下拉「${raw}」:原生 ${native.length} + 補充 ${added}`);
-        }
-        return merged;
-      } catch (_) {
-        return native; // 任何意外退回原生過濾
-      }
+      return augment(self, orig.call(self, self)); // 原生失敗就照原本行為往外拋
     };
+    wrapOptionLabel(ms);
+    return true;
+  }
+
+  // Vue 3(官網 2026-10 起,實測 3.5.34):computed 定義在內部實例的 ctx 上
+  // (`Object.defineProperty(ctx, key, { get })`,configurable),render 經 proxy 讀它。
+  // 換掉這個 getter 就等於換掉 filteredOptions;方法(getOptionLabel)同樣掛在 ctx 上。
+  // ⚠ 一次渲染會讀 filteredOptions 十幾次(實測 16 次),原生 computed 有快取、我們的補充沒有,
+  //   所以以「搜尋字串 + 原生結果陣列」為鍵快取,否則每次讀都重掃上萬條。
+  function patchVue3(ms) {
+    const ctx = ms.$?.ctx;
+    const d = ctx && Object.getOwnPropertyDescriptor(ctx, 'filteredOptions');
+    if (!d || typeof d.get !== 'function' || !d.configurable) return false;
+    let memo = null;
+    Object.defineProperty(ctx, 'filteredOptions', {
+      configurable: true,
+      enumerable: d.enumerable,
+      get() {
+        const native = d.get.call(ctx); // 原生失敗就照原本行為往外拋
+        const q = String(ms.search ?? '');
+        if (memo && memo.native === native && memo.q === q) return memo.out;
+        const out = augment(ms, native);
+        memo = { native, q, out };
+        return out;
+      },
+      set: d.set,
+    });
+    wrapOptionLabel(ctx);
+    return true;
+  }
+
+  function patch(ms) {
+    if (!ms || ms[PATCHED]) return;
+    if (!patchVue2(ms) && !patchVue3(ms)) return; // 結構不符:靜默不啟用
     ms[PATCHED] = true;
     dbg('[PTM] 下拉:已掛上 filteredOptions(多關鍵字 + 模糊比對)');
     warmLabelCache(ms);
+  }
+
+  // .multiselect 元素 → 它的元件實例。Vue 2 有 el.__vue__;Vue 3 production 不在元素上掛反向參照,
+  // 改從 window.app 的元件樹找 $el 相同的那個(compat 模式下 $children 仍可用)。
+  const vmByEl = new WeakMap();
+  function vmOf(root) {
+    if (!root) return null;
+    if (root.__vue__) return root.__vue__;
+    if (vmByEl.has(root)) return vmByEl.get(root);
+    let hit = null;
+    const seen = new Set();
+    const walk = (v, depth) => {
+      if (hit || !v || seen.has(v) || depth > 40) return;
+      seen.add(v);
+      if (v.$el === root) { hit = v; return; }
+      for (const c of v.$children ?? []) walk(c, depth + 1);
+    };
+    try { walk(window.app, 0); } catch (_) { /* 結構不符就當找不到 */ }
+    if (hit) vmByEl.set(root, hit);
+    return hit;
   }
 
   // label cache 預熱。
@@ -245,14 +331,13 @@
     (e) => {
       const input = e.target;
       if (!(input instanceof HTMLElement) || !input.classList.contains('multiselect__input')) return;
-      const root = input.closest('.multiselect');
-      patch(root?.__vue__);
+      patch(vmOf(input.closest('.multiselect')));
     },
     true
   );
 
   // 離線驗證用(tools/verify-fuzzy.mjs);不影響官網行為
   if (typeof window !== 'undefined') {
-    window.__ptmSearch = { tightMatch, fuzzyScore, qualifies, splitLabel, merge, patch, FUZZY_LIMIT };
+    window.__ptmSearch = { tightMatch, fuzzyScore, qualifies, splitLabel, merge, patch, FUZZY_LIMIT, translateTypePrefix };
   }
 })();

@@ -108,7 +108,8 @@
         "content/item-text.js",
         "content/copy-item.js",
         "content/result-links.js",
-        "content/results.js"
+        "content/results.js",
+        "content/result-ui.js"
       ],
       "run_at": "document_end"
     },
