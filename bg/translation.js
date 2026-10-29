@@ -743,7 +743,7 @@ function bridgeTwStats(usStats, twStats) {
 // 回測:拿台服已翻的條目用本規則重組,即時 692/692、遠端快照 691/691 逐字相同。
 //
 // 守門:內層只認台服譯文(不拿遊戲檔墊,維持台服優先)、譯文必須唯一、
-// 同 id 多種英文(R1)的不收;內層英文完全不存在時才退一步找 `+` 版(`Bonded: # to maximum Life` 的內層是
+// 同 id 多種英文(R1)的不收;內層原字沒有任何可用台服譯文時才退一步找 `+` 版(`Bonded: # to maximum Life` 的內層是
 // `+# to maximum Life`),其譯文開頭的 + 要剝掉,台服原譯也是這樣寫。
 // 產出形狀同 bridgeTwStats,下游的 gateTwStat R1-R4 照樣會跑。
 const STAT_PREFIXES = [
@@ -786,7 +786,7 @@ function composePrefixTwStats(usStats, twStats) {
     const set = zhByEn.get(en);
     return set?.size === 1 ? [...set][0] : null;
   };
-  // 原字查得到但有歧義就放棄;只有原字完全不存在才退一步找 + 版
+  // 原字查得到但有歧義就放棄;原字沒有任何可用台服譯文(不存在、未翻或被 R1 排除)才退一步找 + 版
   const innerZh = (inner) => {
     if (zhByEn.has(inner)) return uniqueZh(inner);
     const signed = uniqueZh(`+${inner}`);
