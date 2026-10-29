@@ -729,6 +729,83 @@ function bridgeTwStats(usStats, twStats) {
   return { stats: out, counts };
 }
 
+// ── 前綴組合:「前綴 + 另一條詞綴」型的條目,台服缺 id 時用內層的台服譯文組出來 ──
+//
+// PoE2 的符文命定詞綴(`Bonded: …`)與珠寶範圍詞綴(`Small/Notable Passive Skills
+// in Radius also grant …`)都是「固定前綴 + 一條獨立存在的詞綴」。台服有翻的那幾百
+// 條,譯文一律是「中文前綴 + 內層那條詞綴自己的台服譯文」;但新加的 id 台服常常
+// 還沒有(2026-10-29 即時資料橋接後仍缺 36 條),整條就停在英文。
+//
+// 前綴譯文兩個獨立來源一致(2026-10-29 核對):
+//   台服 trade2 已翻條目逐條以此開頭(命定 181/181、小型 245/245、核心 279/279,
+//   遠端 dict v17 快照亦同);GGPK clientstrings `ItemDisplayShamanOnly`、
+//   `ModStatJewelAddToSmall`、`ModStatJewelAddToNotable` 同字。
+// 回測:拿台服已翻的條目用本規則重組,即時 692/692、遠端快照 691/691 逐字相同。
+//
+// 守門:內層只認台服譯文(不拿遊戲檔墊,維持台服優先)、譯文必須唯一;
+// 內層英文找不到時退一步找 `+` 版(`Bonded: # to maximum Life` 的內層是
+// `+# to maximum Life`),其譯文開頭的 + 要剝掉,台服原譯也是這樣寫。
+// 產出形狀同 bridgeTwStats,下游的 gateTwStat R1-R4 照樣會跑。
+const STAT_PREFIXES = [
+  ['Bonded: ', '命定: '],
+  ['Small Passive Skills in Radius also grant ', '範圍內小型天賦也會賦予 '],
+  ['Notable Passive Skills in Radius also grant ', '範圍內核心天賦也會賦予 '],
+];
+
+function composePrefixTwStats(usStats, twStats) {
+  const counts = { adopted: 0, noInner: 0, skippedOption: 0 };
+  if (!usStats?.result || !twStats?.result) return { stats: twStats, counts };
+  const out = structuredClone(twStats);
+
+  const twById = new Map();
+  for (const g of out.result) for (const e of g.entries ?? []) if (e.id) twById.set(e.id, e);
+
+  // 英文模板 → 台服譯文集合(只收有翻、非選項型的)
+  const zhByEn = new Map();
+  for (const g of usStats.result) {
+    for (const e of g.entries ?? []) {
+      if (!e?.id || !e.text || e.option?.options) continue;
+      const tw = twById.get(e.id);
+      if (!tw?.text || tw.option?.options || tw.text === e.text) continue;
+      if (!zhByEn.has(e.text)) zhByEn.set(e.text, new Set());
+      zhByEn.get(e.text).add(tw.text);
+    }
+  }
+  const uniqueZh = (en) => {
+    const set = zhByEn.get(en);
+    return set?.size === 1 ? [...set][0] : null;
+  };
+  const innerZh = (inner) => {
+    const exact = uniqueZh(inner);
+    if (exact) return exact;
+    const signed = uniqueZh(`+${inner}`);
+    return signed?.startsWith('+') ? signed.slice(1) : null;
+  };
+
+  const outGroups = new Map(out.result.map((g) => [g.id, g]));
+  for (const usGroup of usStats.result) {
+    for (const usEntry of usGroup.entries ?? []) {
+      if (!usEntry?.id || !usEntry.text || twById.has(usEntry.id)) continue;
+      const prefix = STAT_PREFIXES.find(([en]) => usEntry.text.startsWith(en));
+      if (!prefix) continue;
+      if (usEntry.option?.options) { counts.skippedOption++; continue; }
+      const zh = innerZh(usEntry.text.slice(prefix[0].length));
+      if (!zh) { counts.noInner++; continue; }
+      let group = outGroups.get(usGroup.id);
+      if (!group) {
+        group = { id: usGroup.id, label: usGroup.label, entries: [] };
+        out.result.push(group);
+        outGroups.set(usGroup.id, group);
+      }
+      if (!group.entries) group.entries = [];
+      group.entries.push({ id: usEntry.id, text: prefix[1] + zh, type: usGroup.id });
+      twById.set(usEntry.id, group.entries[group.entries.length - 1]);
+      counts.adopted++;
+    }
+  }
+  return { stats: out, counts };
+}
+
 const HASH_RE = /#/g;
 const PERCENT_RE = /#\s*%/g;
 const countOf = (s, re) => (String(s ?? '').match(re) ?? []).length;
@@ -861,6 +938,7 @@ export const _test = {
   buildStatIdMap,
   gateTwStat,
   bridgeTwStats,
+  composePrefixTwStats,
   statSuffix,
   buildItemMap,
   buildUniqueMap,
@@ -1065,6 +1143,16 @@ async function buildOne(game) {
           `[PTM/${tag}] build:跨群橋接 採用 ${bridged.counts.adopted}、` +
             `英文不符退回 ${bridged.counts.rejectedEn}、無候選 ${bridged.counts.noCandidate}、` +
             `選項型跳過 ${bridged.counts.skippedOption}`
+        );
+      }
+
+      // ── 前綴組合(命定 / 範圍天賦也會賦予;PoE1 沒有這些前綴,等於空轉)──
+      if (statsUsable && twStats) {
+        const composed = composePrefixTwStats(us.stats, twStats);
+        twStats = composed.stats;
+        dbg(
+          `[PTM/${tag}] build:前綴組合 採用 ${composed.counts.adopted}、` +
+            `內層無譯文 ${composed.counts.noInner}、選項型跳過 ${composed.counts.skippedOption}`
         );
       }
 
