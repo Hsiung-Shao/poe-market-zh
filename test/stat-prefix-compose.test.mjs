@@ -190,3 +190,40 @@ test('T9 不改動輸入物件', () => {
   assert.deepEqual(tw, twBefore);
   assert.deepEqual(us, usBefore);
 });
+
+test('T10 原字有歧義時不改查正號版', () => {
+  const us = mkStats({
+    rune: [['rune.stat_1', 'Bonded: # to Strength']],
+    explicit: [
+      ['explicit.stat_2', '# to Strength'],
+      ['explicit.stat_3', '# to Strength'],
+      ['explicit.stat_4', '+# to Strength'],
+    ],
+  });
+  const tw = mkStats({
+    explicit: [
+      ['explicit.stat_2', '#力量'],
+      ['explicit.stat_3', '#點力量'],
+      ['explicit.stat_4', '+#點力量'],
+    ],
+  });
+  const { stats, counts } = _test.composePrefixTwStats(us, tw);
+  // 原字有兩種譯文卻退而借正號版(拼出「命定: #點力量」)會失敗
+  assert.equal(find(stats, 'rune.stat_1').entry, undefined);
+  assert.equal(counts.noInner, 1);
+  assert.equal(counts.adopted, 0);
+});
+
+test('T11 內層 id 對到多種英文時不組合', () => {
+  const us = mkStats({
+    rune: [['rune.stat_1', 'Bonded: #% increased Accuracy Rating']],
+    explicit: [['explicit.stat_2', '#% increased Accuracy Rating']],
+    implicit: [['explicit.stat_2', '#% increased Global Accuracy Rating']],
+  });
+  const tw = mkStats({ explicit: [['explicit.stat_2', '增加#%命中值']] });
+  const { stats, counts } = _test.composePrefixTwStats(us, tw);
+  // 同 id 對到兩種英文時仍採用其譯文(可能是錯配)會失敗
+  assert.equal(find(stats, 'rune.stat_1').entry, undefined);
+  assert.equal(counts.noInner, 1);
+  assert.equal(counts.adopted, 0);
+});
