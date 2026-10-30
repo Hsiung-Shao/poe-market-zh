@@ -6,7 +6,7 @@ Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)�
   兩款的翻譯資料、官網 lscache 鍵與聯盟設定**各自獨立**(PoE1 既有的鍵一個都沒動);
   書籤與歷史最上方有 PoE1 / PoE2 分頁,開哪一款就自動切到哪一邊。
   PoE2 目前**不含** PoB code 匯入(沒有現成的詞綴對照表)與物價(poe.ninja 端點是 PoE1 專用)
-- **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯
+- **中文化**:介面、詞綴、篩選器、下拉選單中文化 + 搜尋結果列即時翻譯(含定價、已驗證、上架時間等結果列固定字樣)
 - **書籤**:側邊欄以**兩層資料夾**收藏常用搜尋,**整塊點下去就是搜尋、按住 0.35 秒才是拖曳**(拖到別的資料夾上變成它的子、拖到上下緣則是同層排序);標題列內聯改名、釘選;可從 **PoE Trade Extension 的匯出碼**、**Better PathOfExile Trading 的備份檔**與 **Path of Building code** 匯入;書籤存的是與聯盟無關的搜尋編號,**換季後照樣打得開**;設定分頁可**一鍵清除所有書籤**(會先確認,搜尋紀錄與設定不受影響)
 - **PoB 匯入**:貼一份 PoB code,自動照部位建資料夾(武器/防具/飾品/珠寶/藥水),每件裝備一個交易搜尋 —— 傳奇用「傳奇名 + 基底」、稀有用「基底 + 全部詞綴」,等於把 poe.ninja 上看到的流派整套存成書籤
 - **歷史**:開過的搜尋自動記在「歷史」分頁(**只記搜尋框有填東西的**,同一個搜尋重複進去只更新時間,上限 20 筆),可一鍵加進任一資料夾
@@ -18,13 +18,16 @@ Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)�
 - **廣義搜尋**(`page/stat-search.js`):在官網原生結果**後面**補兩層比對,原生命中的
   順序完全不變 —— **多關鍵字**(輸入含空白時 token AND,中英可混搜,如「phy gem」
   「物理 gems」)與**模糊比對**(中文簡稱與英文縮寫,如「移速」「火抗」`mvspd`,
-  補充項另立「模糊比對」群組)。實作為 MAIN world 對 multiselect Vue 實例的
-  filteredOptions watcher patch,官網結構不符時靜默停用、例外時退回原生過濾
+  補充項另立「模糊比對」群組)。實作為 MAIN world 改寫 vue-multiselect 實例的
+  filteredOptions(官網 2026-10 起是 Vue 3,改寫內部實例上的 getter;Vue 2 路徑保留),
+  同時把類型前綴「(pseudo)」等換成中文;官網結構不符時靜默停用、例外時退回原生過濾
 - **顯示規則**(與完整版不同處):
   - 介面字串(標題、欄位名、按鈕、placeholder):**純中文直接替換**,不做雙語對照
   - 下拉選單選項(物品分類、詞綴清單等):「中文 (English)」對照,中英皆可搜尋
-  - 動態下拉(傳奇獎勵/需求物品/完成地圖獎勵等,官網以 API 查詢值 entry.name 渲染):
-    **維持純英文** —— 其過濾只吃英文,顯示中文會誤導;此為刻意設計,勿加顯示層翻譯
+  - 傳奇物品下拉(完成地圖獎勵、最後通牒的獎勵與獻祭物;官網原本以 `option.knownItem`
+    自己從 items 組選項):建置時展開成靜態選項,顯示「中文 (English)」、**送出值仍是英文名**
+    (官網過濾只吃英文)。⚠ 展開後的篩選資料會寫進官網網域 localStorage(約 +311 KB),
+    該網域 5 MB 額度所剩不多,新增展開欄位前先量
   - 搜尋結果列詞綴:直接替換為中文,英文原文放 hover title 供查對;popup 可開啟
     「詞綴雙語顯示」改為中文下方常駐英文原文小字(僅裝備詞綴,物品名/天賦卡不受影響)
 - **popup**:PoE 暗金風單頁,只留最常用的 —— 目前語系 + 繁體中文化 / 還原回英文 /
@@ -128,6 +131,7 @@ bg/ninja.js              poe.ninja 匯率代理(storage.session TTL 15min)
 content/  (isolated world)
   bootstrap.js           document_start:翻譯資料覆寫官網 lscache-*、同步 UI 模式
   results.js             結果頁 MutationObserver 即時翻譯(詞綴/物品名/天賦卡)
+  result-ui.js           結果列固定字樣(定價、已驗證、上架時間…)在 DOM 上整段替換
   bookmarks-model.js     書籤資料格式 v3、匯入解析、拖放規則、聯盟解析與網址組法(純邏輯)
   pob-import.js          PoB code 解壓與解析、裝備 → 交易查詢 JSON(純邏輯)
   sidebar.js             側邊欄(書籤/歷史/物價/設定)、SPA 網址偵測、開頁自動即刻購買
@@ -151,7 +155,8 @@ icons/                   16/32/48/128
 | `results.js` `SELECTORS` | `.results` `.row` `.item-mod` `.lc.s[data-field]` `.itemName .lc` | 結果頁翻譯 |
 | `bootstrap.js` | `lscache-trade*` 快取鍵 | 資料層中文化 |
 | `ui-strings.js` | 官網讀全域 `__` 字典的 i18n 掛勾(**僅舊版 i18n**,結果列物品卡不走這套) | UI 字串 |
-| `stat-search.js` | multiselect Vue 實例的 `filteredOptions` | 下拉模糊搜尋 |
+| `stat-search.js` | vue-multiselect 實例的 `filteredOptions` / `getOptionLabel`(Vue 3:內部實例 `$.ctx`) | 下拉模糊搜尋、類型前綴中文 |
+| `result-ui.js` | 結果列(Vue 3 前端)固定字樣的英文原文 | 結果列介面字 |
 | `sidebar.js` `NAME_SOURCES` | `.search-select .multiselect__single` / `input.multiselect__input` | 書籤預設名稱、歷史紀錄的名稱 |
 | `sidebar.js` `MULTISELECT_OPTION` | `.multiselect__option` 的文字(Instant Buyout / 即刻購買) | 開頁自動即刻購買 |
 | `sidebar.css` 偽屬性高亮 | `.item-mod--pseudo` | 合計詞綴高亮 |
