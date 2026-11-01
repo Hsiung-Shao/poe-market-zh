@@ -46,7 +46,7 @@ export const DICT_FILES = [
   'api-tw.json',
   'api2-us.json',
   'api2-tw.json',
-  // pobb.in / poe.ninja 中文化的名稱表(天賦、昇華、介面字、技能敘述、詞綴模板;tools/gen-site-names.mjs)。
+  // pobb.in 中文化的名稱表(天賦、昇華、介面字、技能敘述、詞綴模板;tools/gen-site-names.mjs)。
   // **只有遠端**(兩款各約 2.5 MB):沒開「網站中文化」的人一個位元組都不下載、擴充包也不為此變大
   // (使用者 2026-09-26 要求)。由 bg/sites.js 在需要時依遊戲各抓一份。
   'sitenames1.json',

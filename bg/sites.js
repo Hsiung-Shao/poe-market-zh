@@ -1,13 +1,13 @@
-// poe.ninja / pobb.in 中文化的背景端:依開關與授權註冊 content/site-zh.js,並在需要時抓名稱表。
+// pobb.in 中文化的背景端:依開關與授權註冊 content/site-zh.js,並在需要時抓名稱表。
 //
-// ⚠ 兩站都走 optional_host_permissions + 動態註冊,**不寫進 manifest 的 content_scripts**:
+// ⚠ pobb.in 走 optional_host_permissions + 動態註冊,**不寫進 manifest 的 content_scripts**:
 //   manifest 裡的 matches 等同新增 host 權限,Chrome 會在擴充更新後把整個擴充停用等使用者重新授權
 //   (同 poe.ninja 物價、dict 分支那兩次的理由)。
-// ⚠ poe.ninja 的權限與「物價查詢」共用同一條 origin:關掉中文化**不收回權限**(物價照常);
-//   反過來權限被收回時中文化跟著失效 —— 所以註冊一律以「開關開著 **且** 權限還在」為準,權限變動時重新同步。
+// ⚠ poe.ninja 中文化已移除(2026-11-01),poe.ninja 只剩物價查詢(bg/ninja.js)。舊版用
+//   persistAcrossSessions 註冊過 `pmz-site-ninja`,更新後一定要主動註銷(LEGACY_IDS),否則會一直注入到 poe.ninja。
 //
 // storage:
-//   siteZh     bool   使用者開關,兩站共用一顆(使用者 2026-09-26 要求合併;預設關)
+//   siteZh     bool   使用者開關(預設關)
 //   dict:sitenames1.json / dict:sitenames2.json   名稱表(遠端字典快取,bg/dict-source.js 管)
 //   siteNamesChecked { poe1, poe2 }   上次向遠端確認名稱表的時間
 
@@ -16,10 +16,11 @@ import { loadDict } from './dict-source.js';
 
 export const SITES = {
   pobbin: { id: 'pmz-site-pobbin', origins: ['https://pobb.in/*'] },
-  ninja: { id: 'pmz-site-ninja', origins: ['https://poe.ninja/*'] },
 };
 export const SITE_ORIGINS = Object.values(SITES).flatMap((s) => s.origins);
 const SCRIPT_FILES = ['content/site-zh.js'];
+// 已廢止、但舊版使用者的瀏覽器裡還登記著的腳本 id:每次對齊都註銷(冪等)
+const LEGACY_IDS = ['pmz-site-ninja'];
 
 async function granted(site) {
   try {
@@ -46,12 +47,14 @@ async function syncOnce() {
   // English 介面 / 還原英文:與交易站同一道守門,一個中文字都不換(中文資料也已被清掉)
   const allowed = siteZh === true && (await chineseDataAllowed());
   for (const site of allowed ? Object.keys(SITES) : []) {
-    // 兩站權限是一起要的,但使用者可以在擴充管理頁只收回其中一個 → 各自看
     if (await granted(site)) want.push(site);
   }
-  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: Object.values(SITES).map((s) => s.id) });
+  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [...Object.values(SITES).map((s) => s.id), ...LEGACY_IDS] });
   const have = new Set(existing.map((s) => s.id));
-  const drop = Object.keys(SITES).filter((s) => have.has(SITES[s].id) && !want.includes(s)).map((s) => SITES[s].id);
+  const drop = [
+    ...Object.keys(SITES).filter((s) => have.has(SITES[s].id) && !want.includes(s)).map((s) => SITES[s].id),
+    ...LEGACY_IDS.filter((id) => have.has(id)),
+  ];
   const add = want.filter((s) => !have.has(SITES[s].id));
   if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: drop });
   if (add.length) {

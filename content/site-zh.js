@@ -1,11 +1,13 @@
-// pobb.in / poe.ninja 中文化(isolated world,document_idle)。
+// pobb.in 中文化(isolated world,document_idle)。
+// (poe.ninja 中文化已於 2026-11-01 移除;這支在 poe.ninja 上不會啟動,下方不少規則是當時為 ninja 頁面寫的、
+//  pobb.in 共用同一支翻譯引擎所以先留著,要清理需先用 pobb.in 實站逐字對照。)
 //
-// ⚠ 這支**不在 manifest 的 content_scripts 裡**:兩個網站都是選用權限
+// ⚠ 這支**不在 manifest 的 content_scripts 裡**:網站是選用權限
 //   (optional_host_permissions),寫進 manifest 等於新增 host 權限 —— Chrome 會在
 //   擴充更新後把整個擴充停用、等使用者手動重新授權。改由 bg/sites.js 在使用者於
 //   popup 打開開關並授權後,用 chrome.scripting.registerContentScripts 動態註冊。
 //
-// 做法:兩站都是前端框架渲染(pobb.in = SolidJS、poe.ninja = React),沒有交易站那種
+// 做法:pobb.in 是前端框架渲染(SolidJS),沒有交易站那種
 // data-field 可以拿官方 stat id,只能**以畫面上的英文逐行查表**:
 //   1. 名稱(整行完全相同才換):天賦 / 昇華 / 職業 / 角色面板用詞(遠端字典 sitenames1/2.json,GGPK;不進擴充包)、
 //      物品 / 寶石 / 傳奇名(交易站建置好的 itemMap / uniqueMap)、少量網站介面字(SITE_UI)
@@ -24,18 +26,14 @@
   const dbg = (...a) => console.info(...a);
 
   const HOST = typeof location === 'undefined' ? '' : location.hostname; // 離線測試沒有 location
-  const SITE = /(^|\.)pobb\.in$/.test(HOST) ? 'pobbin' : /(^|\.)poe\.ninja$/.test(HOST) ? 'ninja' : null;
+  // 只認 pobb.in;其他網站(含 poe.ninja:中文化已移除,舊版殘留的註冊也在這裡擋下)SITE 為 null → 下面直接 return
+  const SITE = /(^|\.)pobb\.in$/.test(HOST) ? 'pobbin' : null;
 
   // ── 遊戲別 ──
-  // poe.ninja:網址一定帶 /poe1/ 或 /poe2/(兩款的頁面是兩套路由)。
   // pobb.in:同一個網址格式兩款共用,判別靠頁面自己宣告的版本 —— 標題尾巴的 `[3.29]` / `[0.3]`
   //   (PoB 匯出碼的 targetVersion;PoE2 的玩家端版本是 0.x),其次是圖片 CDN 路徑
   //   `assets.pobb.in/1/…`、`/2/…`。兩個訊號都沒有就不翻(不猜)。
   function detectGame(doc = document, loc = location) {
-    if (SITE === 'ninja' || /(^|\.)poe\.ninja$/.test(loc.hostname)) {
-      const m = /^\/(poe[12])(\/|$)/.exec(loc.pathname);
-      return m ? m[1] : null;
-    }
     const v = /\[(\d+)\.\d+[^\]]*\]\s*$/.exec(doc.title ?? '');
     if (v) return v[1] === '0' ? 'poe2' : 'poe1';
     const img = doc.querySelector?.('img[src*="assets.pobb.in/"]')?.getAttribute('src') ?? '';
@@ -612,64 +610,7 @@
     return zh ? lead + zh + trail : null;
   }
 
-  // ── poe.ninja「搜尋篩選」的中英建議(使用者 2026-10-09 要求)──
-  // ninja 的篩選框只做英文子字串比對;中文化之後清單都是中文,使用者卻只能打英文。
-  // 這裡從字典的分區表收一份「中文 ↔ 英文」候選,打中文或英文都列出來,選了把英文寫回去讓 ninja 自己篩。
-  // 只收名稱類(職業 / 天賦 / 傳奇 / 寶石與物品 / 怪物),不收說明句與介面字。
-  function buildSearchPool(D) {
-    const pool = [];
-    const seen = new Set();
-    const tables = [D.classNames, D.passiveAll, D.atlasPassives, D.anointPassives, D.uniqueAll, D.gemAll, D.monsters];
-    for (const t of tables) {
-      for (const [en, zh] of t ?? []) {
-        if (!en || !zh || en === zh || en.length > 60 || /[.!?]/.test(en) || !CJK_RE.test(zh)) continue;
-        const k = `${en}\u0000${zh}`;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        pool.push({ en, zh, enL: en.toLowerCase() });
-      }
-    }
-    return pool;
-  }
-
-  // 只留 ninja 篩選清單裡真的有的名字。text = ninja 篩選字典(/api/builds/dictionary/…)解成的一大段文字;
-  // 沒抓到(改版 / 失敗)就整個候選池照用 —— 寧可多列,不能讓功能整個失效
-  function filterPool(pool, text) {
-    if (!text) return pool;
-    const kept = pool.filter((p) => text.includes(p.en));
-    return kept.length ? kept : pool;
-  }
-
-  // 含中文比中文、否則比英文(不分大小寫);完全相同 > 開頭相同 > 包含,同級短的先
-  function searchPool(pool, q, limit = 30) {
-    const s = String(q ?? '').trim();
-    if (!s) return [];
-    const zhMode = CJK_RE.test(s);
-    if (!zhMode && s.length < 2) return [];
-    const needle = zhMode ? s : s.toLowerCase();
-    const hits = [];
-    for (const p of pool) {
-      const hay = zhMode ? p.zh : p.enL;
-      const i = hay.indexOf(needle);
-      if (i < 0) continue;
-      hits.push({ p, rank: hay === needle ? 0 : i === 0 ? 1 : 2, len: hay.length });
-    }
-    hits.sort((a, b) => a.rank - b.rank || a.len - b.len || a.p.en.localeCompare(b.p.en));
-    return hits.slice(0, limit).map((h) => ({ en: h.p.en, zh: h.p.zh }));
-  }
-
-  // 按 Enter 要換成哪一筆(-1 = 不換,保留使用者打的字):
-  // 用 ↑↓ 選過就用那筆;沒選時英文原樣交給 ninja 篩(打「Divinity」不能被補成「Light of Divinity」,使用者 2026-10-09 回報);
-  // 中文 ninja 看不懂,中文完全相同的那筆優先,否則取第一筆
-  function enterChoice(items, q, active) {
-    if (active >= 0 && active < items.length) return active;
-    const s = String(q ?? '').trim();
-    if (!items.length || !CJK_RE.test(s)) return -1;
-    const exact = items.findIndex((it) => it.zh === s);
-    return exact >= 0 ? exact : 0;
-  }
-
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, buildSearchPool, filterPool, searchPool, enterChoice, SITE_UI, SITE_UI_MANUAL };
+  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -747,7 +688,7 @@
   //   英文寫在該行元素的 data-pmz-orig,由注入 <head> 的一段樣式以 ::after 顯示。
   //   字級照 content/results.js 的 ptm-orig(11px、line-height 1.3);顏色見 ORIG_COLOR。
   const ORIG_STYLE_ID = 'pmz-site-zh-style';
-  // 顏色:兩站底色較深,交易站的灰褐色太暗 → poe.ninja 與 pobb.in 都用亮綠(使用者 2026-10-08;交易市集維持灰褐)
+  // 顏色:pobb.in 底色較深,交易站的灰褐色太暗 → 用亮綠(使用者 2026-10-08;交易市集維持灰褐)
   const ORIG_COLOR = '#6ee7a8';
   const ORIG_CSS = '[data-pmz-orig]::after{content:attr(data-pmz-orig);display:block;font-size:11px;'
     + `color:${ORIG_COLOR};line-height:1.3;white-space:pre-line;font-weight:normal;font-style:normal;text-transform:none;letter-spacing:normal}`;
@@ -764,12 +705,10 @@
     return el && !lays(el) ? el : null;
   }
   // 譯文寫進去之後記原文:遊戲內容 + 雙語開 → 下方顯示英文;其他 → 照舊放 title(滑過才看得到)
-  // poe.ninja 只在角色頁(裝備 / 珠寶 / 天賦)附英文:流派列表、物價頁的職業格與清單很擠,附了反而難讀(使用者 2026-10-08);
-  // pobb.in 每頁都是一份 build,照附。SPA 換頁時新節點寫入當下才判斷,所以跟著網址走
-  const bilingualPage = () => SITE !== 'ninja' || /\/character\//.test(location.pathname);
+  // pobb.in 每頁都是一份 build,每頁都附
   function noteOrig(el, en, game) {
     // 「統計」面板只有欄位名不附;面板裡的主要技能(寶石 = 技能表裡的名字)仍是遊戲內容
-    const host = bilingual && game && bilingualPage() && (sectionKind(el) !== 'stats' || dict?.skillNames?.has(en)) ? origHost(el) : null;
+    const host = bilingual && game && (sectionKind(el) !== 'stats' || dict?.skillNames?.has(en)) ? origHost(el) : null;
     if (!host) { addTitle(el, en); return; }
     if (host.dataset.pmzOrig === en) return;
     if (host.dataset.pmzOrig === undefined) origed.push(new WeakRef(host));
@@ -996,156 +935,6 @@
     }
   }
 
-  // ── poe.ninja「搜尋篩選」中英建議清單(候選與排序見上方 buildSearchPool / searchPool)──
-  // ⚠ 清單節點掛在 document.body 最後(React root 之外)、帶 data-pmz-no-zh 讓翻譯跳過;
-  //   React 管的節點一個都不碰,監聽也掛在 document(事件委派)。選了就用原生 value setter + input 事件
-  //   把英文寫回輸入框(React 受控元件只認這種寫法),之後由 ninja 自己篩。
-  const SEARCH_EN = 'Search filters...';
-  const SUGGEST_ID = 'pmz-ninja-suggest';
-  let searchPoolCache = null; // { key, pool }
-  let ninjaText = { key: null, text: null, loading: null };
-  let suggest = null; // { box, input, items, active }
-  let picking = false;
-
-  const isFilterInput = (el) => SITE === 'ninja' && el?.tagName === 'INPUT'
-    && (placeholderOrig.get(el)?.en ?? el.getAttribute('placeholder')) === SEARCH_EN;
-
-  // ninja 篩選清單的字典(自訂二進位格式,字串直接串接):找本頁載過的網址再抓一次(走 HTTP 快取)
-  function loadNinjaText() {
-    const key = location.pathname;
-    if (ninjaText.key === key) return ninjaText.loading;
-    const urls = [...new Set(performance.getEntriesByType('resource').map((e) => e.name)
-      .filter((u) => /\/api\/builds\/dictionary\//.test(u)))];
-    const rec = { key, text: null, loading: null };
-    ninjaText = rec;
-    if (!urls.length) { rec.key = null; return null; } // 字典還沒載:下次再找
-    rec.loading = Promise.all(urls.map((u) => fetch(u).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null)))
-      .then((bufs) => {
-        const dec = new TextDecoder();
-        rec.text = bufs.filter(Boolean).map((b) => dec.decode(b)).join('\n') || null;
-        if (rec === ninjaText) searchPoolCache = null;
-      });
-    return rec.loading;
-  }
-
-  function currentPool() {
-    if (!dict) return [];
-    const key = `${dictGame}|${ninjaText.key}|${!!ninjaText.text}`;
-    if (searchPoolCache?.key === key && searchPoolCache.dict === dict) return searchPoolCache.pool;
-    const pool = filterPool(buildSearchPool(dict), ninjaText.text);
-    searchPoolCache = { key, dict, pool };
-    return pool;
-  }
-
-  function closeSuggest() {
-    suggest?.box.remove();
-    suggest = null;
-  }
-
-  function placeSuggest() {
-    if (!suggest) return;
-    const r = suggest.input.getBoundingClientRect();
-    if (!suggest.input.isConnected || !r.width) { closeSuggest(); return; }
-    Object.assign(suggest.box.style, { left: `${r.left}px`, top: `${r.bottom + 2}px`, width: `${Math.max(r.width, 260)}px` });
-  }
-
-  function highlight(i) {
-    if (!suggest) return;
-    suggest.active = i;
-    [...suggest.box.children].forEach((row, k) => { row.style.background = k === i ? '#2b3a4a' : ''; });
-    suggest.box.children[i]?.scrollIntoView({ block: 'nearest' });
-  }
-
-  function pickSuggest(i) {
-    const it = suggest?.items[i];
-    if (!it) return;
-    const input = suggest.input;
-    closeSuggest();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, it.en);
-    picking = true; // 自己派的 input 事件不再開清單
-    try { input.dispatchEvent(new Event('input', { bubbles: true })); } finally { picking = false; }
-  }
-
-  function showSuggest(input) {
-    const items = searchPool(currentPool(), input.value);
-    if (!items.length) { closeSuggest(); return; }
-    if (!suggest || suggest.input !== input) {
-      closeSuggest();
-      const box = document.createElement('div');
-      box.id = SUGGEST_ID;
-      box.dataset.pmzNoZh = '';
-      box.setAttribute('role', 'listbox');
-      Object.assign(box.style, {
-        position: 'fixed', zIndex: 2147483000, maxHeight: '320px', overflowY: 'auto', background: '#1b2430',
-        border: '1px solid #3a4656', borderRadius: '4px', boxShadow: '0 6px 18px rgba(0,0,0,.5)', fontSize: '13px',
-      });
-      box.addEventListener('mousedown', (e) => {
-        e.preventDefault(); // 不讓輸入框失焦
-        const row = e.target.closest('[data-i]');
-        if (row) pickSuggest(Number(row.dataset.i));
-      });
-      box.addEventListener('mousemove', (e) => {
-        const row = e.target.closest('[data-i]');
-        if (row && Number(row.dataset.i) !== suggest?.active) highlight(Number(row.dataset.i));
-      });
-      document.body.appendChild(box);
-      suggest = { box, input, items: [], active: -1 };
-    }
-    suggest.items = items;
-    suggest.box.replaceChildren(...items.map((it, i) => {
-      const row = document.createElement('div');
-      row.dataset.i = String(i);
-      row.setAttribute('role', 'option');
-      Object.assign(row.style, { padding: '5px 10px', cursor: 'pointer', borderBottom: '1px solid #273241', lineHeight: '1.35' });
-      const zh = document.createElement('div');
-      zh.textContent = it.zh;
-      Object.assign(zh.style, { color: '#e6e6e6', fontWeight: '600' });
-      const en = document.createElement('div');
-      en.textContent = it.en;
-      Object.assign(en.style, { color: ORIG_COLOR, fontSize: '12px' });
-      row.append(zh, en);
-      return row;
-    }));
-    highlight(-1);
-    placeSuggest();
-  }
-
-  const onSearchInput = (e) => {
-    if (picking || !isFilterInput(e.target) || e.isComposing) return;
-    const p = loadNinjaText();
-    p?.then(() => { if (suggest?.input === e.target) showSuggest(e.target); });
-    showSuggest(e.target);
-  };
-  const onSearchKey = (e) => {
-    if (!suggest || e.target !== suggest.input || e.isComposing) return;
-    const n = suggest.items.length;
-    if (e.key === 'ArrowDown') { e.preventDefault(); highlight((suggest.active + 1) % n); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((suggest.active - 1 + n) % n); }
-    else if (e.key === 'Enter') {
-      const i = enterChoice(suggest.items, suggest.input.value, suggest.active);
-      if (i < 0) { closeSuggest(); return; } // 不攔 Enter,原樣交給 ninja
-      e.preventDefault();
-      pickSuggest(i);
-    }
-    else if (e.key === 'Escape') closeSuggest();
-  };
-  const onSearchFocus = (e) => { if (isFilterInput(e.target) && e.target.value.trim()) onSearchInput(e); };
-  const onSearchBlur = (e) => { if (suggest && e.target === suggest.input) closeSuggest(); };
-  const onSearchMove = () => placeSuggest();
-
-  function bindSearch(on) {
-    if (SITE !== 'ninja') return;
-    const m = on ? 'addEventListener' : 'removeEventListener';
-    document[m]('input', onSearchInput, true);
-    document[m]('compositionend', onSearchInput, true);
-    document[m]('keydown', onSearchKey, true);
-    document[m]('focusin', onSearchFocus, true);
-    document[m]('focusout', onSearchBlur, true);
-    window[m]('scroll', onSearchMove, true);
-    window[m]('resize', onSearchMove);
-    if (!on) closeSuggest();
-  }
-
   function collectText(root, out) {
     if (root.nodeType === Node.TEXT_NODE) { out.push(root); return; }
     if (root.nodeType !== Node.ELEMENT_NODE || SKIP_TAGS.has(root.tagName)) return;
@@ -1218,14 +1007,14 @@
   };
   let buildAsked = false;
 
-  // 聯盟名(使用者 2026-09-26 裁定:ninja 是國際服在用,聯盟名一律不翻)。
-  // 兩個來源:頁面上 ninja 自己的聯盟選單(`<select id="League">`,兩款都有;選單本身本來就不碰),
-  // 以及背景的 poe.ninja 聯盟清單(`ninja:leagues`,角色頁沒有選單時靠它)。
-  // 「Allflame」單獨出現在角色頁標題時,字典裡剛好有同名條目,不擋就會被換成中文。
+  // 聯盟名(使用者 2026-09-26 裁定:聯盟名一律不翻)。
+  // 來源:頁面上的聯盟選單(`<select id="League">` 或 name 含 league;選單本身本來就不碰),
+  // 加上在任何一頁看過的選單內容(`siteLeagues`)。
+  // 「Allflame」單獨出現在標題時,字典裡剛好有同名條目,不擋就會被換成中文。
   async function leagueNames() {
     const names = new Set();
     const onPage = [...document.querySelectorAll('select#League option, select[name="league" i] option')].map((o) => o.textContent.trim());
-    // 在任何一頁看過的選單內容記下來(`siteLeagues`):PoE2 的角色頁沒有選單,背景清單也只有 PoE1
+    // 在任何一頁看過的選單內容記下來(`siteLeagues`):有的頁面沒有選單
     try {
       const { siteLeagues } = await chrome.storage.local.get('siteLeagues');
       for (const l of siteLeagues ?? []) names.add(l);
@@ -1233,10 +1022,6 @@
       if (fresh.length) await chrome.storage.local.set({ siteLeagues: [...names, ...fresh].slice(-500) });
     } catch (_) { /* 存不進去不影響本頁 */ }
     onPage.forEach((l) => names.add(l));
-    try {
-      const res = await chrome.runtime.sendMessage({ t: 'ninja:leagues' });
-      for (const l of res?.leagues ?? []) names.add(String(l));
-    } catch (_) { /* 沒有 ninja 權限或背景休眠:只靠頁面上的選單 */ }
     // 困難 / 單人變體:「Hardcore X」「HC X」「SSF X」…只剩核心名也要擋
     for (const n of [...names]) {
       const core = n.replace(/^(Hardcore|HC|SSF|HC SSF|Ruthless|HC Ruthless|SSF R|HC SSF R)\s+/i, '').replace(/\s*\(PL\d+\)$/, '');
@@ -1319,7 +1104,6 @@
     runId++;
     dictGame = undefined; // 強制 flush 重載字典並整頁掃一次
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    bindSearch(true);
     schedule(document.body);
   }
 
@@ -1328,7 +1112,6 @@
     enabled = false;
     runId++; // 進行中的字典載入一律作廢(見 flush)
     observer.disconnect();
-    bindSearch(false);
     restoreAll();
     dict = null;
     dictGame = null;

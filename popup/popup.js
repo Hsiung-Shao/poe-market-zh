@@ -1,4 +1,4 @@
-// Popup:介面語言、交易站(語系 / 雙語 / 側邊欄)、poe.ninja・pobb.in 中文化、翻譯資料維護。
+// Popup:介面語言、交易站(語系 / 雙語 / 側邊欄)、pobb.in 中文化、poe.ninja 物價授權、翻譯資料維護。
 // 設定即存即用,交易頁重新整理後生效。
 //
 // 介面語言(uiLang,2026-09-21):中文 / English。English = 交易站不翻、不載任何中文資料、
@@ -43,15 +43,15 @@ I18N.register({
     'pop.st.none': '尚未建置翻譯資料',
     'pop.st.fetchErr': '無法取得狀態:{error}',
     'pop.sidebarToggled': '已{state}側邊欄,重新整理交易頁生效',
-    'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁生效(poe.ninja / pobb.in 立即生效)',
-    'pop.tagline': 'PoE 交易站、poe.ninja、pobb.in 的中文輔助工具',
+    'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁生效(pobb.in 立即生效)',
+    'pop.tagline': 'PoE 交易站與 pobb.in 的中文輔助工具',
     'pop.sec.trade': '交易站',
-    'pop.sec.sites': 'poe.ninja / pobb.in',
+    'pop.sec.sites': 'pobb.in',
     'pop.sec.data': '翻譯資料',
-    'pop.siteZh': '中文化(角色、配裝、物價頁)',
-    'pop.siteToggled': '已{state} poe.ninja / pobb.in 中文化,重新整理該網站生效',
-    'pop.siteOffNote': '已關閉 poe.ninja / pobb.in 中文化(物價查詢不受影響),重新整理該網站生效',
-    'pop.siteDenied': '沒有取得 poe.ninja / pobb.in 的網站存取權限,無法開啟',
+    'pop.siteZh': '中文化(配裝頁)',
+    'pop.siteToggled': '已{state} pobb.in 中文化,重新整理該網站生效',
+    'pop.siteOffNote': '已關閉 pobb.in 中文化,重新整理該網站生效',
+    'pop.siteDenied': '沒有取得 pobb.in 的網站存取權限,無法開啟',
     'pop.opened': '開啟',
     'pop.closed': '關閉',
     'pop.ninjaAsk': '側邊欄的「物價」分頁要讀 poe.ninja 的公開匯率。\n要用的話請按上面的「物價查詢(poe.ninja)」允許存取;不需要就直接關掉這一頁。',
@@ -99,15 +99,15 @@ I18N.register({
     'pop.st.none': 'No translation data built yet',
     'pop.st.fetchErr': 'Could not read status: {error}',
     'pop.sidebarToggled': 'Sidebar {state}. Reload the trade page to apply',
-    'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page to apply (poe.ninja / pobb.in update right away)',
-    'pop.tagline': 'Bookmarks and price check for the PoE trade site, plus Chinese for poe.ninja and pobb.in',
+    'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page to apply (pobb.in updates right away)',
+    'pop.tagline': 'Bookmarks and price check for the PoE trade site, plus Chinese for pobb.in',
     'pop.sec.trade': 'Trade site',
-    'pop.sec.sites': 'poe.ninja / pobb.in',
+    'pop.sec.sites': 'pobb.in',
     'pop.sec.data': 'Translation data',
-    'pop.siteZh': 'Chinese (builds, economy)',
-    'pop.siteToggled': 'Chinese on poe.ninja / pobb.in {state}. Reload that site to apply',
-    'pop.siteOffNote': 'Chinese on poe.ninja / pobb.in disabled (price check is unaffected). Reload that site to apply',
-    'pop.siteDenied': 'Access to poe.ninja / pobb.in was not granted, so it cannot be enabled',
+    'pop.siteZh': 'Chinese (build pages)',
+    'pop.siteToggled': 'Chinese on pobb.in {state}. Reload that site to apply',
+    'pop.siteOffNote': 'Chinese on pobb.in disabled. Reload that site to apply',
+    'pop.siteDenied': 'Access to pobb.in was not granted, so it cannot be enabled',
     'pop.opened': 'enabled',
     'pop.closed': 'disabled',
     'pop.ninjaAsk': 'The sidebar "Prices" tab reads public exchange rates from poe.ninja.\nTo use it, click "Price check (poe.ninja)" above and allow access. Otherwise just close this page.',
@@ -434,12 +434,12 @@ $('#bilingualToggle').addEventListener('click', async () => {
   showStatus(t('pop.bilingualToggled', { state: t(next ? 'pop.opened' : 'pop.closed') }));
 });
 
-// ── poe.ninja / pobb.in 中文化:一顆開關管兩站(使用者 2026-09-26 要求合併)──
+// ── pobb.in 中文化(poe.ninja 中文化已於 2026-11-01 移除,poe.ninja 權限只給物價)──
 // bg/sites.js 依 siteZh 與授權動態註冊 content/site-zh.js。
-// 打開時兩站權限一起要(permissions.request 只能從擴充頁面、而且要是 click handler 裡的
+// 打開時要 pobb.in 權限(permissions.request 只能從擴充頁面、而且要是 click handler 裡的
 // **第一個**呼叫 —— Firefox 的規定,見 ninjaOn 的說明)。
-// 關掉只改開關、不收回權限:poe.ninja 那條權限物價查詢也在用。
-const SITE_ORIGINS = ['https://poe.ninja/*', 'https://pobb.in/*'];
+// 關掉只改開關、不收回權限。
+const SITE_ORIGINS = ['https://pobb.in/*'];
 let siteOn = false;
 
 function renderSiteZh(on) {

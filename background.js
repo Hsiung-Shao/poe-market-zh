@@ -45,7 +45,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   maybeAskForNinja();
 });
 
-// ── pobb.in / poe.ninja 中文化(bg/sites.js)──
+// ── pobb.in 中文化(bg/sites.js;poe.ninja 中文化已移除,舊註冊由 sites.js 註銷)──
 // 動態註冊的 content script 會跨工作階段保留,但開關、權限、介面語言任一變動都要重新對齊;
 // 啟動時也對一次(使用者可能在擴充管理頁收回了網站權限)。
 function syncSites() {
