@@ -1,13 +1,15 @@
-// pobb.in 中文化的背景端:依開關與授權註冊 content/site-zh.js,並在需要時抓名稱表。
+// pobb.in 中文化 / poe.ninja 雙語的背景端:依開關與授權註冊 content/site-zh.js,並在需要時抓名稱表。
 //
-// ⚠ pobb.in 走 optional_host_permissions + 動態註冊,**不寫進 manifest 的 content_scripts**:
+// ⚠ 兩站都走 optional_host_permissions + 動態註冊,**不寫進 manifest 的 content_scripts**:
 //   manifest 裡的 matches 等同新增 host 權限,Chrome 會在擴充更新後把整個擴充停用等使用者重新授權
 //   (同 poe.ninja 物價、dict 分支那兩次的理由)。
-// ⚠ poe.ninja 中文化已移除(2026-11-01),poe.ninja 只剩物價查詢(bg/ninja.js)。舊版用
-//   persistAcrossSessions 註冊過 `pmz-site-ninja`,更新後一定要主動註銷(LEGACY_IDS),否則會一直注入到 poe.ninja。
+// ⚠ poe.ninja 已有內建繁中,擴充不再翻譯它的頁面(2026-11-01),只做雙語對照(2026-11-04):
+//   開關共用交易站的「詞綴雙語顯示」(bilingualMods),權限與物價查詢共用同一條 origin。
+//   兩站的開關各自獨立:pobb.in 看 siteZh、poe.ninja 看 bilingualMods。
 //
 // storage:
-//   siteZh     bool   使用者開關(預設關)
+//   siteZh         bool   pobb.in 中文化開關(預設關)
+//   bilingualMods  bool   詞綴雙語顯示(交易站結果列 + pobb.in + poe.ninja 共用)
 //   dict:sitenames1.json / dict:sitenames2.json   名稱表(遠端字典快取,bg/dict-source.js 管)
 //   siteNamesChecked { poe1, poe2 }   上次向遠端確認名稱表的時間
 
@@ -15,12 +17,11 @@ import { chineseDataAllowed } from './translation.js';
 import { loadDict } from './dict-source.js';
 
 export const SITES = {
-  pobbin: { id: 'pmz-site-pobbin', origins: ['https://pobb.in/*'] },
+  pobbin: { id: 'pmz-site-pobbin', origins: ['https://pobb.in/*'], flag: 'siteZh' },
+  ninja: { id: 'pmz-site-ninja', origins: ['https://poe.ninja/*'], flag: 'bilingualMods' },
 };
 export const SITE_ORIGINS = Object.values(SITES).flatMap((s) => s.origins);
 const SCRIPT_FILES = ['content/site-zh.js'];
-// 已廢止、但舊版使用者的瀏覽器裡還登記著的腳本 id:每次對齊都註銷(冪等)
-const LEGACY_IDS = ['pmz-site-ninja'];
 
 async function granted(site) {
   try {
@@ -42,19 +43,17 @@ export function syncSiteScripts() {
 
 async function syncOnce() {
   if (!chrome.scripting?.registerContentScripts) return { ok: false, error: 'scripting API 不可用' };
-  const { siteZh } = await chrome.storage.local.get('siteZh');
+  const flags = await chrome.storage.local.get(Object.values(SITES).map((s) => s.flag));
   const want = [];
   // English 介面 / 還原英文:與交易站同一道守門,一個中文字都不換(中文資料也已被清掉)
-  const allowed = siteZh === true && (await chineseDataAllowed());
+  const allowed = await chineseDataAllowed();
   for (const site of allowed ? Object.keys(SITES) : []) {
-    if (await granted(site)) want.push(site);
+    // 各站看自己的開關;使用者可以在擴充管理頁只收回其中一站的權限 → 權限也各自看
+    if (flags[SITES[site].flag] === true && (await granted(site))) want.push(site);
   }
-  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [...Object.values(SITES).map((s) => s.id), ...LEGACY_IDS] });
+  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: Object.values(SITES).map((s) => s.id) });
   const have = new Set(existing.map((s) => s.id));
-  const drop = [
-    ...Object.keys(SITES).filter((s) => have.has(SITES[s].id) && !want.includes(s)).map((s) => SITES[s].id),
-    ...LEGACY_IDS.filter((id) => have.has(id)),
-  ];
+  const drop = Object.keys(SITES).filter((s) => have.has(SITES[s].id) && !want.includes(s)).map((s) => SITES[s].id);
   const add = want.filter((s) => !have.has(SITES[s].id));
   if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: drop });
   if (add.length) {

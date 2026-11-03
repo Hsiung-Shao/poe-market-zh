@@ -5,7 +5,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 const POBB_ID = 'pmz-site-pobbin';
-const NINJA_ID = 'pmz-site-ninja'; // 已廢止的舊 id
+const NINJA_ID = 'pmz-site-ninja'; // poe.ninja 雙語顯示;受 bilingualMods 控制
 const POBB_ORIGIN = 'https://pobb.in/*';
 const NINJA_ORIGIN = 'https://poe.ninja/*';
 
@@ -149,4 +149,64 @@ test('T4b 英文介面時兩個腳本全部註銷', async () => {
   await syncSiteScripts();
   // 忽略 uiLang/language 條件會讓英文使用者仍被注入中文
   assert.equal(registered.size, 0);
+});
+
+const ZH_LANG = { uiLang: 'zh', language: 'zh_tw' };
+
+test('S1 雙語開且有 ninja 權限才註冊 ninja,不連帶註冊 pobb.in', async () => {
+  reset({ storage: { bilingualMods: true, ...ZH_LANG }, granted: [NINJA_ORIGIN], registered: [] });
+  await syncSiteScripts();
+  // 沒註冊 ninja 代表 poe.ninja 雙語顯示永遠不會啟動
+  const s = registered.get(NINJA_ID);
+  assert.ok(s);
+  assert.deepEqual(s.matches, [NINJA_ORIGIN]);
+  assert.deepEqual(s.js, ['content/site-zh.js']);
+  // siteZh 沒開卻註冊 pobb.in,代表兩站條件綁在一起
+  assert.ok(!registered.has(POBB_ID));
+});
+
+test('S2 雙語關時註銷已註冊的 ninja', async () => {
+  reset({ storage: { bilingualMods: false, ...ZH_LANG }, granted: [NINJA_ORIGIN], registered: [NINJA_ID] });
+  await syncSiteScripts();
+  // 關掉雙語仍殘留腳本,代表使用者關不掉 poe.ninja 雙語
+  assert.ok(unregisteredIds().includes(NINJA_ID));
+  assert.ok(!registered.has(NINJA_ID));
+});
+
+test('S3 沒有 poe.ninja 權限時只註冊 pobb.in', async () => {
+  reset({ storage: { siteZh: true, bilingualMods: true, ...ZH_LANG }, granted: [POBB_ORIGIN], registered: [] });
+  await syncSiteScripts();
+  // 沒檢查 ninja 權限就註冊,會在未授權的站台註冊腳本而失敗或違反權限
+  assert.deepEqual([...registered.keys()], [POBB_ID]);
+});
+
+test('S4 兩站條件各自獨立:siteZh 只管 pobb.in、bilingualMods 只管 ninja', async () => {
+  reset({ storage: { siteZh: true, bilingualMods: false, ...ZH_LANG }, granted: BOTH, registered: [] });
+  await syncSiteScripts();
+  // bilingualMods 關卻註冊了 ninja,代表 ninja 條件誤用 siteZh
+  assert.deepEqual([...registered.keys()], [POBB_ID]);
+  storage = { siteZh: false, bilingualMods: true, ...ZH_LANG };
+  await syncSiteScripts();
+  // siteZh 關卻殘留 pobb.in,或沒補註冊 ninja,代表條件互相牽連
+  assert.deepEqual([...registered.keys()], [NINJA_ID]);
+});
+
+test('S5 英文介面時兩個腳本都註銷', async () => {
+  reset({
+    storage: { siteZh: true, bilingualMods: true, uiLang: 'en', language: 'us' },
+    granted: BOTH,
+    registered: [POBB_ID, NINJA_ID],
+  });
+  await syncSiteScripts();
+  // ninja 沒套用「中文資料允許」條件,英文使用者的 poe.ninja 會被注入中文
+  assert.equal(registered.size, 0);
+  assert.ok(unregisteredIds().includes(POBB_ID));
+  assert.ok(unregisteredIds().includes(NINJA_ID));
+});
+
+test('S6 兩個開關都開且都有權限時兩個腳本都註冊', async () => {
+  reset({ storage: { siteZh: true, bilingualMods: true, ...ZH_LANG }, granted: BOTH, registered: [] });
+  await syncSiteScripts();
+  // 後註冊的覆蓋或漏掉任一個,都會讓一個站台沒有功能
+  assert.deepEqual([...registered.keys()].sort(), [NINJA_ID, POBB_ID].sort());
 });

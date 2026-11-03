@@ -1,6 +1,7 @@
-// pobb.in 中文化(isolated world,document_idle)。
-// (poe.ninja 中文化已於 2026-11-01 移除;這支在 poe.ninja 上不會啟動,下方不少規則是當時為 ninja 頁面寫的、
-//  pobb.in 共用同一支翻譯引擎所以先留著,要清理需先用 pobb.in 實站逐字對照。)
+// pobb.in 中文化 + poe.ninja 雙語(isolated world,document_idle)。
+// poe.ninja 已有內建繁中(/zh-tw/…),2026-11-01 起不再翻譯它的頁面;2026-11-04 起只做「雙語」:
+// 英文頁在遊戲內容下方附中文(正查)、繁中頁附英文(反查,同一份字典倒過來),**不改頁面文字**(見 annotateTextNodes)。
+// 下方不少拆段規則是當初為 ninja 英文頁寫的,正查仍用得到。
 //
 // ⚠ 這支**不在 manifest 的 content_scripts 裡**:網站是選用權限
 //   (optional_host_permissions),寫進 manifest 等於新增 host 權限 —— Chrome 會在
@@ -26,15 +27,24 @@
   const dbg = (...a) => console.info(...a);
 
   const HOST = typeof location === 'undefined' ? '' : location.hostname; // 離線測試沒有 location
-  // 只認 pobb.in;其他網站(含 poe.ninja:中文化已移除,舊版殘留的註冊也在這裡擋下)SITE 為 null → 下面直接 return
-  const SITE = /(^|\.)pobb\.in$/.test(HOST) ? 'pobbin' : null;
+  const SITE = /(^|\.)pobb\.in$/.test(HOST) ? 'pobbin' : /(^|\.)poe\.ninja$/.test(HOST) ? 'ninja' : null;
+
+  // poe.ninja 頁面語言看網址前綴:沒有前綴 = 英文、`/zh-tw/` = 繁中;其他語言(`/de/`、`/ja/`…)不動作
+  const NINJA_PATH = /^\/(?:([a-z]{2}(?:-[a-z]{2})?)\/)?(poe[12])(\/|$)/;
+  function ninjaLang(pathname) {
+    const m = NINJA_PATH.exec(pathname ?? '');
+    if (!m) return null;
+    return !m[1] ? 'en' : m[1] === 'zh-tw' ? 'zh' : null;
+  }
 
   // ── 遊戲別 ──
+  // poe.ninja:網址一定帶 /poe1/ 或 /poe2/(前面可能有語言前綴)。
   // pobb.in:同一個網址格式兩款共用,判別靠頁面自己宣告的版本 —— 標題尾巴的 `[3.29]` / `[0.3]`
   //   (PoB 匯出碼的 targetVersion;PoE2 的玩家端版本是 0.x),其次是圖片 CDN 路徑
   //   `assets.pobb.in/1/…`、`/2/…`。兩個訊號都沒有就不翻(不猜)。
   function detectGame(doc = document, loc = location) {
-    const v = /\[(\d+)\.\d+[^\]]*\]\s*$/.exec(doc.title ?? '');
+    if (SITE === 'ninja' || /(^|\.)poe\.ninja$/.test(loc.hostname)) return NINJA_PATH.exec(loc.pathname)?.[2] ?? null;
+    const v =/\[(\d+)\.\d+[^\]]*\]\s*$/.exec(doc.title ?? '');
     if (v) return v[1] === '0' ? 'poe2' : 'poe1';
     const img = doc.querySelector?.('img[src*="assets.pobb.in/"]')?.getAttribute('src') ?? '';
     const a = /assets\.pobb\.in\/([12])\//.exec(img);
@@ -97,6 +107,8 @@
     'Physical taken as': '物理傷害轉換', 'Fire taken as': '火焰傷害轉換', 'Cold taken as': '冰冷傷害轉換',
     'Lightning taken as': '閃電傷害轉換', 'Chaos taken as': '混沌傷害轉換',
     'Effective Health Pool': '有效生命池', 'Max Hit': '最大承受傷害',
+    // 統計面板的欄位名;同名的小天賦會讓它被當成遊戲內容,poe.ninja 雙語在欄位名下附中文(2026-11-04 W6)
+    'Movement Speed': '移動速度',
     Recovery: '恢復', 'Life regen': '生命回復', 'Mana regen': '魔力回復', 'Energy shield recharge': '能量護盾充能',
     'Life leech + on hit': '生命偷取 + 擊中回復', 'Main Skills': '主要技能',
     'Passive tree': '天賦樹', Enlarge: '放大', 'Ascendancy & Keystones': '昇華與關鍵天賦', Ascendancy: '昇華',
@@ -610,7 +622,109 @@
     return zh ? lead + zh + trail : null;
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, buildSiteDict, translateText, translateDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
+  // ── poe.ninja 繁中頁:中文 → 英文(同一份字典倒過來查,2026-11-04)──
+  // 畫面上的中文是 ninja 自己的譯文;實測與我們字典用字約九成以上相同(一個角色頁,名稱 46/49、詞綴 14/15)。
+  // 只收遊戲內容:名稱表與詞綴模板;介面字 / 面板用詞不收。同一個中文對到不同英文的一律不收(寧缺勿錯,
+  // 實測「惡意」= Malevolent / Malevolence、「活力」= Dynamism / Vitality 這類撞名很常見)。
+  // 空白與全形標點不比(ninja 與我們在數字前後、逗號全半形上不一致)
+  const normZh = (s) => String(s ?? '').replace(/\s+/g, '').replace(/，/g, ',').replace(/：/g, ':').replace(/（/g, '(').replace(/）/g, ')');
+  function buildReverseDict(D) {
+    const isUi = (en) => D.lower?.has(en.toLowerCase()) || D.uiExact?.has(en) || D.uiWords?.has(en.toLowerCase());
+    const uniq = () => {
+      const map = new Map();
+      const bad = new Set();
+      return {
+        map,
+        add(k, v, same = (a, b) => a === b) {
+          if (bad.has(k)) return;
+          const prev = map.get(k);
+          if (prev === undefined) map.set(k, v);
+          else if (!same(prev, v)) { map.delete(k); bad.add(k); }
+        },
+      };
+    };
+    // 介面字的中文(面板標題「恢復」「防禦」「移動速度」…):這些中文在頁面上就是欄位名,一律不附
+    const uiZh = new Set([...(D.lower?.values() ?? []), ...(D.uiExact?.values() ?? [])].map(normZh));
+    // ⚠ 英文是介面字的候選也要留著參與撞名判斷,最後才剔除 —— 先剔除的話,剩下的另一個英文會被誤當成唯一答案
+    //   (實測「恢復」= Recovery 面板標題 / Second Wind 天賦,先剔除 Recovery 就附成了 Second Wind)
+    const UI = '\u0000ui';
+    const names = uniq();
+    for (const m of [D.names, D.classNames, D.passiveAll, D.uniqueAll, D.gemAll]) {
+      for (const [en, zh] of m ?? []) {
+        if (!en || !zh || en === zh || !CJK_RE.test(zh) || CJK_RE.test(en)) continue;
+        const k = normZh(zh);
+        names.add(k, isUi(en) || uiZh.has(k) ? UI : en);
+      }
+    }
+    for (const [k, v] of names.map) if (v === UI) names.map.delete(k);
+    const classes = uniq();
+    for (const [en, zh] of D.classNames ?? []) classes.add(normZh(zh), en);
+    // 詞綴:鍵 = 正規化後的中文模板(數值寫 #);order[i] = 中文第 i 個 # 是英文第幾個 #
+    const stats = uniq();
+    const sameStat = (a, b) => a.en === b.en;
+    // ① GGPK 有序模板(中文 {n} = 英文第 n 個 #):多數值也能放對位置
+    for (const [en, zh] of Object.entries(D.statTpl ?? {})) {
+      if (typeof zh !== 'string' || !CJK_RE.test(zh)) continue;
+      const order = [];
+      const key = normZh(zh.replace(/\{(\d+)\}/g, (_m, n) => { order.push(Number(n)); return '#'; }));
+      stats.add(key, { en, order }, sameStat);
+    }
+    // ② 交易站 statMap(只有 #、照順序):只收 0~1 個數值的(兩個以上不知道對應順序,同正查 renderSingle)
+    const fromTpl = new Set(stats.map.keys());
+    for (const [en0, zh0] of Object.entries(D.statMap ?? {})) {
+      if (typeof zh0 !== 'string' || !CJK_RE.test(zh0)) continue;
+      const zh = stripLocalZh(zh0);
+      const n = hashCount(zh);
+      const en = en0.replace(/ \(Local\)$/, '');
+      if (n > 1 || n !== hashCount(en)) continue;
+      const key = normZh(zh);
+      if (!fromTpl.has(key)) stats.add(key, { en, order: n ? [0] : [] }, sameStat);
+    }
+    return { D, uiZh, names: names.map, classes: classes.map, stats: stats.map };
+  }
+
+  // 一段繁中文字 → { en, game };查不到 en 為 null。game 的意義同 translateDetail(裝備名不算,10-08 裁定)
+  function reverseDetail(raw, R) {
+    const none = { en: null, game: false };
+    const t = String(raw ?? '').trim();
+    if (!R || !t || t.length > MAX_LEN || !CJK_RE.test(t)) return none;
+    const k = normZh(t);
+    // 中文本身就是介面字的譯名(面板標題「恢復」):名稱與詞綴都不附(詞綴表也有一條無數值的 Second Wind =「恢復」)
+    if (R.uiZh.has(k)) return none;
+    const name = R.names.get(k);
+    if (name) return { en: name, game: !isEquipName(R.D, name) };
+    // 角色標題「等級 100 酋長」
+    const lv = /^等級(\d+)(.+)$/.exec(k);
+    const cls = lv && R.classes.get(lv[2]);
+    if (cls) return { en: `Level ${lv[1]} ${cls}`, game: true };
+    const fill = (hit, vals, neg) => {
+      let i = 0;
+      return hit.en.replace(/(\+?)#/g, (all, plus) => {
+        const ci = hit.order.indexOf(i++);
+        const v = vals[ci];
+        if (v == null) return all;
+        return neg?.has(ci) ? `-${v}` : `${plus}${v}`;
+      }).replace(/\s*\n\s*/g, ' ');
+    };
+    for (const { key, vals } of maskedKeys(k)) {
+      const hit = R.stats.get(key);
+      if (hit) return { en: fill(hit, vals), game: true };
+    }
+    // 負值:遊戲檔帶號模板是 `+{0}`,畫面印 `-20%` —— 負號當正號比,命中後那一格補回負號(同正查 renderOrdered)
+    if (/(^|[^\d])-\d/.test(k)) {
+      const negAt = new Set();
+      const flipped = k.replace(/(^|[^\d])-(?=\d)/g, (m, pre, off) => { negAt.add(off + pre.length + 1); return `${pre}+`; });
+      for (const { key, vals, at } of maskedKeys(flipped)) {
+        const hit = R.stats.get(key);
+        if (!hit) continue;
+        const neg = new Set(at.map((p, i) => (negAt.has(p) ? i : -1)).filter((i) => i >= 0));
+        return { en: fill(hit, vals, neg).replace(/\+-/g, '-'), game: true };
+      }
+    }
+    return none;
+  }
+
+  globalThis.__pmzSiteZhCore = { detectGame, ninjaLang, buildSiteDict, translateText, translateDetail, buildReverseDict, reverseDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -935,6 +1049,43 @@
     }
   }
 
+  // ── poe.ninja 雙語:只附加另一種語言,**不改頁面文字**(2026-11-04)──
+  // 英文頁整行正查成中文、繁中頁整行反查成英文;只附遊戲內容(不附介面字與裝備名),只在角色頁
+  // (流派列表、物價頁的清單很擠,10-08 裁定)。附在哪一格沿用 origHost,關開關由 restoreAll 一起清。
+  let rdict = null; // buildReverseDict(dict) 的快取,dict 換了就重建
+  const revDict = () => (rdict?.D === dict ? rdict : (rdict = dict ? buildReverseDict(dict) : null));
+  function attachOther(el, other) {
+    const host = origHost(el);
+    // flex / grid 容器找不到可掛的那格、或往下找到的是沒有字的圖示:不附(不退回 title,ninja 自己的 title 不蓋)
+    if (!host || !host.textContent.trim()) return;
+    if (host.dataset.pmzOrig === other) return;
+    if (host.dataset.pmzOrig === undefined) origed.push(new WeakRef(host));
+    host.dataset.pmzOrig = other;
+    ensureOrigStyle();
+  }
+  function annotateTextNodes(nodes) {
+    const lang = ninjaLang(location.pathname);
+    if (!lang || !/\/character\//.test(location.pathname)) return;
+    const R = lang === 'zh' ? revDict() : null;
+    const seen = new Set();
+    for (const n of nodes) {
+      if (!n.isConnected || skipped(n) || !n.data.trim()) continue;
+      const el = lineOf(n) ?? n.parentElement;
+      if (!el || seen.has(el)) continue;
+      seen.add(el);
+      const text = el.textContent ?? '';
+      const d = lang === 'zh' ? reverseDetail(text, R) : translateDetail(text, dict);
+      const other = (lang === 'zh' ? d.en : d.zh)?.trim();
+      if (other && d.game) { attachOther(el, other); stat.lines++; continue; }
+      // 框架換了這一行的內容、新內容查不到:舊的對照拿掉
+      const host = origHost(el);
+      if (host?.dataset.pmzOrig !== undefined) delete host.dataset.pmzOrig;
+    }
+  }
+  // ninja 只附加;pobb.in 照舊改寫成中文(placeholder 也只有 pobb.in 翻)
+  const processNodes = (nodes) => (SITE === 'ninja' ? annotateTextNodes(nodes) : processTextNodes(nodes));
+  const placeholders = (root) => { if (SITE !== 'ninja') translatePlaceholders(root); };
+
   function collectText(root, out) {
     if (root.nodeType === Node.TEXT_NODE) { out.push(root); return; }
     if (root.nodeType !== Node.ELEMENT_NODE || SKIP_TAGS.has(root.tagName)) return;
@@ -961,7 +1112,7 @@
       //   不再檢查就會在還原之後又翻一遍(切 English 時背景清資料正好會觸發這條重載,端到端 E20 抓到)
       if (!enabled || myRun !== runId) { pending.clear(); return; }
       pending.clear();
-      if (dict) { const all = []; collectText(document.body, all); processTextNodes(all); translatePlaceholders(document.body); }
+      if (dict) { const all = []; collectText(document.body, all); processNodes(all); placeholders(document.body); }
       return;
     }
     if (!dict) { pending.clear(); return; }
@@ -969,8 +1120,8 @@
     for (const p of pending) collectText(p, nodes);
     const roots = [...pending];
     pending.clear();
-    processTextNodes(nodes);
-    for (const r of roots) if (r.isConnected) translatePlaceholders(r);
+    processNodes(nodes);
+    for (const r of roots) if (r.isConnected) placeholders(r);
   }
 
   // 小量新增(滑到物品上才生出來的浮窗、切換分頁的一小塊)當場翻:MutationObserver 的回呼在瀏覽器繪製前執行,
@@ -992,8 +1143,8 @@
       const nodes = [];
       for (const r of roots) { collectText(r, nodes); if (nodes.length > SYNC_MAX_TEXT) break; }
       if (nodes.length <= SYNC_MAX_TEXT) {
-        processTextNodes(nodes);
-        for (const r of roots) if (r.nodeType === Node.ELEMENT_NODE && r.isConnected) translatePlaceholders(r);
+        processNodes(nodes);
+        for (const r of roots) if (r.nodeType === Node.ELEMENT_NODE && r.isConnected) placeholders(r);
         return;
       }
     }
@@ -1022,6 +1173,13 @@
       if (fresh.length) await chrome.storage.local.set({ siteLeagues: [...names, ...fresh].slice(-500) });
     } catch (_) { /* 存不進去不影響本頁 */ }
     onPage.forEach((l) => names.add(l));
+    // poe.ninja 角色頁沒有選單:再加背景的 poe.ninja 聯盟清單(與物價查詢同一個來源、同一條權限)
+    if (SITE === 'ninja') {
+      try {
+        const res = await chrome.runtime.sendMessage({ t: 'ninja:leagues' });
+        for (const l of res?.leagues ?? []) names.add(String(l));
+      } catch (_) { /* 背景休眠或沒有權限:只靠頁面上的選單 */ }
+    }
     // 困難 / 單人變體:「Hardcore X」「HC X」「SSF X」…只剩核心名也要擋
     for (const n of [...names]) {
       const core = n.replace(/^(Hardcore|HC|SSF|HC SSF|Ruthless|HC Ruthless|SSF R|HC SSF R)\s+/i, '').replace(/\s*\(PL\d+\)$/, '');
@@ -1117,11 +1275,13 @@
     dictGame = null;
   }
 
-  // 開關開著,而且擴充是中文介面 + 翻譯開著(與交易站同一條規則,見 bg/translation.js chineseDataAllowed)
+  // 開關開著,而且擴充是中文介面 + 翻譯開著(與交易站同一條規則,見 bg/translation.js chineseDataAllowed)。
+  // pobb.in 看 siteZh;poe.ninja 看雙語(bilingualMods,與交易站共用)
   async function shouldRun() {
-    const { siteZh, language, uiLang } = await chrome.storage.local.get(['siteZh', 'language', 'uiLang']);
+    const { siteZh, bilingualMods, language, uiLang } = await chrome.storage.local.get(['siteZh', 'bilingualMods', 'language', 'uiLang']);
     const ui = uiLang === 'zh' || uiLang === 'en' ? uiLang : language !== undefined ? 'zh' : undefined;
-    return siteZh === true && ui === 'zh' && (language ?? 'zh_tw') === 'zh_tw';
+    const on = SITE === 'ninja' ? bilingualMods === true : siteZh === true;
+    return on && ui === 'zh' && (language ?? 'zh_tw') === 'zh_tw';
   }
   const readBilingual = async () => {
     bilingual = (await chrome.storage.local.get('bilingualMods')).bilingualMods === true;
@@ -1135,6 +1295,8 @@
     // 雙語顯示切換(popup / 交易站側邊欄):不重載字典,整頁還原後重翻一次 —— 不必重新整理
     if (changes.bilingualMods) {
       bilingual = changes.bilingualMods.newValue === true;
+      // poe.ninja:雙語就是它的開關 → 整個開 / 關
+      if (SITE === 'ninja') { apply(); return; }
       if (enabled) { restoreAll(); schedule(document.body); }
       return;
     }

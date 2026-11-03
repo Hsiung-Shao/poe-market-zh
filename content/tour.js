@@ -317,7 +317,7 @@
     // poedb / wiki 快捷鈕:只掛國際服、預設關(content/result-links.js)。鈕平時藏著(滑過那一列才出現),
     // 看得見就框鈕,否則框它所在的那一欄(官方 refresh / searchBy 那欄)
     { id: 'links', when: (c) => c.site === 'intl' && c.settings.resultLinks === true, page: true, anchor: () => linksAnchor(), miss: 'sb.tour.links.miss' },
-    // pobb.in 的開關只在中文介面的 popup 出現(popup #zhOnlySites);交易站上沒有東西可框
+    // pobb.in 中文化與 poe.ninja 雙語授權只在中文介面的 popup 出現(popup #zhOnlySites);交易站上沒有東西可框
     { id: 'sites', when: (c) => c.uiLang === 'zh' },
     {
       id: 'done',

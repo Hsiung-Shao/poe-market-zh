@@ -1,4 +1,4 @@
-// Popup:介面語言、交易站(語系 / 雙語 / 側邊欄)、pobb.in 中文化、poe.ninja 物價授權、翻譯資料維護。
+// Popup:介面語言、交易站(語系 / 雙語 / 側邊欄)、pobb.in 中文化、poe.ninja 雙語與物價授權、翻譯資料維護。
 // 設定即存即用,交易頁重新整理後生效。
 //
 // 介面語言(uiLang,2026-09-21):中文 / English。English = 交易站不翻、不載任何中文資料、
@@ -43,10 +43,16 @@ I18N.register({
     'pop.st.none': '尚未建置翻譯資料',
     'pop.st.fetchErr': '無法取得狀態:{error}',
     'pop.sidebarToggled': '已{state}側邊欄,重新整理交易頁生效',
-    'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁生效(pobb.in 立即生效)',
-    'pop.tagline': 'PoE 交易站與 pobb.in 的中文輔助工具',
+    'pop.bilingualToggled': '已{state}詞綴雙語顯示,重新整理交易頁或 poe.ninja 生效(pobb.in 立即生效)',
+    'pop.tagline': 'PoE 交易站、pobb.in、poe.ninja 的中文輔助工具',
     'pop.sec.trade': '交易站',
-    'pop.sec.sites': 'pobb.in',
+    'pop.sec.sites': 'pobb.in / poe.ninja',
+    'pop.ninjaBi': 'poe.ninja 雙語(需授權)',
+    'pop.ninjaBiGranted': '已授權',
+    'pop.ninjaBiNeed': '未授權',
+    'pop.ninjaBiOn': '已取得 poe.ninja 權限:開著上方的「詞綴雙語顯示」時,角色頁會附另一種語言(英文頁附中文、繁中頁附英文),重新整理該頁生效',
+    'pop.ninjaBiHint': '開關是上方的「詞綴雙語顯示」;poe.ninja 權限與物價查詢共用,不在這裡收回',
+    'pop.ninjaBiDenied': '沒有取得 poe.ninja 的網站存取權限',
     'pop.sec.data': '翻譯資料',
     'pop.siteZh': '中文化(配裝頁)',
     'pop.siteToggled': '已{state} pobb.in 中文化,重新整理該網站生效',
@@ -99,10 +105,16 @@ I18N.register({
     'pop.st.none': 'No translation data built yet',
     'pop.st.fetchErr': 'Could not read status: {error}',
     'pop.sidebarToggled': 'Sidebar {state}. Reload the trade page to apply',
-    'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page to apply (pobb.in updates right away)',
-    'pop.tagline': 'Bookmarks and price check for the PoE trade site, plus Chinese for pobb.in',
+    'pop.bilingualToggled': 'Bilingual mods {state}. Reload the trade page or poe.ninja to apply (pobb.in updates right away)',
+    'pop.tagline': 'Bookmarks and price check for the PoE trade site, plus Chinese for pobb.in and bilingual poe.ninja',
     'pop.sec.trade': 'Trade site',
-    'pop.sec.sites': 'pobb.in',
+    'pop.sec.sites': 'pobb.in / poe.ninja',
+    'pop.ninjaBi': 'poe.ninja bilingual (needs access)',
+    'pop.ninjaBiGranted': 'granted',
+    'pop.ninjaBiNeed': 'not granted',
+    'pop.ninjaBiOn': 'poe.ninja access granted. With "Bilingual mods" on, character pages show the other language (Chinese on English pages, English on zh-TW pages). Reload the page to apply',
+    'pop.ninjaBiHint': 'The switch is "Bilingual mods" above; poe.ninja access is shared with price check and is not revoked here',
+    'pop.ninjaBiDenied': 'Access to poe.ninja was not granted',
     'pop.sec.data': 'Translation data',
     'pop.siteZh': 'Chinese (build pages)',
     'pop.siteToggled': 'Chinese on pobb.in {state}. Reload that site to apply',
@@ -324,6 +336,9 @@ function renderNinja(on) {
   ninjaOn = on === true;
   $('#ninjaToggle').classList.toggle('on', ninjaOn);
   $('#ninjaState').textContent = t(ninjaOn ? 'common.on' : 'common.off');
+  // poe.ninja 雙語授權鈕看的是同一條權限
+  $('#ninjaBiToggle').classList.toggle('on', ninjaOn);
+  $('#ninjaBiState').textContent = t(ninjaOn ? 'pop.ninjaBiGranted' : 'pop.ninjaBiNeed');
 }
 
 // init 裡任何一步丟例外都會讓 popup 停在半成品狀態(語系、字典狀態全都不顯示),
@@ -370,6 +385,16 @@ $('#ninjaToggle').addEventListener('click', async () => {
     : await chrome.permissions.request({ origins: [NINJA_ORIGIN] });
   renderNinja(next);
   showStatus(t(next ? 'pop.ninjaOn' : 'pop.ninjaOff'));
+});
+
+// ── poe.ninja 雙語(2026-11-04):開關共用上方的「詞綴雙語顯示」(bilingualMods),這顆只負責要 poe.ninja 權限 ──
+// 權限與物價查詢同一條 origin;已授權時不在這裡收回(收回會連物價一起關),只提示開關在哪。
+$('#ninjaBiToggle').addEventListener('click', async () => {
+  if (ninjaOn) { showStatus(t('pop.ninjaBiHint')); return; }
+  // ⚠ permissions.request 必須是這個 handler 的第一個 await(見 ninjaOn 的說明)
+  const granted = await chrome.permissions.request({ origins: [NINJA_ORIGIN] }).catch(() => false);
+  renderNinja(granted);
+  showStatus(t(granted ? 'pop.ninjaBiOn' : 'pop.ninjaBiDenied'), !granted);
 });
 
 // 重建使用者用過的每一款的中文資料(套用中文化、切回中文介面共用)

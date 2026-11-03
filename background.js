@@ -45,7 +45,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   maybeAskForNinja();
 });
 
-// ── pobb.in 中文化(bg/sites.js;poe.ninja 中文化已移除,舊註冊由 sites.js 註銷)──
+// ── pobb.in 中文化 / poe.ninja 雙語(bg/sites.js)──
 // 動態註冊的 content script 會跨工作階段保留,但開關、權限、介面語言任一變動都要重新對齊;
 // 啟動時也對一次(使用者可能在擴充管理頁收回了網站權限)。
 function syncSites() {
@@ -59,7 +59,7 @@ chrome.permissions.onRemoved?.addListener(syncSites);
 // 掛在 storage 變更上而不是各個按鈕裡 —— popup 與側邊欄都能切,這裡一處保證都會清。
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.siteZh || changes.uiLang || changes.language) syncSites();
+  if (changes.siteZh || changes.uiLang || changes.language || changes.bilingualMods) syncSites();
   if (!changes.uiLang) return;
   if (changes.uiLang.newValue === 'en' && changes.uiLang.oldValue !== 'en') {
     purgeChineseData().catch((err) => console.warn('[PTM] 清除中文資料失敗:', err));
