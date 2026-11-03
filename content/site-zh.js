@@ -44,7 +44,7 @@
   //   `assets.pobb.in/1/…`、`/2/…`。兩個訊號都沒有就不翻(不猜)。
   function detectGame(doc = document, loc = location) {
     if (SITE === 'ninja' || /(^|\.)poe\.ninja$/.test(loc.hostname)) return NINJA_PATH.exec(loc.pathname)?.[2] ?? null;
-    const v =/\[(\d+)\.\d+[^\]]*\]\s*$/.exec(doc.title ?? '');
+    const v = /\[(\d+)\.\d+[^\]]*\]\s*$/.exec(doc.title ?? '');
     if (v) return v[1] === '0' ? 'poe2' : 'poe1';
     const img = doc.querySelector?.('img[src*="assets.pobb.in/"]')?.getAttribute('src') ?? '';
     const a = /assets\.pobb\.in\/([12])\//.exec(img);
@@ -692,23 +692,32 @@
     // 中文本身就是介面字的譯名(面板標題「恢復」):名稱與詞綴都不附(詞綴表也有一條無數值的 Second Wind =「恢復」)
     if (R.uiZh.has(k)) return none;
     const name = R.names.get(k);
-    if (name) return { en: name, game: !isEquipName(R.D, name) };
+    if (name) {
+      // 同一個中文在詞綴表(無數值的整句)對到別的英文:兩表互相矛盾,不附(撞名判斷要跨表,不靠查表順序)
+      const st = R.stats.get(k);
+      if (st && st.order.length === 0 && st.en !== name) return none;
+      return { en: name, game: !isEquipName(R.D, name) };
+    }
     // 角色標題「等級 100 酋長」
     const lv = /^等級(\d+)(.+)$/.exec(k);
     const cls = lv && R.classes.get(lv[2]);
     if (cls) return { en: `Level ${lv[1]} ${cls}`, game: true };
+    // 英文的每個 # 都要填得到;中文重複用同一個 {n}(雙行詞綴「{0} 至 {1} … {0} 至 {1}」)時英文後半填不到 → 回 null 不附
     const fill = (hit, vals, neg) => {
       let i = 0;
-      return hit.en.replace(/(\+?)#/g, (all, plus) => {
+      let missing = false;
+      const out = hit.en.replace(/(\+?)#/g, (all, plus) => {
         const ci = hit.order.indexOf(i++);
         const v = vals[ci];
-        if (v == null) return all;
+        if (v == null) { missing = true; return all; }
         return neg?.has(ci) ? `-${v}` : `${plus}${v}`;
       }).replace(/\s*\n\s*/g, ' ');
+      return missing ? null : out;
     };
     for (const { key, vals } of maskedKeys(k)) {
       const hit = R.stats.get(key);
-      if (hit) return { en: fill(hit, vals), game: true };
+      const en = hit && fill(hit, vals);
+      if (en) return { en, game: true };
     }
     // 負值:遊戲檔帶號模板是 `+{0}`,畫面印 `-20%` —— 負號當正號比,命中後那一格補回負號(同正查 renderOrdered)
     if (/(^|[^\d])-\d/.test(k)) {
@@ -718,7 +727,8 @@
         const hit = R.stats.get(key);
         if (!hit) continue;
         const neg = new Set(at.map((p, i) => (negAt.has(p) ? i : -1)).filter((i) => i >= 0));
-        return { en: fill(hit, vals, neg).replace(/\+-/g, '-'), game: true };
+        const en = fill(hit, vals, neg);
+        if (en) return { en: en.replace(/\+-/g, '-'), game: true };
       }
     }
     return none;
