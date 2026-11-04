@@ -734,7 +734,32 @@
     return none;
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, ninjaLang, buildSiteDict, translateText, translateDetail, buildReverseDict, reverseDetail, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
+  // 一段文字 → 另一種語言(ninja 雙語:繁中頁反查英文、英文頁正查中文),回 { other, game }。
+  // 整段查不到時:ninja 會把兩條詞綴放進同一個元素(雙詞綴一個元素兩行、天賦精通的兩條效果以「, 」併成一行,
+  // 2026-11-04 使用者回報),照換行 / 半形「, 」拆開逐段查;**每段**都查得到而且都是遊戲內容才附,用同一種分隔接回
+  // (寧缺勿錯)。全形「,」不拆:中文詞綴本身常含全形逗號(整段查得到就不會走到這裡)。
+  function otherLangOf(text, lang, D, R = lang === 'zh' ? buildReverseDict(D) : null) {
+    const none = { other: null, game: false };
+    const one = (t) => {
+      const d = lang === 'zh' ? reverseDetail(t, R) : translateDetail(t, D);
+      return { other: (lang === 'zh' ? d.en : d.zh)?.trim() || null, game: d.game };
+    };
+    const whole = one(text);
+    if (whole.other) return whole;
+    const t = String(text ?? '').trim();
+    const sep = t.includes('\n') ? '\n' : t.includes(', ') ? ', ' : null;
+    const parts = sep ? t.split(sep).map((x) => x.trim()).filter(Boolean) : [];
+    if (parts.length < 2) return none;
+    const out = [];
+    for (const part of parts) {
+      const r = one(part);
+      if (!r.other || !r.game) return none;
+      out.push(r.other);
+    }
+    return { other: out.join(sep), game: true };
+  }
+
+  globalThis.__pmzSiteZhCore = { detectGame, ninjaLang, buildSiteDict, translateText, translateDetail, buildReverseDict, reverseDetail, otherLangOf, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -1095,10 +1120,8 @@
       const el = lineOf(n) ?? n.parentElement;
       if (!el || seen.has(el)) continue;
       seen.add(el);
-      const text = el.textContent ?? '';
-      const d = lang === 'zh' ? reverseDetail(text, R) : translateDetail(text, dict);
-      const other = (lang === 'zh' ? d.en : d.zh)?.trim();
-      if (other && d.game) { attachOther(el, other); stat.lines++; continue; }
+      const { other, game } = otherLangOf(el.textContent ?? '', lang, dict, R);
+      if (other && game) { attachOther(el, other); stat.lines++; continue; }
       // 框架換了這一行的內容、新內容查不到:舊的對照拿掉
       const host = origHost(el);
       if (host?.dataset.pmzOrig !== undefined) delete host.dataset.pmzOrig;
