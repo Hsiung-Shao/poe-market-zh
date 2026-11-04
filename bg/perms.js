@@ -26,8 +26,11 @@ export function handlePermissionMessage(msg) {
   if (action === 'ask') {
     return chrome.permissions.request({ origins })
       .then((granted) => ({ ok: true, granted, direct: true }))
-      .catch(() => chrome.tabs.create({ url: chrome.runtime.getURL(`popup/popup.html?ask=${site}`) })
-        .then(() => ({ ok: true, direct: false }))
+      // 手勢沒帶到(Firefox 一定如此):已經在授權頁允許過就直接回已授權,不再開一頁(否則側邊欄永遠拿不到 granted)
+      .catch(() => chrome.permissions.contains({ origins }).catch(() => false)
+        .then((has) => (has ? { ok: true, granted: true, direct: true }
+          : chrome.tabs.create({ url: chrome.runtime.getURL(`popup/popup.html?ask=${site}`) })
+            .then(() => ({ ok: true, direct: false }))))
         .catch((err) => ({ ok: false, error: String(err?.message ?? err) })));
   }
   // 收回權限不需要使用者手勢,背景直接做得到

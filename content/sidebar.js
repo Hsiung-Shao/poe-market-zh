@@ -3063,12 +3063,16 @@
     return state.pobbPerm;
   }
 
+  let transLoading = false;
   async function loadTransStatus() {
+    if (transLoading) return;
+    transLoading = true;
     try {
       state.transStatus = await chrome.runtime.sendMessage({ t: 'translation:status' }) ?? {};
     } catch (err) {
       state.transStatus = { error: String(err?.message ?? err) };
     }
+    transLoading = false;
     if (state.tab === 'settings') render();
   }
 
@@ -3143,7 +3147,7 @@
     accSection(body, 'zh', tr('sb.set.sec.zh'), sumJoin([
       langName,
       showTrade ? tr('sb.set.sum.translate', { v: onText(state.language === 'zh_tw') }) : null,
-      showTrade ? tr('sb.set.sum.bilingual', { v: onText(state.bilingualMods) }) : null,
+      zhUi ? tr('sb.set.sum.bilingual', { v: onText(state.bilingualMods) }) : null,
       zhUi ? tr('sb.set.sum.pobbin', { v: onText(state.siteZh === true && state.pobbPerm === true) }) : null,
       zhUi ? tr('sb.set.sum.ninja', { v: tr(state.ninjaPerm ? 'sb.set.granted' : 'sb.set.notGranted') }) : null,
     ]), (box) => {
@@ -3160,9 +3164,15 @@
           state.language = val;
           chrome.storage.local.set({ language: val });
           // ⚠ 要帶 game:沒帶的舊訊息會被當成 PoE1,PoE2 頁面按了等於沒建
-          if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build', game: GAME.id }).catch(() => {});
+          if (val === 'zh_tw') {
+            chrome.runtime.sendMessage({ t: 'translation:build', game: GAME.id }).catch(() => {});
+            state.transStatus = null; // 「翻譯資料」區重抓建置狀態
+          }
           render();
         });
+      }
+      // 雙語對照台服也要有:poe.ninja / pobb.in 的雙語也看這個鍵(舊 popup 中文介面就有,不分站)
+      if (zhUi) {
         switchRow(box, tr('sb.set.bilingual'), state.bilingualMods, (on) => {
           state.bilingualMods = on;
           chrome.storage.local.set({ bilingualMods: on });
@@ -3324,7 +3334,7 @@
 
     // ── 5. 翻譯資料(原 popup 的建置狀態與清除快取;English 沒有中文資料可言)──
     if (zhUi && !IS_TW) {
-      if (state.settingsOpen === 'data' && !state.transStatus) loadTransStatus();
+      if (!state.transStatus) loadTransStatus();
       accSection(body, 'data', tr('sb.set.sec.data'), transSummary(), (box) => {
         const card = el('div', 'pmz-trans-card');
         for (const line of transLines()) {
@@ -3610,7 +3620,7 @@
       const onEnable = (changes, area) => {
         if (area !== 'local' || changes.sidebarEnabled?.newValue !== true) return;
         chrome.storage.onChanged.removeListener(onEnable);
-        startSidebar(savedUi, Date.now()).catch((err) => console.warn('[PTM] sidebar 啟動失敗:', err));
+        startSidebar(savedUi, changes.openSettingsReq?.newValue).catch((err) => console.warn('[PTM] sidebar 啟動失敗:', err));
       };
       chrome.storage.onChanged.addListener(onEnable);
       return;
@@ -3618,12 +3628,17 @@
     await startSidebar(savedUi, openSettingsReq);
   }
 
-  // 「打開設定」的請求(點工具列圖示,bg/open-settings.js):10 秒內的才算,同一個請求只處理一次
-  const OPEN_SETTINGS_TTL = 10000;
+  // 「打開設定」的請求(點工具列圖示,bg/open-settings.js):
+  //   只由**看得見**的分頁處理(其他交易站分頁不跟著彈開、擠窄頁面),處理完就刪掉旗標
+  //   (之後重新整理不會又被開回設定、載入慢的新分頁也不會因為逾時錯過);背景分頁切到前景時再看一次。
+  //   60 秒的時效只防當掉的分頁留下沒人處理的舊旗標。
+  const OPEN_SETTINGS_TTL = 60000;
   let handledOpenReq = 0;
   function maybeOpenSettings(req) {
     if (typeof req !== 'number' || req <= handledOpenReq || Date.now() - req > OPEN_SETTINGS_TTL) return;
+    if (document.visibilityState !== 'visible') return;
     handledOpenReq = req;
+    chrome.storage.local.remove('openSettingsReq').catch(() => {});
     state.tab = 'settings';
     setOpen(true);
     render();
@@ -3658,6 +3673,16 @@
     }
     scheduleHistory();
     maybeOpenSettings(openSettingsReq);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      chrome.storage.local.get('openSettingsReq').then((o) => maybeOpenSettings(o.openSettingsReq)).catch(() => {});
+      // 授權可能在別頁改了(Firefox 的授權頁按了允許):回到設定時重查,開關才不會停在「未授權」
+      if (state.open && state.tab === 'settings') {
+        state.pobbPerm = null;
+        state.ninjaPerm = null;
+        render();
+      }
+    });
     dbg(`[PTM] 側邊欄就緒:${state.data.folders.length} 個資料夾 / ${M.countBookmarks(state.data.folders)} 個書籤`);
     // 同步外部寫入(popup 匯入、其他分頁);自己寫的依 _writer 蓋章略過
     chrome.storage.onChanged.addListener((changes, area) => {

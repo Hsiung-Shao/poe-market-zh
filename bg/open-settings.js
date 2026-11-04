@@ -15,10 +15,11 @@ export const TRADE_URL_PATTERNS = [
 const TRADE_RE = /^https:\/\/(www\.)?pathofexile\.(com|tw)\/trade2?\//;
 const DEFAULT_URL = 'https://www.pathofexile.com/trade/search';
 
-export function pickTradeTab(tabs) {
+// windowId = 目前聚焦的視窗:別的視窗剛好作用中的交易站分頁不優先(否則會把使用者拉到另一個視窗)
+export function pickTradeTab(tabs, windowId) {
   const trade = (tabs ?? []).filter((t) => TRADE_RE.test(t?.url ?? ''));
   if (!trade.length) return null;
-  return trade.find((t) => t.active === true)
+  return trade.find((t) => t.active === true && (windowId == null || t.windowId === windowId))
     ?? trade.reduce((a, b) => ((b.lastAccessed ?? 0) > (a.lastAccessed ?? 0) ? b : a));
 }
 
@@ -26,7 +27,8 @@ export async function openTradeSettings() {
   await chrome.storage.local.set({ sidebarEnabled: true, openSettingsReq: Date.now() });
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: TRADE_URL_PATTERNS }); } catch (_) { /* 查不到就開新的 */ }
-  const tab = pickTradeTab(tabs);
+  const win = await chrome.windows.getLastFocused?.().catch(() => null);
+  const tab = pickTradeTab(tabs, win?.id);
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});

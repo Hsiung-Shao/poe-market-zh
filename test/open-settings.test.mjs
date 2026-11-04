@@ -16,6 +16,7 @@ let containsResult = false;
 let requestMode = 'resolve'; // resolve / reject
 let requestResult = true;
 let requestCalls = [];
+let focusedWin = null;
 
 function reset(opts = {}) {
   storage = { ...(opts.storage || {}) };
@@ -26,6 +27,7 @@ function reset(opts = {}) {
   requestMode = opts.requestMode || 'resolve';
   requestResult = opts.requestResult ?? true;
   requestCalls = [];
+  focusedWin = opts.focusedWin ?? null;
 }
 
 const noopEvent = { addListener() {}, removeListener() {}, hasListener: () => false };
@@ -57,6 +59,7 @@ function installChromeMock() {
     },
     windows: {
       async update(...a) { log('windows.update', ...a); return {}; },
+      async getLastFocused() { return focusedWin == null ? null : { id: focusedWin }; },
     },
     permissions: {
       async contains(arg) { containsCalls.push(arg); return containsResult; },
@@ -138,6 +141,15 @@ test('O1d 側邊欄不會出現的 /trade 頁(未登入的 /trade?lang=…)不�
   assert.equal(pickTradeTab([TRADE(1, { url: 'https://www.pathofexile.com/trade?lang=en_US', active: true }), TRADE(2, { url: 'https://www.pathofexile.com/trade' })]), null);
 });
 
+test('O1e 多視窗:作用中的交易站分頁要在目前視窗才優先', () => {
+  const { pickTradeTab } = needOpen();
+  const tabs = [TRADE(1, { windowId: 2, active: true }), TRADE(2, { windowId: 1, lastAccessed: 50 }), TRADE(3, { windowId: 1, active: true, lastAccessed: 10 })];
+  // 抓:不分視窗挑第一個 active,把使用者拉到另一個視窗
+  assert.equal(pickTradeTab(tabs, 1).id, 3);
+  // 目前視窗沒有作用中的交易站分頁 → 最近用過的(不是別的視窗剛好 active 那個)
+  assert.equal(pickTradeTab([TRADE(1, { windowId: 2, active: true, lastAccessed: 5 }), TRADE(2, { windowId: 1, lastAccessed: 50 })], 1).id, 2);
+});
+
 test('O2 沒有交易站分頁就開新分頁到預設網址', async () => {
   const { openTradeSettings } = needOpen();
   reset({ tabs: [OTHER(1, { active: true })] });
@@ -196,6 +208,14 @@ test('O5 已有交易站分頁就切過去而不開新的', async () => {
   assert.equal(count('tabs.create'), 0);
 });
 
+test('O5b 切分頁時用目前聚焦的視窗判斷作用中', async () => {
+  const { openTradeSettings } = needOpen();
+  reset({ focusedWin: 1, tabs: [TRADE(7, { windowId: 3, active: true }), TRADE(8, { windowId: 1, active: true })] });
+  await openTradeSettings();
+  // 抓:沒查聚焦視窗,切到別的視窗的分頁
+  assert.deepEqual(events.find((e) => e.type === 'tabs.update').args, [8, { active: true }]);
+});
+
 test('P1 pobb.in 授權:Chrome 直接要成功', async () => {
   const { handlePermissionMessage } = needPerms();
   reset({ requestResult: true });
@@ -216,6 +236,15 @@ test('P2 pobb.in 授權:request 拋錯就開授權頁', async () => {
   assert.ok(creates[0].args[0].url.endsWith('popup/popup.html?ask=pobbin'), creates[0].args[0].url);
   assert.equal(r.ok, true);
   assert.equal(r.direct, false);
+});
+
+test('P2b request 拋錯但其實已授權(Firefox 在授權頁按過允許)→ 回已授權,不再開授權頁', async () => {
+  const { handlePermissionMessage } = needPerms();
+  reset({ requestMode: 'reject', containsResult: true });
+  const r = await handlePermissionMessage({ t: 'perm:pobbin-ask' });
+  // 抓:一律退回開授權頁,側邊欄永遠拿不到 granted(授權後再按開關又開一頁)
+  assert.deepEqual(r, { ok: true, granted: true, direct: true });
+  assert.equal(count('tabs.create'), 0);
 });
 
 test('P3 查 pobb.in 權限:未授權回 granted false', async () => {
