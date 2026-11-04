@@ -3063,9 +3063,14 @@
     return state.pobbPerm;
   }
 
+  // 請求中又收到狀態變動:回來後再抓一次,不讓舊回應蓋掉新狀態
   let transLoading = false;
+  let transStale = false;
   async function loadTransStatus() {
-    if (transLoading) return;
+    if (transLoading) {
+      transStale = true;
+      return;
+    }
     transLoading = true;
     try {
       state.transStatus = await chrome.runtime.sendMessage({ t: 'translation:status' }) ?? {};
@@ -3073,7 +3078,23 @@
       state.transStatus = { error: String(err?.message ?? err) };
     }
     transLoading = false;
-    if (state.tab === 'settings') render();
+    if (transStale) {
+      transStale = false;
+      loadTransStatus();
+      return;
+    }
+    showTransStatus();
+  }
+  // 「翻譯資料」區展開才整頁重畫;收起時只改那一區的摘要 ——
+  // 背景建置一次會寫好幾筆狀態,整頁重畫會把別區正在輸入的東西(貼到一半的匯入碼)和焦點清掉
+  function showTransStatus() {
+    if (state.tab !== 'settings') return;
+    if (state.settingsOpen === 'data') {
+      render();
+      return;
+    }
+    const sum = panel?.querySelector('[data-pmz-section="data"] .pmz-acc-sum');
+    if (sum) sum.textContent = transSummary();
   }
 
   // 翻譯資料的建置狀態:只列已經建過的那幾款(沒開過 PoE2 的人不該看到「PoE2 尚未建置」)
@@ -3677,10 +3698,13 @@
       if (document.visibilityState !== 'visible') return;
       chrome.storage.local.get('openSettingsReq').then((o) => maybeOpenSettings(o.openSettingsReq)).catch(() => {});
       // 授權可能在別頁改了(Firefox 的授權頁按了允許):回到設定時重查,開關才不會停在「未授權」
+      // ⚠ 不先設回 null:查詢期間開關會畫成「關」,這時點下去反而是打開。保留舊值在背景重查,
+      //   有變才重畫,而且只在「中文化與網站」展開時(別區可能正在輸入匯入碼)
       if (state.open && state.tab === 'settings') {
-        state.pobbPerm = null;
-        state.ninjaPerm = null;
-        render();
+        const before = `${state.pobbPerm}|${state.ninjaPerm}`;
+        Promise.all([checkPobbPermission(), checkNinjaPermission()]).then(() => {
+          if (`${state.pobbPerm}|${state.ninjaPerm}` !== before && state.settingsOpen === 'zh') render();
+        }).catch(() => {});
       }
     });
     dbg(`[PTM] 側邊欄就緒:${state.data.folders.length} 個資料夾 / ${M.countBookmarks(state.data.folders)} 個書籤`);
@@ -3701,7 +3725,7 @@
       // 背景建置 / 字典狀態變了:「翻譯資料」區重抓(否則會一直停在「建置中…」)
       if (Object.keys(changes).some((k) => /^(buildStatus2?|lscacheError2?|dictStatus)$/.test(k))) {
         state.transStatus = null;
-        if (state.open && state.tab === 'settings') render();
+        if (state.open && state.tab === 'settings' && panel?.querySelector('[data-pmz-section="data"]')) loadTransStatus();
       }
       // 介面語言(popup 或另一個分頁改的):整個重畫成新語言
       // ⚠ 「還沒選 → 選了中文」語言字面上沒變,但選擇列要收起來,所以也要比 chosen
