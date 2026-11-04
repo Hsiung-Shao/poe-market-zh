@@ -3698,6 +3698,11 @@
       // 點工具列圖示:重新顯示(若被關掉)並展開到設定;另一個分頁關掉側邊欄時這裡也跟著藏
       if (changes.sidebarEnabled) setSidebarVisible(changes.sidebarEnabled.newValue !== false);
       if (changes.openSettingsReq) maybeOpenSettings(changes.openSettingsReq.newValue);
+      // 背景建置 / 字典狀態變了:「翻譯資料」區重抓(否則會一直停在「建置中…」)
+      if (Object.keys(changes).some((k) => /^(buildStatus2?|lscacheError2?|dictStatus)$/.test(k))) {
+        state.transStatus = null;
+        if (state.open && state.tab === 'settings') render();
+      }
       // 介面語言(popup 或另一個分頁改的):整個重畫成新語言
       // ⚠ 「還沒選 → 選了中文」語言字面上沒變,但選擇列要收起來,所以也要比 chosen
       const nextLang = changes.uiLang?.newValue;
