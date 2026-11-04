@@ -254,6 +254,7 @@
       when: (c) => c.sidebar,
       prepare: (env) => {
         env.api.showTab('settings');
+        env.api.openSettingsSection?.('backup'); // 設定是摺疊式,收起的區裡沒有東西可框
         scrollTo(sectionNodes(env, 'backup')[0], 'start');
       },
       anchor: (env) => sectionNodes(env, 'backup'),
@@ -301,12 +302,13 @@
       ],
       miss: 'sb.tour.tail.miss',
     },
-    // 上面三樣(＋/−、階級標記、階級選單)在 設定 → 顯示 的開關
+    // 上面三樣(＋/−、階級標記、階級選單)在 設定 →「結果列與篩選」的開關
     {
       id: 'modSettings',
       when: (c) => c.sidebar,
       prepare: (env) => {
         env.api.showTab('settings');
+        env.api.openSettingsSection?.('results');
         scrollTo(settingRows(env)[0], 'center');
       },
       anchor: (env) => settingRows(env),
@@ -317,13 +319,24 @@
     // poedb / wiki 快捷鈕:只掛國際服、預設關(content/result-links.js)。鈕平時藏著(滑過那一列才出現),
     // 看得見就框鈕,否則框它所在的那一欄(官方 refresh / searchBy 那欄)
     { id: 'links', when: (c) => c.site === 'intl' && c.settings.resultLinks === true, page: true, anchor: () => linksAnchor(), miss: 'sb.tour.links.miss' },
-    // pobb.in 中文化與 poe.ninja 雙語授權只在中文介面的 popup 出現(popup #zhOnlySites);交易站上沒有東西可框
-    { id: 'sites', when: (c) => c.uiLang === 'zh' },
+    // pobb.in 中文化與 poe.ninja 雙語:2026-11-04 起在 設定 →「中文化與網站」(popup 拿掉了),框那一區
+    {
+      id: 'sites',
+      when: (c) => c.uiLang === 'zh',
+      prepare: (env) => {
+        if (!env.api) return;
+        env.api.showTab('settings');
+        env.api.openSettingsSection?.('zh');
+        scrollTo(sectionNodes(env, 'zh')[0], 'start');
+      },
+      anchor: (env) => sectionNodes(env, 'zh'),
+    },
     {
       id: 'done',
       prepare: (env) => {
         if (!env.api) return;
         env.api.showTab('settings');
+        env.api.openSettingsSection?.('backup'); // 重播鈕在「備份、匯入與進階」
         scrollTo(env.nodes?.panel?.querySelector(SEL.replay), 'center');
       },
       anchor: (env) => env.nodes?.panel?.querySelector(SEL.replay) ?? null,

@@ -120,6 +120,10 @@
     // (2026-08-16 使用者截圖回報:切一次中文化,下半部整組重複)。
     language: 'zh_tw',
     bilingualMods: false,
+    siteZh: false, // pobb.in 中文化(storage siteZh;2026-11-04 起開關只在這裡,不在 popup)
+    pobbPerm: null, // pobb.in 選用權限:null = 還沒查
+    transStatus: null, // translation:status 的回應(翻譯資料區展開時才抓)
+    settingsOpen: 'zh', // 設定分頁目前展開哪一區(E 摺疊版面,一次一區;記在 sidebarUi)
     uiLang: 'zh', // 擴充介面語言(與 popup 共用 uiLang 鍵)
     uiLangChosen: false, // 使用者選過語言沒有(沒選 = 全新安裝,顯示選擇列)
     history: [], // 最近開過的搜尋(只記有名字的)
@@ -485,7 +489,7 @@
   const tabEnabled = (tab) => tab !== 'bulk' || state.settings.bulkSellers === true;
 
   function persistUi() {
-    chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab } });
+    chrome.storage.local.set({ [UI_KEY]: { open: !!state.open, tab: state.tab, settingsOpen: state.settingsOpen } });
   }
 
   // 存下來的狀態可能來自另一款遊戲的頁面(PoE1 的「物價」在 PoE2 沒有)或舊資料,不合法就退回書籤
@@ -704,7 +708,7 @@
   function exposeTourApi() {
     const hasTab = (tab) => PANEL_TABS.some(([id]) => id === tab) && tabEnabled(tab);
     globalThis.__pmzSidebarApi = {
-      getState: () => ({ open: !!state.open, tab: state.tab, side: state.settings.sidebarSide === 'left' ? 'left' : 'right' }),
+      getState: () => ({ open: !!state.open, tab: state.tab, settingsOpen: state.settingsOpen, side: state.settings.sidebarSide === 'left' ? 'left' : 'right' }),
       hasTab,
       showTab: (tab) => {
         if (!hasTab(tab)) return false;
@@ -712,8 +716,17 @@
         return true;
       },
       setOpen: (open) => setOpen(!!open, { save: false }),
+      // 設定分頁是摺疊式(一次一區):導覽要框的列在收起的區裡就不存在,先展開那一區
+      openSettingsSection: (key) => {
+        if (!SETTINGS_SECTIONS.includes(key)) return false;
+        state.settingsOpen = key;
+        if (state.tab === 'settings') render();
+        return true;
+      },
       restore: (saved) => {
         state.tab = restoredTab(saved);
+        // 導覽為了框設定列展開過別區,還原成導覽前展開的那區
+        if (saved && 'settingsOpen' in saved) state.settingsOpen = saved.settingsOpen;
         state.dataMsg = null;
         state.historyPickId = null;
         setOpen(saved?.open === true, { save: false });
@@ -2967,141 +2980,328 @@
   // 開/關兩段鈕:render 時才取字(語言在載入後才設定)
   const onOff = () => [[true, tr('common.on')], [false, tr('common.off')]];
 
+  // ── 設定分頁(2026-11-04 E 摺疊版面,使用者裁定)──
+  // 六區,預設收起只露一行目前狀態的摘要,一次只展開一區(展開哪區記在 sidebarUi.settingsOpen)。
+  // 開關一律是單一切換鈕;長說明收進 ⓘ(滑過看 title)。popup 的設定畫面同時拿掉,設定只在這裡。
+  // ⚠ 各區保留 data-pmz-section、各列保留 data-pmz-setting:功能導覽(content/tour.js)靠它們框位置,
+  //   框之前會先呼叫 __pmzSidebarApi.openSettingsSection 展開該區。
+  const SETTINGS_SECTIONS = ['zh', 'sidebar', 'results', 'market', 'data', 'backup'];
+
+  function infoMark(row, info) {
+    if (!info) return;
+    const i = el('span', 'pmz-info', 'i');
+    i.title = info;
+    i.setAttribute('aria-label', info);
+    row.appendChild(i);
+  }
+
+  // 一列:標籤 + ⓘ + 切換鈕;onChange(next) 負責寫回與副作用
+  function switchRow(body, label, isOn, onChange, info) {
+    const row = el('div', 'pmz-setting-row');
+    row.appendChild(el('span', null, label));
+    infoMark(row, info);
+    const sw = el('button', `pmz-switch${isOn ? ' pmz-switch-on' : ''}`);
+    sw.type = 'button';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!isOn));
+    sw.setAttribute('aria-label', label);
+    sw.appendChild(el('span', 'pmz-switch-knob'));
+    sw.addEventListener('click', () => onChange(!isOn));
+    row.appendChild(sw);
+    body.appendChild(row);
+    return row;
+  }
+
   // settings 裡的布林鍵:state.settings 已與 DEFAULT_SETTINGS 合併,必有值;
   // 寫回同一個鍵、同樣 persist,after 是即時生效的副作用(可省)。
   // 每一列掛 data-pmz-setting="<鍵>":功能導覽(content/tour.js)據此框「在設定調整」的那幾列,不靠文字 / 順序
-  function settingToggle(body, key, label, after) {
-    segRow(body, label, onOff(),
-      (val) => (state.settings[key] !== false) === val,
-      (val) => {
-        state.settings[key] = val;
-        persistSettings();
-        after?.();
-        render();
-      }).parentElement.dataset.pmzSetting = key;
+  function settingToggle(body, key, label, after, info) {
+    switchRow(body, label, state.settings[key] !== false, (val) => {
+      state.settings[key] = val;
+      persistSettings();
+      after?.();
+      render();
+    }, info).dataset.pmzSetting = key;
+  }
+
+  // 一區:標題列是展開 / 收起的按鈕,下面一行摘要;展開才畫內容
+  function accSection(body, key, title, summary, fill) {
+    const open = state.settingsOpen === key;
+    const box = el('div', `pmz-acc${open ? ' pmz-acc-open' : ''}`);
+    box.dataset.pmzSection = key;
+    const head = el('button', 'pmz-acc-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(open));
+    const text = el('span', 'pmz-acc-text');
+    text.append(el('span', 'pmz-acc-title', title), el('span', 'pmz-acc-sum', summary));
+    head.append(text, el('span', 'pmz-acc-chev', open ? '▴' : '▾'));
+    head.addEventListener('click', () => {
+      state.settingsOpen = open ? null : key;
+      persistUi();
+      render();
+    });
+    box.appendChild(head);
+    if (open) {
+      const inner = el('div', 'pmz-acc-body');
+      fill(inner);
+      box.appendChild(inner);
+    }
+    body.appendChild(box);
+  }
+
+  const onText = (v) => tr(v ? 'common.on' : 'common.off');
+  const sumJoin = (parts) => parts.filter(Boolean).join(' · ');
+
+  // pobb.in 權限:同 poe.ninja 由背景代查(content script 沒有權限 API,見 bg/perms.js)
+  async function checkPobbPermission() {
+    try {
+      const res = await chrome.runtime.sendMessage({ t: 'perm:pobbin' });
+      state.pobbPerm = res?.granted === true;
+    } catch (_) {
+      state.pobbPerm = false;
+    }
+    return state.pobbPerm;
+  }
+
+  async function loadTransStatus() {
+    try {
+      state.transStatus = await chrome.runtime.sendMessage({ t: 'translation:status' }) ?? {};
+    } catch (err) {
+      state.transStatus = { error: String(err?.message ?? err) };
+    }
+    if (state.tab === 'settings') render();
+  }
+
+  // 翻譯資料的建置狀態:只列已經建過的那幾款(沒開過 PoE2 的人不該看到「PoE2 尚未建置」)
+  function transLines() {
+    const st = state.transStatus;
+    if (!st) return [{ text: tr('sb.set.trans.loading') }];
+    if (st.error) return [{ text: tr('sb.set.trans.fetchErr', { error: st.error }), bad: true }];
+    const out = [];
+    for (const info of Object.values(st.games ?? {})) {
+      const b = info?.buildStatus;
+      if (!b) continue;
+      const time = new Date(b.at).toLocaleString();
+      if (b.state === 'building') out.push({ text: tr('sb.set.trans.building', { label: info.label, time }) });
+      else if (b.state === 'done') out.push({ text: `✓ ${b.msg}`, ok: true }, { text: tr('sb.set.trans.updated', { time }) });
+      else out.push({ text: tr('sb.set.trans.error', { label: info.label, msg: b.msg }), bad: true });
+      const ls = info?.lscacheError;
+      if (ls?.failed?.length) out.push({ text: tr('sb.set.trans.lscache', { label: info.label, list: ls.failed.join('、') }), bad: true });
+    }
+    out.push(...dictLines(st.dictStatus));
+    return out.length ? out : [{ text: tr('sb.set.trans.none') }];
+  }
+  // 字典來源摘要(原 popup 的 renderDictInfo)。有三層降級的東西一定要看得見自己吃的是哪一層 ——
+  // 降級越優雅,資料缺口對使用者越安靜。indexVersion / remoteError / gameVersion 源自遠端內容,只走 textContent。
+  function dictLines(ds) {
+    if (!ds) return [];
+    const shown = ['remote', 'cache', 'bundled'].filter((k) => ds.counts?.[k]).map((k) => `${tr(`sb.set.trans.src.${k}`)} ${ds.counts[k]}`);
+    const out = [{ text: tr('sb.set.trans.head') + (shown.length ? shown.join(' · ') : tr('sb.set.trans.notLoaded')) }];
+    if (ds.indexVersion != null) out.push({ text: tr('sb.set.trans.remote', { v: ds.indexVersion }) });
+    else if (ds.remoteError) out.push({ text: tr('sb.set.trans.remoteErr', { error: ds.remoteError }) });
+    const dayOf = (at) => {
+      const day = String(at ?? '').slice(0, 10);
+      return day ? tr('sb.set.trans.day', { day }) : '';
+    };
+    if (ds.gameVersion) out.push({ text: tr('sb.set.trans.game1', { ver: ds.gameVersion, day: dayOf(ds.gameDataGeneratedAt) }) });
+    if (ds.gameVersion2) out.push({ text: tr('sb.set.trans.game2', { ver: ds.gameVersion2, day: dayOf(ds.gameDataGeneratedAt2) }) });
+    if (ds.failed?.length) out.push({ text: tr('sb.set.trans.failed', { list: ds.failed.join(tr('sb.set.trans.sep')) }), bad: true });
+    return out;
+  }
+  function transSummary() {
+    const lines = transLines();
+    const bad = lines.find((l) => l.bad);
+    if (bad) return bad.text;
+    const building = (state.transStatus?.games && Object.values(state.transStatus.games).some((g) => g?.buildStatus?.state === 'building'));
+    if (building) return tr('sb.set.trans.sumBuilding');
+    const done = Object.values(state.transStatus?.games ?? {}).map((g) => g?.buildStatus).filter((b) => b?.state === 'done');
+    if (!done.length) return state.transStatus ? tr('sb.set.trans.none') : tr('sb.set.trans.loading');
+    const at = Math.max(...done.map((b) => b.at));
+    return tr('sb.set.trans.sumDone', { time: new Date(at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) });
+  }
+
+  // 「在交易站顯示」關掉:寫回 storage 後當場把側邊欄藏起來;要再打開只能點工具列的擴充圖示(背景會寫回 true)
+  function setSidebarVisible(on) {
+    if (!rail || !panel) return;
+    if (!on) setOpen(false, { save: false });
+    rail.style.display = on ? '' : 'none';
+    panel.style.display = on ? '' : 'none';
+    applyPageSqueeze();
   }
 
   function renderSettings(body) {
+    const zhUi = state.uiLangChosen && state.uiLang === 'zh';
     body.appendChild(el('div', 'pmz-hint', tr('sb.set.reloadHint')));
 
-    // ── 1. 側邊欄 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.sidebar'))).dataset.pmzSection = 'sidebar';
-    segRow(body, tr('sb.set.position'), [['left', tr('sb.set.left')], ['right', tr('sb.set.right')]],
-      (val) => state.settings.sidebarSide === val,
-      (val) => {
-        state.settings.sidebarSide = val;
-        persistSettings();
-        applySide();
-        render();
-      });
-    // 關掉 = 回到舊行為:每次開頁面板都是收合的。開關本身存 settings(偏好),
-    // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
-    settingToggle(body, 'keepPanelOpen', tr('sb.set.keepPanelOpen'));
-    settingToggle(body, 'autoInstantBuyout', tr('sb.set.autoInstantBuyout'));
-    // 大量賣家分頁:關掉時 rail 鈕與分頁即時藏起來(render → updateRail 依 tabEnabled)
-    settingToggle(body, 'bulkSellers', tr('sb.set.bulkSellers'));
-
-    // ── 2. 顯示 ──
-    // 中文化與雙語詞綴:與 popup 共用同一組 storage 鍵,兩邊改都算數。
-    // ⚠ 一律從 state 畫,不要在這裡 `chrome.storage.local.get().then(…)` 再 append ——
-    //   render 是「清空 body 再重畫」,非同步 append 會在兩次 render 交錯時畫出兩份
-    //   (切一次中文化就會多一組「中文化 + 備份與匯入」;2026-08-16 使用者截圖回報)。
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.display'))).dataset.pmzSection = 'display';
-    // 介面語言(與 popup 同一個 uiLang 鍵)。English = 交易站不翻、不載任何中文資料
-    // 語言名一律用該語言自己的寫法(endonym),不隨介面語言翻 —— 看不懂目前語言的人才找得到
-    const langRow = el('div', 'pmz-setting-row');
-    langRow.appendChild(el('span', null, tr('sb.set.uiLang')));
-    langRow.appendChild(langSelect(true));
-    body.appendChild(langRow);
-    // 翻譯與雙語:台服頁面本身就是中文(拔掉,使用者裁定);English 與還沒選語言時也不翻
-    if (!IS_TW && state.uiLangChosen && state.uiLang === 'zh') {
-      segRow(body, tr('sb.set.translate'), [['zh_tw', tr('common.on')], ['us', tr('common.off')]],
-        (val) => state.language === val,
-        (val) => {
+    // ── 1. 中文化與網站 ──
+    // 交易站中文化 / 雙語:台服頁面本身就是中文(拔掉,使用者裁定);English 與還沒選語言時也不翻。
+    // pobb.in / poe.ninja 只在中文介面有意義(English = 不載任何中文資料)
+    const showTrade = !IS_TW && zhUi;
+    if (zhUi && state.pobbPerm === null) checkPobbPermission().then(() => state.tab === 'settings' && render());
+    if (zhUi && state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
+    const langName = globalThis.PMZ_I18N.langInfo(state.uiLang)?.name ?? state.uiLang;
+    accSection(body, 'zh', tr('sb.set.sec.zh'), sumJoin([
+      langName,
+      showTrade ? tr('sb.set.sum.translate', { v: onText(state.language === 'zh_tw') }) : null,
+      showTrade ? tr('sb.set.sum.bilingual', { v: onText(state.bilingualMods) }) : null,
+      zhUi ? tr('sb.set.sum.pobbin', { v: onText(state.siteZh === true && state.pobbPerm === true) }) : null,
+      zhUi ? tr('sb.set.sum.ninja', { v: tr(state.ninjaPerm ? 'sb.set.granted' : 'sb.set.notGranted') }) : null,
+    ]), (box) => {
+      // 介面語言(與 popup 同一個 uiLang 鍵)。English = 交易站不翻、不載任何中文資料
+      // 語言名一律用該語言自己的寫法(endonym),不隨介面語言翻 —— 看不懂目前語言的人才找得到
+      const langRow = el('div', 'pmz-setting-row');
+      langRow.appendChild(el('span', null, tr('sb.set.uiLang')));
+      infoMark(langRow, tr('sb.set.uiLang.info'));
+      langRow.appendChild(langSelect(true));
+      box.appendChild(langRow);
+      if (showTrade) {
+        switchRow(box, tr('sb.set.translate'), state.language === 'zh_tw', (on) => {
+          const val = on ? 'zh_tw' : 'us';
           state.language = val;
           chrome.storage.local.set({ language: val });
           // ⚠ 要帶 game:沒帶的舊訊息會被當成 PoE1,PoE2 頁面按了等於沒建
           if (val === 'zh_tw') chrome.runtime.sendMessage({ t: 'translation:build', game: GAME.id }).catch(() => {});
           render();
         });
-      segRow(body, tr('sb.set.bilingual'), onOff(),
-        (val) => state.bilingualMods === val,
+        switchRow(box, tr('sb.set.bilingual'), state.bilingualMods, (on) => {
+          state.bilingualMods = on;
+          chrome.storage.local.set({ bilingualMods: on });
+          render();
+        }, tr('sb.set.bilingual.info'));
+      }
+      if (zhUi) {
+        switchRow(box, tr('sb.set.pobbin'), state.siteZh === true && state.pobbPerm === true, async (on) => {
+          if (on && state.pobbPerm !== true) {
+            // ⚠ 必須是點擊後第一個非同步動作(見 bg/perms.js):手勢才帶得進背景
+            const res = await chrome.runtime.sendMessage({ t: 'perm:pobbin-ask' }).catch(() => null);
+            if (res?.direct) state.pobbPerm = res.granted === true;
+            if (state.pobbPerm !== true) {
+              state.dataMsg = { ok: false, text: tr(res?.direct === false ? 'sb.set.pobbin.askTab' : 'sb.set.pobbin.denied') };
+              render();
+              return;
+            }
+          }
+          state.siteZh = on;
+          chrome.storage.local.set({ siteZh: on });
+          render();
+        }, tr('sb.set.pobbin.info'));
+        const ninjaRow = el('div', 'pmz-setting-row');
+        ninjaRow.appendChild(el('span', null, tr('sb.set.ninjaBi')));
+        infoMark(ninjaRow, tr('sb.set.ninjaBi.info'));
+        if (state.ninjaPerm) {
+          ninjaRow.appendChild(el('span', 'pmz-granted', tr('sb.set.granted')));
+        } else {
+          const ask = el('button', 'pmz-act', tr('sb.set.allow'));
+          ask.type = 'button';
+          ask.addEventListener('click', async () => {
+            // ⚠ 必須是點擊後第一個非同步動作(見 bg/perms.js)
+            const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => null);
+            applyNinjaAskResult(res);
+            render();
+          });
+          ninjaRow.appendChild(ask);
+        }
+        box.appendChild(ninjaRow);
+      }
+    });
+
+    // ── 2. 側邊欄 ──
+    const s = state.settings;
+    accSection(body, 'sidebar', tr('sb.set.section.sidebar'), sumJoin([
+      tr(s.sidebarSide === 'left' ? 'sb.set.sum.left' : 'sb.set.sum.right'),
+      tr('sb.set.sum.keepOpen', { v: onText(s.keepPanelOpen !== false) }),
+      tr('sb.set.sum.bulk', { v: onText(s.bulkSellers === true) }),
+    ]), (box) => {
+      segRow(box, tr('sb.set.position'), [['left', tr('sb.set.left')], ['right', tr('sb.set.right')]],
+        (val) => s.sidebarSide === val,
         (val) => {
-          state.bilingualMods = val;
-          chrome.storage.local.set({ bilingualMods: val });
+          s.sidebarSide = val;
+          persistSettings();
+          applySide();
           render();
         });
-    }
-    settingToggle(body, 'highlightPseudo', tr('sb.set.highlightPseudo'), applyPseudoHighlight); // 即時生效,不必重整
-    // 詞綴 ＋/− 按鈕的顯示由 mod-row.js 監聽 storage 的 settings 即時切換,這裡只負責存
-    settingToggle(body, 'modFilterButtons', tr('sb.set.modFilterButtons'));
-    // 階級徽章同理:tier-badge.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
-    settingToggle(body, 'tierBadges', tr('sb.set.tierBadges'));
-    // 結果列 poedb / wiki 快捷鈕:result-links.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存
-    settingToggle(body, 'resultLinks', tr('sb.set.resultLinks'));
-    // 階級選單:tier-picker.js 監聽 settings 即時顯示 / 隱藏,這裡只負責存(一律填階級下限,沒有填值方式可選)
-    settingToggle(body, 'tierPicker', tr('sb.set.tierPicker'));
+      switchRow(box, tr('sb.set.showSidebar'), true, () => {
+        chrome.storage.local.set({ sidebarEnabled: false });
+        setSidebarVisible(false);
+      }, tr('sb.set.showSidebar.info'));
+      // 關掉 = 回到舊行為:每次開頁面板都是收合的。開關本身存 settings(偏好),
+      // 「上次是開是關」存 sidebarUi(狀態)—— 兩者分開,關掉再打開也不會遺失上次的狀態。
+      settingToggle(box, 'keepPanelOpen', tr('sb.set.keepPanelOpen'), null, tr('sb.set.keepPanelOpen.info'));
+      settingToggle(box, 'autoInstantBuyout', tr('sb.set.autoInstantBuyout'), null, tr('sb.set.autoInstantBuyout.info'));
+      // 大量賣家分頁:關掉時 rail 鈕與分頁即時藏起來(render → updateRail 依 tabEnabled)
+      settingToggle(box, 'bulkSellers', tr('sb.set.bulkSellers'), null, tr('sb.set.bulkSellers.info'));
+    });
 
-    // ── 3. 資料來源 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.data'))).dataset.pmzSection = 'data';
+    // ── 3. 結果列與篩選 ──
+    const RESULT_KEYS = [
+      ['highlightPseudo', 'sb.set.highlightPseudo', applyPseudoHighlight], // 即時生效,不必重整
+      // 詞綴 ＋/− 按鈕、階級徽章、快捷鈕、階級選單:各自的 content script 監聽 storage 的 settings 即時切換,這裡只負責存
+      ['modFilterButtons', 'sb.set.modFilterButtons'],
+      ['tierBadges', 'sb.set.tierBadges'],
+      ['resultLinks', 'sb.set.resultLinks'],
+      ['tierPicker', 'sb.set.tierPicker'],
+    ];
+    const enabledShort = RESULT_KEYS.filter(([k]) => (k === 'resultLinks' ? s[k] === true : s[k] !== false)).map(([k]) => tr(`sb.set.short.${k}`));
+    accSection(body, 'results', tr('sb.set.sec.results'),
+      enabledShort.length ? enabledShort.join(' · ') : tr('sb.set.sum.allOff'),
+      (box) => {
+        for (const [key, label, after] of RESULT_KEYS) settingToggle(box, key, tr(label), after, tr(`${label}.info`));
+      });
 
-    // ⚠ 書籤/歷史的遊戲切換已改成**分頁頂部的 PoE1/PoE2 標籤**(依網址自動切),
-    //   這裡不再有那個設定 —— 同一件事有兩個入口只會讓人不知道哪個說了算。
-
+    // ── 4. 聯盟與物價 ──
     // 聯盟:物價與書籤共用。空字串 = 自動(物價用 poe.ninja 最新、書籤用目前頁面)
     // ⚠ **每款一份**:兩款的聯盟名不同,共用一個欄位會讓另一款開出空搜尋。
     //   這個下拉改的是**目前頁面那一款**的設定,標題也寫清楚是哪一款。
     // ⚠ 台服另一份(聯盟名是中文,見 leagueKey)
     const LKEY = leagueKey(POE_VER, 'league');
     const LLAST = leagueKey(POE_VER, 'lastLeague');
-    const leagueRow = el('div', 'pmz-setting-row');
-    leagueRow.appendChild(el('span', null, tr('sb.set.league', { game: GAME.label })));
-    const leagueSel = el('select', 'pmz-select pmz-select-inline');
-    const autoOpt = el('option', null, tr('sb.set.leagueAuto', { league: (HAS_PRICES ? state.ninjaLeagues?.latest : null) ?? (state.settings[LLAST] || '…') }));
-    autoOpt.value = '';
-    leagueSel.appendChild(autoOpt);
-    const manual = state.settings[LKEY];
-    // 沒授權 poe.ninja 時清單抓不到,至少把目前頁面的聯盟放進去可選。
-    // ⚠ poe.ninja 的聯盟清單是 PoE1 的,不要餵給 PoE2 的下拉。
-    const known = new Set([
-      ...(manual ? [manual] : []),
-      ...(HAS_PRICES ? (state.ninjaLeagues?.leagues ?? []) : []),
-      ...(state.settings[LLAST] ? [state.settings[LLAST]] : []),
-    ]);
-    for (const name of known) {
-      const opt = el('option', null, name);
-      opt.value = name;
-      leagueSel.appendChild(opt);
-    }
-    leagueSel.value = manual || '';
-    leagueSel.addEventListener('change', () => {
-      state.settings[LKEY] = leagueSel.value;
-      persistSettings();
-      // 清掉已載入的物價,下次開物價分頁以新聯盟重新載入
-      state.prices = { ...state.prices, list: [], at: 0, league: null, error: null };
-      render();
-    });
-    // 沒授權 poe.ninja 就不要白打請求(清單抓不到,下拉維持「自動」)。
-    // PoE2 頁面根本不用它的清單,更不必打。
-    if (HAS_PRICES && !state.ninjaLeagues && state.ninjaPerm === true) {
-      loadNinjaLeagues().then((leagues) => {
-        if (leagues && state.tab === 'settings') render(); // 清單到位後補全選項
+    const autoLeague = (HAS_PRICES ? state.ninjaLeagues?.latest : null) ?? (s[LLAST] || '…');
+    accSection(body, 'market', tr(HAS_PRICES ? 'sb.set.sec.market' : 'sb.set.sec.league'), sumJoin([
+      s[LKEY] || tr('sb.set.sum.leagueAuto', { league: autoLeague }),
+      HAS_PRICES ? tr('sb.set.sum.prices', { v: onText(state.ninjaPerm === true) }) : null,
+    ]), (box) => {
+      const leagueRow = el('div', 'pmz-setting-row');
+      leagueRow.appendChild(el('span', null, tr('sb.set.league', { game: GAME.label })));
+      const leagueSel = el('select', 'pmz-select pmz-select-inline');
+      const autoOpt = el('option', null, tr('sb.set.leagueAuto', { league: autoLeague }));
+      autoOpt.value = '';
+      leagueSel.appendChild(autoOpt);
+      const manual = s[LKEY];
+      // 沒授權 poe.ninja 時清單抓不到,至少把目前頁面的聯盟放進去可選。
+      // ⚠ poe.ninja 的聯盟清單是 PoE1 的,不要餵給 PoE2 的下拉。
+      const known = new Set([
+        ...(manual ? [manual] : []),
+        ...(HAS_PRICES ? (state.ninjaLeagues?.leagues ?? []) : []),
+        ...(s[LLAST] ? [s[LLAST]] : []),
+      ]);
+      for (const name of known) {
+        const opt = el('option', null, name);
+        opt.value = name;
+        leagueSel.appendChild(opt);
+      }
+      leagueSel.value = manual || '';
+      leagueSel.addEventListener('change', () => {
+        s[LKEY] = leagueSel.value;
+        persistSettings();
+        // 清掉已載入的物價,下次開物價分頁以新聯盟重新載入
+        state.prices = { ...state.prices, list: [], at: 0, league: null, error: null };
+        render();
       });
-    }
-    leagueRow.appendChild(leagueSel);
-    body.appendChild(leagueRow);
+      // 沒授權 poe.ninja 就不要白打請求(清單抓不到,下拉維持「自動」)。PoE2 頁面根本不用它的清單,更不必打。
+      if (HAS_PRICES && !state.ninjaLeagues && state.ninjaPerm === true) {
+        loadNinjaLeagues().then((leagues) => {
+          if (leagues && state.tab === 'settings') render(); // 清單到位後補全選項
+        });
+      }
+      leagueRow.appendChild(leagueSel);
+      box.appendChild(leagueRow);
 
-    // 物價查詢(poe.ninja 選用權限):開 = 已授權。授權必須在擴充頁面按下(見 background.js),
-    // 所以這裡點「開」是去開授權頁;點「關」則由 background 直接收回。
-    // ⚠ 只有 PoE1 國際服:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`,PoE2 頁面連物價分頁都沒有;
-    //   台服拔掉物價(使用者 2026-09-21 裁定)。
-    if (HAS_PRICES) {
-      const ninjaSeg = segRow(body, tr('sb.set.ninja'), onOff(),
-        (val) => state.ninjaPerm === val,
-        async (val) => {
-          if (val === state.ninjaPerm) return;
-          if (val) {
-            // ⚠ 必須是點擊後第一個非同步動作(見 background.js 的 perm:ninja-ask)
+      // 物價查詢(poe.ninja 選用權限):開 = 已授權。授權必須在點擊當下帶手勢(見 bg/perms.js);關則由背景直接收回。
+      // ⚠ 只有 PoE1 國際服:bg/ninja.js 打的是 `poe.ninja/poe1/api/...`,PoE2 頁面連物價分頁都沒有;台服拔掉物價(2026-09-21 裁定)。
+      if (HAS_PRICES) {
+        const row = switchRow(box, tr('sb.set.ninja'), state.ninjaPerm === true, async (on) => {
+          if (on) {
+            // ⚠ 必須是點擊後第一個非同步動作
             const res = await chrome.runtime.sendMessage({ t: 'perm:ninja-ask' }).catch(() => null);
             applyNinjaAskResult(res);
           } else {
@@ -3110,20 +3310,57 @@
             state.prices = { ...state.prices, list: [], at: 0, error: null };
           }
           render();
+        }, tr('sb.set.ninja.info'));
+        const recheck = el('button', 'pmz-act', tr('sb.set.recheck'));
+        recheck.type = 'button';
+        recheck.addEventListener('click', async () => {
+          await checkNinjaPermission();
+          render();
         });
-      const recheck = el('button', 'pmz-act', tr('sb.set.recheck'));
-      recheck.addEventListener('click', async () => {
-        await checkNinjaPermission();
-        render();
+        row.insertBefore(recheck, row.lastElementChild);
+        if (state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
+      }
+    });
+
+    // ── 5. 翻譯資料(原 popup 的建置狀態與清除快取;English 沒有中文資料可言)──
+    if (zhUi && !IS_TW) {
+      if (state.settingsOpen === 'data' && !state.transStatus) loadTransStatus();
+      accSection(body, 'data', tr('sb.set.sec.data'), transSummary(), (box) => {
+        const card = el('div', 'pmz-trans-card');
+        for (const line of transLines()) {
+          card.appendChild(el('div', line.ok ? 'pmz-trans-ok' : line.bad ? 'pmz-trans-bad' : null, line.text));
+        }
+        box.appendChild(card);
+        const clearRow = el('div', 'pmz-setting-row');
+        clearRow.appendChild(el('span', null, tr('sb.set.clearCache.label')));
+        infoMark(clearRow, tr('sb.set.clearCache.info'));
+        const clearBtn = el('button', 'pmz-act pmz-danger', tr('sb.set.clearCache'));
+        clearBtn.type = 'button';
+        clearBtn.addEventListener('click', async () => {
+          await chrome.runtime.sendMessage({ t: 'translation:clear' }).catch(() => {});
+          state.transStatus = null;
+          state.dataMsg = { ok: true, text: tr('sb.set.clearCache.done') };
+          render();
+        });
+        clearRow.appendChild(clearBtn);
+        box.appendChild(clearRow);
       });
-      ninjaSeg.appendChild(recheck);
-      if (state.ninjaPerm === null) checkNinjaPermission().then(() => state.tab === 'settings' && render());
     }
 
-    // ── 4. 備份與匯入 ──
+    // ── 6. 備份、匯入與進階 ──
+    accSection(body, 'backup', tr('sb.set.sec.backup'), tr('sb.set.sum.backup'), (box) => renderBackupAdvanced(box));
+
+    if (state.dataMsg) {
+      body.appendChild(el('div', state.dataMsg.ok ? 'pmz-ok' : 'pmz-error', state.dataMsg.text));
+    }
+    // 頁尾只留資料來源;贊助 / Discord 連結已搬到 rail 上(2026-09-08)
+    body.appendChild(el('div', 'pmz-credit', tr('sb.set.credit')));
+  }
+
+  // 備份與匯入 + 進階(內容與 2026-11-04 之前相同,只是收進摺疊的一區)
+  function renderBackupAdvanced(body) {
     // ⚠ 直觀優先:匯出是**三顆各自寫清楚做什麼的鈕**(不必先選再按);
     //   匯入是**先開檔、把裡面有什麼攤出來**,再按對應的鈕(開檔前根本不知道有什麼)。
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.backup'))).dataset.pmzSection = 'backup';
     const have = M.countByGame(state.data.folders);
 
     body.appendChild(el('div', 'pmz-sub-title', tr('sb.set.export')));
@@ -3243,8 +3480,8 @@
       body.appendChild(form);
     }
 
-    // ── 5. 進階 ──
-    body.appendChild(el('div', 'pmz-section-title', tr('sb.set.section.advanced'))).dataset.pmzSection = 'advanced';
+    // 進階
+    body.appendChild(el('div', 'pmz-sub-title', tr('sb.set.section.advanced')));
     // 功能導覽重播(content/tour.js)。不需要 tourPending:按了就跑,結束後面板還原回這個設定分頁
     const tourRow = el('div', 'pmz-setting-row');
     tourRow.appendChild(el('span', null, tr('sb.set.tourLabel')));
@@ -3256,11 +3493,7 @@
     // 舊網址(只在真的有舊書籤時才出現)
     const legacy = legacyBookmarks();
     if (legacy.length) {
-      body.appendChild(el(
-        'div',
-        'pmz-hint',
-        tr('sb.set.legacyNotice', { n: legacy.length })
-      ));
+      body.appendChild(el('div', 'pmz-hint', tr('sb.set.legacyNotice', { n: legacy.length })));
     }
     // 清除資料:匯入三條路都是「附加」,沒有一鍵歸零的入口;匯入錯一次就得手動刪十幾個資料夾。
     body.appendChild(el('div', 'pmz-hint', tr('sb.set.clearHint')));
@@ -3268,13 +3501,6 @@
     clearBtn.disabled = !state.data.folders.length;
     clearBtn.addEventListener('click', clearAllBookmarks);
     body.appendChild(clearBtn);
-
-    if (state.dataMsg) {
-      body.appendChild(el('div', state.dataMsg.ok ? 'pmz-ok' : 'pmz-error', state.dataMsg.text));
-    }
-
-    // 頁尾只留資料來源;贊助 / Discord 連結已搬到 rail 上(2026-09-08)
-    body.appendChild(el('div', 'pmz-credit', tr('sb.set.credit')));
   }
 
   function render() {
@@ -3323,7 +3549,7 @@
 
   // ── 啟動 ──
   async function init() {
-    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, uiLang, [UI_KEY]: savedUi } =
+    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, uiLang, siteZh, openSettingsReq, [UI_KEY]: savedUi } =
       await chrome.storage.local.get([
         'bookmarkData',
         'settings',
@@ -3332,8 +3558,16 @@
         'language',
         'bilingualMods',
         'uiLang',
+        'siteZh',
+        'openSettingsReq',
         UI_KEY,
       ]);
+    // 點工具列圖示時背景開回「上一次的交易站」(台服 / PoE2 使用者開回自己那一站;bg/open-settings.js)
+    chrome.storage.local.set({ lastTradeUrl: `${location.origin}/${IS_POE2 ? 'trade2' : 'trade'}/search` }).catch(() => {});
+    state.siteZh = siteZh === true;
+    if (savedUi && 'settingsOpen' in savedUi) {
+      state.settingsOpen = SETTINGS_SECTIONS.includes(savedUi.settingsOpen) ? savedUi.settingsOpen : null;
+    }
     // ⚠ 一定要在建任何資料(預設資料夾名會存進 storage)與第一次 render 之前設好語言
     // 沒有 uiLang 但有 language = 舊使用者 → 中文(更新後不跳選擇列、不變英文)
     setUiLang(globalThis.PMZ_I18N.effectiveUiLang(uiLang, language));
@@ -3371,10 +3605,31 @@
     applyPseudoHighlight();
     maybeApplyInstantBuyout();
     if (sidebarEnabled === false) {
-      dbg('[PTM] 側邊欄已在 popup 關閉,不建立面板');
+      dbg('[PTM] 側邊欄已關閉,不建立面板(點工具列的擴充圖示可重新打開)');
+      // 點圖示時背景會寫回 sidebarEnabled: true:就地建起來,不必重新整理
+      const onEnable = (changes, area) => {
+        if (area !== 'local' || changes.sidebarEnabled?.newValue !== true) return;
+        chrome.storage.onChanged.removeListener(onEnable);
+        startSidebar(savedUi, Date.now()).catch((err) => console.warn('[PTM] sidebar 啟動失敗:', err));
+      };
+      chrome.storage.onChanged.addListener(onEnable);
       return;
     }
+    await startSidebar(savedUi, openSettingsReq);
+  }
 
+  // 「打開設定」的請求(點工具列圖示,bg/open-settings.js):10 秒內的才算,同一個請求只處理一次
+  const OPEN_SETTINGS_TTL = 10000;
+  let handledOpenReq = 0;
+  function maybeOpenSettings(req) {
+    if (typeof req !== 'number' || req <= handledOpenReq || Date.now() - req > OPEN_SETTINGS_TTL) return;
+    handledOpenReq = req;
+    state.tab = 'settings';
+    setOpen(true);
+    render();
+  }
+
+  async function startSidebar(savedUi, openSettingsReq) {
     buildShell();
     // 大量賣家的資料:fetch-tap 送來的物品 JSON(含 listing);比它晚掛上時請它把送過的再送一次
     window.addEventListener('message', onBulkItems);
@@ -3402,17 +3657,22 @@
       window.addEventListener('load', () => applyPageSqueeze(), { once: true });
     }
     scheduleHistory();
+    maybeOpenSettings(openSettingsReq);
     dbg(`[PTM] 側邊欄就緒:${state.data.folders.length} 個資料夾 / ${M.countBookmarks(state.data.folders)} 個書籤`);
     // 同步外部寫入(popup 匯入、其他分頁);自己寫的依 _writer 蓋章略過
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
       // 語系與雙語顯示是與 popup 共用的鍵:popup 那邊改了,這裡的 state 要跟著更新。
       // ⚠ 先更新 state 再 render —— 按鈕狀態一律從 state 畫(見 renderSettings 的註解)。
-      if (changes.language || changes.bilingualMods) {
+      if (changes.language || changes.bilingualMods || changes.siteZh) {
         if (changes.language) state.language = changes.language.newValue ?? 'zh_tw';
         if (changes.bilingualMods) state.bilingualMods = changes.bilingualMods.newValue === true;
+        if (changes.siteZh) state.siteZh = changes.siteZh.newValue === true;
         if (state.open && state.tab === 'settings') render();
       }
+      // 點工具列圖示:重新顯示(若被關掉)並展開到設定;另一個分頁關掉側邊欄時這裡也跟著藏
+      if (changes.sidebarEnabled) setSidebarVisible(changes.sidebarEnabled.newValue !== false);
+      if (changes.openSettingsReq) maybeOpenSettings(changes.openSettingsReq.newValue);
       // 介面語言(popup 或另一個分頁改的):整個重畫成新語言
       // ⚠ 「還沒選 → 選了中文」語言字面上沒變,但選擇列要收起來,所以也要比 chosen
       const nextLang = changes.uiLang?.newValue;

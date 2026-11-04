@@ -16,61 +16,16 @@
     padding: 14px 16px 10px;
     border-bottom: 1px solid #4a3f2f;
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    flex-direction: column;
+    gap: 2px;
   }
-  header .name {
-    font-size: 18px;
-    font-weight: 700;
-    color: #debe84;
-    letter-spacing: 0.5px;
-  }
-  header .ver { font-size: 11px; color: #7a6f5a; }
-  header { flex-direction: column; align-items: stretch; gap: 2px; }
   header .brand { display: flex; align-items: baseline; gap: 8px; }
+  header .name { font-size: 18px; font-weight: 700; color: #debe84; letter-spacing: 0.5px; }
+  header .ver { font-size: 11px; color: #7a6f5a; }
   header .tagline { font-size: 11px; color: #a99a7c; }
-  /* 分區:交易站 / pobb.in・poe.ninja / 翻譯資料 */
-  .group { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid #33291d; }
-  .group h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 1px; color: #c9a66b; }
-  .now-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; font-size: 12px; color: #a99a7c; }
-  .now-row .lang { font-size: 13px; font-weight: 700; color: #ffe8b8; letter-spacing: 1px; }
-  main { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
-  .lang-card {
-    background: #211b14;
-    border: 1px solid #4a3f2f;
-    border-radius: 4px;
-    padding: 8px 12px;
-    text-align: center;
-  }
+  main { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .lang-card { background: #211b14; border: 1px solid #4a3f2f; border-radius: 4px; padding: 8px 12px; text-align: center; }
   .lang-card .label { font-size: 11px; color: #a99a7c; letter-spacing: 1px; }
-  .lang-card .lang {
-    font-size: 20px;
-    font-weight: 700;
-    color: #ffe8b8;
-    letter-spacing: 1px;
-  }
-  button {
-    width: 100%;
-    padding: 9px 0;
-    background: #2a241c;
-    color: #cfc3a8;
-    border: 1px solid #4a3f2f;
-    border-radius: 4px;
-    font-size: 13px;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  #applyZh.armed,
-  #ninjaToggle.armed {
-    background: #6b5324;
-    border-color: #c9a66b;
-    color: #ffe8b8;
-  }
-  #clearCache { color: #b98a80; }
-  /* 介面語言兩顆:目前那顆金色填充 */
   .lang-select {
     width: 100%;
     margin-top: 6px;
@@ -84,109 +39,49 @@
     cursor: pointer;
   }
   .lang-select option { background: #1a1612; color: #cfc3a8; }
-  #zhOnly { display: flex; flex-direction: column; gap: 8px; }
-  #clearCache:hover:not(:disabled) { border-color: #c96b6b; color: #e0a8a0; }
-  /* ⚠ 一定要留這條:HTML 的 hidden 屬性等於 display:none,但**任何顯式的 display
-     宣告都會蓋掉它** —— .toggle-row 的 display:flex 就讓 hidden 完全失效
-     (2026-08-15 使用者回報 poe.ninja 那顆該藏起來的按鈕還在)。 */
+  button {
+    width: 100%;
+    padding: 9px 0;
+    background: #2a241c;
+    color: #cfc3a8;
+    border: 1px solid #4a3f2f;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #c9a66b; color: #ffe8b8; }
+  button.armed { background: #6b5324; border-color: #c9a66b; color: #ffe8b8; }
+  /* ⚠ 一定要留這條:HTML 的 hidden 屬性等於 display:none,但任何顯式的 display 宣告都會蓋掉它 */
   [hidden] { display: none !important; }
-  .toggle-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 9px 12px;
-    text-align: left;
-  }
-  .toggle-row .state { color: #7a6f5a; }
-  .btn-row { display: flex; gap: 8px; }
-  .btn-row button { flex: 1; }
-  .toggle-row.on { border-color: #c9a66b; }
-  .toggle-row.on .state { color: #ffe8b8; }
-  #status {
-    min-height: 18px;
-    font-size: 12px;
-    color: #8fae7a;
-    white-space: pre-wrap;
-    text-align: center;
-  }
+  #status { min-height: 18px; font-size: 12px; color: #8fae7a; white-space: pre-wrap; text-align: center; }
   #status.error { color: #c96b6b; }
-  /* 字典來源:使用者要看得出手上這份字典是遠端拉的、快取的,還是擴充內建的 */
-  #dictInfo {
-    font-size: 11px;
-    line-height: 1.6;
-    color: #7a6f5a;
-    text-align: center;
-    white-space: pre-wrap;
-  }
-  #dictInfo .src-remote { color: #8fae7a; }
-  #dictInfo .src-cache { color: #c9a66b; }
-  #dictInfo .src-bundled { color: #7a6f5a; }
-  ol {
-    margin: 4px 0 0;
-    padding: 8px 14px 12px 30px;
-    border-top: 1px solid #33291d;
-    font-size: 11px;
-    line-height: 1.7;
-    color: #7a6f5a;
-  }
 </style>
 </head>
 <body>
+  <!-- 2026-11-04 起點擴充圖示直接打開交易站側邊欄的 ⚙ 設定(manifest 沒有 default_popup),設定畫面都在側邊欄。
+       這一頁只剩三種用途,都由背景開成分頁:全新安裝選語言(?ask=lang)、poe.ninja / pobb.in 授權退路(?ask=ninja / ?ask=pobbin,
+       Firefox 不能在背景直接跳授權對話框)。沒帶 ask 打開時直接轉去交易站設定。 -->
   <header>
     <div class="brand">
       <span class="name">Poe Market Zh</span>
       <span class="ver" id="version"></span>
     </div>
-    <!-- 交易站 + 書籤側邊欄 + 物價 + pobb.in 中文化 + poe.ninja 雙語(poe.ninja 中文化 2026-11 改用網站內建繁中) -->
     <div class="tagline" data-i18n="pop.tagline">PoE 交易站、pobb.in、poe.ninja 的中文輔助工具</div>
   </header>
   <main>
-    <!-- 介面語言(uiLang):擴充自己的介面。English = 交易站與網站都不翻、不載任何中文資料 -->
-    <div class="lang-card">
+    <div class="lang-card" id="langCard" hidden>
       <div class="label" data-i18n="pop.uiLang">介面語言 / Language</div>
       <!-- 選項由 popup.js 依 shared/i18n.js 的語言清單產生(加語言不必改這裡) -->
       <select id="uiLangSel" class="lang-select" aria-label="Language"></select>
     </div>
-
-    <section class="group">
-      <h2 data-i18n="pop.sec.trade">交易站</h2>
-      <!-- 只在中文介面出現(交易站翻不翻、雙語顯示) -->
-      <div id="zhOnly">
-        <div class="now-row"><span data-i18n="pop.langNow">目前語系</span><span class="lang" id="langNow">…</span></div>
-        <div class="btn-row">
-          <button id="applyZh" data-i18n="pop.applyZh">繁體中文化(ZH_TW)</button>
-          <button id="restoreEn" data-i18n="pop.restoreEn">還原回英文(US)</button>
-        </div>
-        <button id="bilingualToggle" class="toggle-row"><span data-i18n="pop.bilingual">詞綴雙語顯示(附英文原文)</span><span class="state" id="bilingualState">關</span></button>
-      </div>
-      <button id="sidebarToggle" class="toggle-row"><span data-i18n="pop.sidebar">側邊欄(書籤 / 歷史 / 物價)</span><span class="state" id="sidebarState">開</span></button>
-    </section>
-
-    <!-- pobb.in 中文化的開關(popup.js SITE_ORIGINS)。選用權限,打開時才要;關掉不收回權限。
-         poe.ninja 雙語的開關是上面的「詞綴雙語顯示」,這裡那顆只負責取得 poe.ninja 權限(與物價查詢同一條 origin)。
-         最下面的 poe.ninja 物價授權鈕平常隱藏,只是沿用這個區塊 -->
-    <section class="group" id="zhOnlySites">
-      <h2 data-i18n="pop.sec.sites">pobb.in / poe.ninja</h2>
-      <button id="siteZhToggle" class="toggle-row"><span data-i18n="pop.siteZh">中文化(配裝頁)</span><span class="state" id="siteZhState">關</span></button>
-      <button id="ninjaBiToggle" class="toggle-row"><span data-i18n="pop.ninjaBi">poe.ninja 雙語(需授權)</span><span class="state" id="ninjaBiState">未授權</span></button>
-      <!-- poe.ninja 的物價授權按鈕平常不顯示:安裝/更新後 background 會把這頁開成
-           popup.html?ask=ninja 專門問一次,側邊欄設定裡的開關也是開這個網址。
-           chrome.permissions.request 只能從擴充頁面呼叫,所以按鈕得留在這裡。 -->
-      <button id="ninjaToggle" class="toggle-row" hidden><span data-i18n="pop.ninja">物價查詢(poe.ninja)</span><span class="state" id="ninjaState">關</span></button>
-    </section>
-
-    <section class="group">
-      <h2 data-i18n="pop.sec.data">翻譯資料</h2>
-      <button id="clearCache" data-i18n="pop.clearCache">清除快取</button>
-      <div id="status"></div>
-      <div id="dictInfo"></div>
-    </section>
+    <!-- 授權鈕:chrome.permissions.request 只能從擴充頁面、在點擊當下呼叫 -->
+    <button id="ninjaToggle" hidden><span data-i18n="pop.ninja">允許存取 poe.ninja</span></button>
+    <button id="pobbinToggle" hidden><span data-i18n="pop.pobbin">允許存取 pobb.in</span></button>
+    <button id="openSettings" hidden data-i18n="pop.openSettings">開啟交易站設定</button>
+    <div id="status"></div>
   </main>
-  <ol>
-    <li data-i18n="pop.tip1">設定改完後重新整理交易站或網站頁面才會生效</li>
-    <li data-i18n="pop.tip2">POE 改版後,先「清除快取」再重新套用,就能用英文搜到新道具</li>
-    <li data-i18n="pop.tip3">開啟交易站時若翻譯資料超過 6 小時會自動背景更新;台服跟上改版後會自動補上新詞綴</li>
-  </ol>
   <script src="../shared/i18n.js"></script>
   <script src="popup.js"></script>
 </body>
