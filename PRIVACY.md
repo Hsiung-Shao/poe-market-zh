@@ -39,7 +39,7 @@
 使用者在交易站側邊欄的設定開啟並於授權對話框同意後,本擴充才會在 `pobb.in` 的頁面上執行,**只在使用者的瀏覽器內**把頁面上的英文字替換成中文顯示。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱;唯一會記在本機的是頁面聯盟選單裡的聯盟名稱(用來讓聯盟名維持英文、不被翻譯)。關閉開關後頁面即時還原為英文。此功能所需的名稱資料來自上述 `raw.githubusercontent.com`。
 
 ### poe.ninja 雙語(選用功能)
-使用者開啟「詞綴雙語顯示」並授權 `poe.ninja` 後,本擴充才會在 `poe.ninja` 的角色頁上執行,**只在使用者的瀏覽器內**於物品、詞綴、天賦、技能下方附上另一種語言的小字(英文頁附中文、繁體中文頁附英文),不改動頁面原本的文字。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱。關閉雙語顯示後即時移除。所需的名稱資料同樣來自上述 `raw.githubusercontent.com`。
+使用者開啟交易站側邊欄設定的「雙語對照」並授權 `poe.ninja` 後,本擴充才會在 `poe.ninja` 的角色頁上執行,**只在使用者的瀏覽器內**於物品、詞綴、天賦、技能下方附上另一種語言的小字(英文頁附中文、繁體中文頁附英文),不改動頁面原本的文字。頁面文字只在本機用來比對譯名,**不會傳送到任何地方**,也不保存角色名稱與帳號名稱。關閉雙語顯示後即時移除。所需的名稱資料同樣來自上述 `raw.githubusercontent.com`。
 
 ### 政策變更
 如本政策有變更,將於本頁面更新並調整「最後更新」日期。
@@ -86,7 +86,7 @@ The sidebar's "Bulk sellers" tab is off by default. When the user turns it on an
 Only after the user turns it on in the sidebar settings on the trade site and approves the permission prompt does the Extension run on `pobb.in` pages, replacing English text with Chinese **inside the user's browser only**. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. The only thing kept locally is the list of league names from the page's league selector (so league names stay in English); turning the switch off restores the English text immediately. The name data for this feature comes from `raw.githubusercontent.com` listed above.
 
 ### poe.ninja bilingual display (optional)
-Only after the user turns on "Bilingual mods" and grants the `poe.ninja` permission does the Extension run on poe.ninja character pages, adding a small line in the other language under items, mods, passives and skills (Chinese on English pages, English on Traditional Chinese pages) **inside the user's browser only**, without changing the page's own text. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. Turning the bilingual display off removes the lines immediately. The name data comes from `raw.githubusercontent.com` listed above.
+Only after the user turns on "Bilingual" in the sidebar settings on the trade site and grants the `poe.ninja` permission does the Extension run on poe.ninja character pages, adding a small line in the other language under items, mods, passives and skills (Chinese on English pages, English on Traditional Chinese pages) **inside the user's browser only**, without changing the page's own text. Page text is only matched locally against the name data and is **never transmitted anywhere**; character and account names are not stored. Turning the bilingual display off removes the lines immediately. The name data comes from `raw.githubusercontent.com` listed above.
 
 ### Changes
 Any changes to this policy will be posted on this page with an updated date.
