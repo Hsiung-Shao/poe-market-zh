@@ -21,7 +21,8 @@ export const SITES = {
   ninja: { id: 'pmz-site-ninja', origins: ['https://poe.ninja/*'], flag: 'bilingualMods' },
 };
 export const SITE_ORIGINS = Object.values(SITES).flatMap((s) => s.origins);
-const SCRIPT_FILES = ['content/site-zh.js'];
+// 共用檔在前:site-zh.js 讀 globalThis.PMZ_BISTYLE(雙語小字的顏色 / 字級設定)
+const SCRIPT_FILES = ['shared/bi-style.js', 'content/site-zh.js'];
 
 async function granted(site) {
   try {
@@ -56,6 +57,9 @@ async function syncOnce() {
   const drop = Object.keys(SITES).filter((s) => have.has(SITES[s].id) && !want.includes(s)).map((s) => SITES[s].id);
   const add = want.filter((s) => !have.has(SITES[s].id));
   if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: drop });
+  // persistAcrossSessions 的註冊會一直沿用當初的 js 清單:擴充更新後清單變了要改掉,否則舊使用者少載新檔
+  const stale = existing.filter((s) => !drop.includes(s.id) && JSON.stringify(s.js ?? []) !== JSON.stringify(SCRIPT_FILES));
+  if (stale.length) await chrome.scripting.updateContentScripts(stale.map((s) => ({ id: s.id, js: SCRIPT_FILES })));
   if (add.length) {
     await chrome.scripting.registerContentScripts(add.map((s) => ({
       id: SITES[s].id,

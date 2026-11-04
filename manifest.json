@@ -107,6 +107,7 @@
         "content/item-text.js",
         "content/copy-item.js",
         "content/result-links.js",
+        "shared/bi-style.js",
         "content/results.js",
         "content/result-ui.js"
       ],
@@ -124,6 +125,7 @@
       "js": [
         "shared/i18n.js",
         "shared/i18n-sidebar.js",
+        "shared/bi-style.js",
         "content/bookmarks-model.js",
         "content/bulk-model.js",
         "content/pob-import.js",
