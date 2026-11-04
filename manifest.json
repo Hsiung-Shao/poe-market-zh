@@ -8,8 +8,7 @@
     "type": "module"
   },
   "action": {
-    "default_popup": "popup/popup.html",
-    "default_title": "Poe Market Zh — 交易站 / pobb.in / poe.ninja 中文輔助"
+    "default_title": "Poe Market Zh — 開啟交易站設定"
   },
   "icons": {
     "16": "icons/16.png",

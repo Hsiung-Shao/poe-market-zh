@@ -581,6 +581,72 @@ img.pmz-price-icon { width: 26px; height: 26px; object-fit: contain; flex-shrink
 }
 .pmz-seg-btn:hover { border-color: #c9a66b; }
 .pmz-seg-active { background: #33291d; color: #ffe8b8; border-color: #c9a66b; }
+/* 設定分頁 E 摺疊版面(2026-11-04):一區一張卡,收起只露標題 + 一行摘要 */
+.pmz-acc { margin-bottom: 8px; background: #211b14; border: 1px solid #4a3f2f; border-radius: 6px; }
+.pmz-acc-open { border-color: #c9a66b; }
+.pmz-acc-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: #cfc3a8;
+}
+.pmz-acc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pmz-acc-title { font-size: 14px; font-weight: 600; color: #ffe8b8; }
+.pmz-acc-sum { font-size: 12px; color: #a99a7c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pmz-acc-chev { color: #c9a66b; font-size: 13px; }
+.pmz-acc-body { padding: 0 12px 8px; border-top: 1px solid #33291d; }
+.pmz-acc-body .pmz-setting-row { min-height: 44px; padding: 4px 0; border-bottom: 1px solid #2a241c; color: #cfc3a8; }
+.pmz-acc-body .pmz-sub-title { margin-top: 12px; margin-bottom: 6px; }
+.pmz-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border-radius: 12px;
+  background: #14100c;
+  border: 1px solid #4a3f2f;
+  cursor: pointer;
+}
+.pmz-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #7a6f5a;
+  transition: left 0.15s;
+}
+.pmz-switch-on { background: #6b5324; border-color: #c9a66b; }
+.pmz-switch-on .pmz-switch-knob { left: 22px; background: #ffe8b8; }
+.pmz-info {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #4a3f2f;
+  border-radius: 50%;
+  font-size: 11px;
+  color: #a99a7c;
+  cursor: help;
+}
+/* ⓘ 是 span,會吃到上面「> span { flex: 1 }」被拉成長條:固定大小、緊貼標籤,由它把右側控制項推到最右 */
+.pmz-setting-row > .pmz-info { flex: 0 0 18px; margin-right: auto; }
+.pmz-setting-row > span:has(+ .pmz-info) { flex: 0 1 auto; }
+.pmz-granted { font-size: 12px; color: #8fae7a; }
+.pmz-trans-card { margin: 8px 0; padding: 8px 10px; background: #1a1612; border: 1px solid #33291d; border-radius: 4px; font-size: 12px; line-height: 1.7; color: #a99a7c; white-space: pre-wrap; }
+.pmz-trans-ok { color: #8fae7a; }
+.pmz-trans-bad { color: #c96b6b; }
 /* 全新安裝還沒選語言時,每個分頁頂端的選擇列 */
 .pmz-lang-choose {
   margin-bottom: 10px;

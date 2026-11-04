@@ -11,12 +11,12 @@ Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)�
 - **PoB 匯入**:貼一份 PoB code,自動照部位建資料夾(武器/防具/飾品/珠寶/藥水),每件裝備一個交易搜尋 —— 傳奇用「傳奇名 + 基底」、稀有用「基底 + 全部詞綴」,等於把 poe.ninja 上看到的流派整套存成書籤
 - **歷史**:開過的搜尋自動記在「歷史」分頁(**只記搜尋框有填東西的**,同一個搜尋重複進去只更新時間,上限 20 筆),可一鍵加進任一資料夾
 - **物價**:側邊欄「物價」分頁快查 poe.ninja 經濟 API,分類抽屜呈現、中英即打即搜、15 分鐘快取(**選用功能**,需自行開啟,見下)
-- **pobb.in 中文化**(選用,預設關):popup 一顆開關,同意 pobb.in 權限後以 `chrome.scripting.registerContentScripts` 動態註冊 `content/site-zh.js`,
+- **pobb.in 中文化**(選用,預設關):側邊欄 ⚙「中文化與網站」一顆開關,同意 pobb.in 權限後以 `chrome.scripting.registerContentScripts` 動態註冊 `content/site-zh.js`,
   逐行查表替換頁面文字(物品、詞綴、天賦、技能、網站介面字);聯盟名不翻。名稱表只放遠端 dict 分支(`sitenames1/2.json`),
   打開該代的頁面才下載;關掉中文化不收回權限
 - **poe.ninja 雙語**(選用,跟著「詞綴雙語顯示」):poe.ninja 已有內建繁中(`/zh-tw/…`),擴充不再翻譯頁面,
   只在**角色頁**附另一種語言的小字 —— 英文頁附中文(正查)、繁中頁附英文(反查),兩邊都**不改頁面文字**。
-  中英對照用同一份成對字典雙向查;同一個中文對到多個英文時不附。poe.ninja 權限與物價查詢共用,popup 有一顆授權鈕
+  中英對照用同一份成對字典雙向查;同一個中文對到多個英文時不附。poe.ninja 權限與物價查詢共用,在側邊欄 ⚙「中文化與網站」可直接允許存取
 - **偽屬性高亮**:結果列的「合計」詞綴(`.item-mod--pseudo`)加底色與左側金線,和一般詞綴分得開,可在設定關掉
 - **廣義搜尋**(`page/stat-search.js`):在官網原生結果**後面**補兩層比對,原生命中的
   順序完全不變 —— **多關鍵字**(輸入含空白時 token AND,中英可混搜,如「phy gem」
@@ -31,22 +31,23 @@ Path of Exile 國際服交易站中文化擴充,**PoE1(`pathofexile.com/trade`)�
     自己從 items 組選項):建置時展開成靜態選項,顯示「中文 (English)」、**送出值仍是英文名**
     (官網過濾只吃英文)。⚠ 展開後的篩選資料會寫進官網網域 localStorage(約 +311 KB),
     該網域 5 MB 額度所剩不多,新增展開欄位前先量
-  - 搜尋結果列詞綴:直接替換為中文,英文原文放 hover title 供查對;popup 可開啟
-    「詞綴雙語顯示」改為中文下方常駐英文原文小字(僅裝備詞綴,物品名/天賦卡不受影響)
-- **popup**:PoE 暗金風單頁,只留最常用的 —— 目前語系 + 繁體中文化 / 還原回英文 /
-  詞綴雙語顯示 / **側邊欄開關** / 清除快取。書籤匯出匯入與物價聯盟都在側邊欄的 ⚙ 裡;
-  poe.ninja 的授權按鈕平常隱藏,只有 `popup.html?ask=ninja` 那一頁才露出
-  (`chrome.permissions.request` 只能從擴充頁面呼叫,所以按鈕得留在這裡)
+  - 搜尋結果列詞綴:直接替換為中文,英文原文放 hover title 供查對;設定的「雙語對照」
+    開啟後改為中文下方常駐英文原文小字(僅裝備詞綴,物品名/天賦卡不受影響)
+- **設定只在側邊欄 ⚙**(329.5.23 起):點瀏覽器工具列的擴充圖示 = 切到(或開啟)交易站分頁並展開設定
+  (`bg/open-settings.js`,manifest 沒有 `default_popup`)。設定分六區摺疊(中文化與網站 / 側邊欄 / 結果列與篩選 /
+  聯盟與物價 / 翻譯資料 / 備份、匯入與進階),收起時只露一行狀態摘要,一次展開一區。
+  `popup/popup.html` 只剩擴充頁用途:全新安裝選語言(`?ask=lang`)與 poe.ninja / pobb.in 授權退路
+  (`?ask=ninja` / `?ask=pobbin`;`chrome.permissions.request` 要在擴充頁面點擊當下呼叫,Firefox 不能從背景直接要)
 
 ### 物價是選用功能
 
 物價要讀 `poe.ninja` 的公開匯率,而**新增 `host_permissions` 會讓 Chrome 在擴充更新後
 停用它、等使用者手動重新授權** —— 不能為了一個附加功能打斷所有現有使用者。所以
 poe.ninja 放在 `optional_host_permissions`,安裝或更新後會自動開一次授權頁詢問
-(只問一次,`ninjaAsked` 記在 storage),之後可在 popup 或側邊欄 ⚙ 的「物價查詢」開關
-自行開關。⚠ `chrome.permissions.request` **只能從擴充頁面呼叫**(需要使用者手勢),
-content script 沒有這個 API,所以側邊欄的開關是請 background 開授權頁,收回權限則由
-background 直接做。未授權時物價分頁只顯示指引,不會發出任何請求。
+(只問一次,`ninjaAsked` 記在 storage),之後可在側邊欄 ⚙「聯盟與物價」的「物價查詢」開關
+自行開關。content script 沒有 `chrome.permissions`,所以側邊欄的開關是請背景代要(`bg/perms.js`:
+Chrome 在點擊當下直接跳對話框,Firefox 退回開授權頁),收回權限則由背景直接做。
+未授權時物價分頁只顯示指引,不會發出任何請求。
 
 ### 資料夾圖示
 
@@ -141,7 +142,7 @@ content/  (isolated world)
 page/  (MAIN world)
   ui-strings.js          document_start:全域 __ UI 字典(純中文直接替換/純英)
   stat-search.js         下拉多關鍵字 + 模糊比對
-popup/                   語言切換、側邊欄開關、清除快取、物價授權(?ask=ninja)
+popup/                   擴充頁:全新安裝選語言(?ask=lang)、poe.ninja / pobb.in 授權退路(?ask=ninja / ?ask=pobbin)
 data/                    內建字典(見下)+ icons.json 書籤圖示
 tools/                   開發用:gen-ggpk-data(ggpk 離線層)、verify-*(驗證腳本)
 icons/                   16/32/48/128

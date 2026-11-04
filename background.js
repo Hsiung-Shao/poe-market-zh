@@ -5,6 +5,8 @@ import { buildTranslation, chineseDataAllowed, handleTranslationMessage, purgeCh
 import { handleNinjaMessage } from './bg/ninja.js';
 import { handleSitesMessage, syncSiteScripts } from './bg/sites.js';
 import { handleTiersMessage } from './bg/tiers.js';
+import { handlePermissionMessage } from './bg/perms.js';
+import { openTradeSettings } from './bg/open-settings.js';
 
 // 要建哪幾款遊戲的資料:**依使用者實際開過的交易站決定**(使用者 2026-08-26 裁定)。
 // content/bootstrap.js 每次在 /trade/ 或 /trade2/ 上跑起來就記一筆 gamesSeen[game]。
@@ -83,42 +85,12 @@ function openExtensionPage(url) {
   chrome.tabs.create({ url: chrome.runtime.getURL(url) }).catch(() => { /* 開不起來:使用者仍可從 popup 選 */ });
 }
 
-function handlePermissionMessage(msg) {
-  if (msg.t === 'perm:ninja') {
-    return chrome.permissions
-      .contains({ origins: [NINJA_ORIGIN] })
-      .then((granted) => ({ ok: true, granted }))
-      .catch(() => ({ ok: true, granted: false }));
-  }
-  // 直接跳 Chrome 的權限對話框(使用者 2026-09-08 要求「點了就出現允許/拒絕」):
-  // content script 本身不能呼叫 permissions.request,但它在**點擊當下**送來的
-  // runtime.sendMessage 會把使用者手勢帶進這個 onMessage 處理器,所以這裡可以直接要。
-  // ⚠ 側邊欄那端的 sendMessage 必須是點擊處理器裡的第一個非同步動作(前面不能 await),
-  //   否則手勢就過期了。手勢真的沒帶到(拋「must be called during a user gesture」)才退回
-  //   舊做法:把 popup 開成分頁讓使用者在那裡按。
-  // ⚠ Firefox 不把 onMessage 當使用者輸入處理器,request 在這裡**一定**被拒
-  //   (「may only be called from a user input handler」),所以 Firefox 永遠走下面的
-  //   .catch 開授權頁 —— 這是預期行為,不是 bug,不要為了 Firefox 把 request 拿掉。
-  if (msg.t === 'perm:ninja-ask') {
-    return chrome.permissions
-      .request({ origins: [NINJA_ORIGIN] })
-      .then((granted) => ({ ok: true, granted, direct: true }))
-      .catch(() =>
-        chrome.tabs
-          .create({ url: chrome.runtime.getURL(NINJA_ASK_URL) })
-          .then(() => ({ ok: true, direct: false }))
-          .catch((err) => ({ ok: false, error: String(err?.message ?? err) }))
-      );
-  }
-  // 收回權限不需要使用者手勢,背景直接做得到
-  if (msg.t === 'perm:ninja-remove') {
-    return chrome.permissions
-      .remove({ origins: [NINJA_ORIGIN] })
-      .then((removed) => ({ ok: true, granted: !removed }))
-      .catch((err) => ({ ok: false, error: String(err?.message ?? err) }));
-  }
-  return null;
-}
+// 權限的查詢 / 要求 / 收回在 bg/perms.js(poe.ninja 與 pobb.in 共用同一套,含 Firefox 退路)
+
+// 點工具列的擴充圖示 = 打開交易站側邊欄的 ⚙ 設定(manifest 沒有 default_popup 才會觸發;bg/open-settings.js)
+chrome.action?.onClicked?.addListener(() => {
+  openTradeSettings().catch((err) => console.warn('[PTM] 開啟交易站設定失敗:', err));
+});
 
 // 安裝或更新後主動問一次物價權限(只問一次,問過就不再打擾)。
 // 沒有 tabs 權限也不會壞:失敗就靜靜跳過,使用者仍可從 popup 自己開。
@@ -140,11 +112,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       ? handleNinjaMessage(msg)
       : msg.t.startsWith('perm:')
         ? handlePermissionMessage(msg)
-        : msg.t.startsWith('sites:')
-          ? handleSitesMessage(msg)
-          : msg.t.startsWith('tiers:')
-            ? handleTiersMessage(msg)
-            : null;
+        : msg.t === 'ui:open-settings'
+          ? openTradeSettings().then(() => ({ ok: true }))
+          : msg.t.startsWith('sites:')
+            ? handleSitesMessage(msg)
+            : msg.t.startsWith('tiers:')
+              ? handleTiersMessage(msg)
+              : null;
   if (!route) return false;
   route
     .then(sendResponse)
