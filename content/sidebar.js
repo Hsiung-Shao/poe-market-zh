@@ -120,6 +120,8 @@
     // (2026-08-16 使用者截圖回報:切一次中文化,下半部整組重複)。
     language: 'zh_tw',
     bilingualMods: false,
+    biSize: null, // 雙語小字字級(storage bilingualFontSize;shared/bi-style.js 驗證)
+    biColor: null, // pobb.in / poe.ninja 雙語小字顏色(storage bilingualColor)
     siteZh: false, // pobb.in 中文化(storage siteZh;2026-11-04 起開關只在這裡,不在 popup)
     pobbPerm: null, // pobb.in 選用權限:null = 還沒查
     transStatus: null, // translation:status 的回應(翻譯資料區展開時才抓)
@@ -3012,6 +3014,54 @@
     return row;
   }
 
+  // 雙語小字的外觀(2026-11-04 使用者要求):字級交易市集與 pobb.in / poe.ninja 共用,顏色只管 pobb.in / poe.ninja。
+  // ⚠ 兩列都不呼叫 render():拖動中 / 色盤開著時整頁重畫會打斷操作。拖動只更新數字與本頁預覽,放開才寫 storage
+  function renderBilingualStyle(box) {
+    const BI = globalThis.PMZ_BISTYLE;
+    const sizeRow = el('div', 'pmz-setting-row');
+    sizeRow.dataset.pmzSetting = 'bilingualFontSize';
+    sizeRow.appendChild(el('span', null, tr('sb.set.biSize')));
+    infoMark(sizeRow, tr('sb.set.biSize.info'));
+    const range = el('input', 'pmz-range');
+    range.type = 'range';
+    range.min = String(BI.MIN);
+    range.max = String(BI.MAX);
+    range.step = '1';
+    range.value = String(BI.normSize(state.biSize));
+    range.setAttribute('aria-label', tr('sb.set.biSize'));
+    const sizeVal = el('span', 'pmz-range-val', `${range.value}px`);
+    range.addEventListener('input', () => {
+      sizeVal.textContent = `${range.value}px`;
+      document.documentElement.style.setProperty('--pmz-orig-size', `${BI.normSize(Number(range.value))}px`);
+    });
+    range.addEventListener('change', () => {
+      state.biSize = BI.normSize(Number(range.value));
+      chrome.storage.local.set({ bilingualFontSize: state.biSize });
+    });
+    sizeRow.append(range, sizeVal);
+    box.appendChild(sizeRow);
+
+    const colorRow = el('div', 'pmz-setting-row');
+    colorRow.dataset.pmzSetting = 'bilingualColor';
+    colorRow.appendChild(el('span', null, tr('sb.set.biColor')));
+    infoMark(colorRow, tr('sb.set.biColor.info'));
+    const pick = el('input', 'pmz-color');
+    pick.type = 'color';
+    pick.value = BI.normColor(state.biColor);
+    pick.setAttribute('aria-label', tr('sb.set.biColor'));
+    const saveColor = (v) => {
+      state.biColor = BI.normColor(v);
+      pick.value = state.biColor;
+      chrome.storage.local.set({ bilingualColor: state.biColor });
+    };
+    pick.addEventListener('change', () => saveColor(pick.value));
+    const reset = el('button', 'pmz-act', tr('sb.set.biColor.reset'));
+    reset.type = 'button';
+    reset.addEventListener('click', () => saveColor(BI.DEFAULT_COLOR));
+    colorRow.append(pick, reset);
+    box.appendChild(colorRow);
+  }
+
   // settings 裡的布林鍵:state.settings 已與 DEFAULT_SETTINGS 合併,必有值;
   // 寫回同一個鍵、同樣 persist,after 是即時生效的副作用(可省)。
   // 每一列掛 data-pmz-setting="<鍵>":功能導覽(content/tour.js)據此框「在設定調整」的那幾列,不靠文字 / 順序
@@ -3199,6 +3249,7 @@
           chrome.storage.local.set({ bilingualMods: on });
           render();
         }, tr('sb.set.bilingual.info'));
+        renderBilingualStyle(box);
       }
       if (zhUi) {
         switchRow(box, tr('sb.set.pobbin'), state.siteZh === true && state.pobbPerm === true, async (on) => {
@@ -3580,7 +3631,7 @@
 
   // ── 啟動 ──
   async function init() {
-    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, uiLang, siteZh, openSettingsReq, [UI_KEY]: savedUi } =
+    const { bookmarkData, settings, searchHistory, sidebarEnabled, language, bilingualMods, uiLang, siteZh, openSettingsReq, bilingualColor, bilingualFontSize, [UI_KEY]: savedUi } =
       await chrome.storage.local.get([
         'bookmarkData',
         'settings',
@@ -3590,12 +3641,16 @@
         'bilingualMods',
         'uiLang',
         'siteZh',
+        'bilingualColor',
+        'bilingualFontSize',
         'openSettingsReq',
         UI_KEY,
       ]);
     // 點工具列圖示時背景開回「上一次的交易站」(台服 / PoE2 使用者開回自己那一站;bg/open-settings.js)
     chrome.storage.local.set({ lastTradeUrl: `${location.origin}/${IS_POE2 ? 'trade2' : 'trade'}/search` }).catch(() => {});
     state.siteZh = siteZh === true;
+    state.biColor = bilingualColor ?? null;
+    state.biSize = bilingualFontSize ?? null;
     if (savedUi && 'settingsOpen' in savedUi) {
       state.settingsOpen = SETTINGS_SECTIONS.includes(savedUi.settingsOpen) ? savedUi.settingsOpen : null;
     }
@@ -3713,6 +3768,8 @@
       if (area !== 'local') return;
       // 語系與雙語顯示是與 popup 共用的鍵:popup 那邊改了,這裡的 state 要跟著更新。
       // ⚠ 先更新 state 再 render —— 按鈕狀態一律從 state 畫(見 renderSettings 的註解)。
+      if (changes.bilingualColor) state.biColor = changes.bilingualColor.newValue ?? null;
+      if (changes.bilingualFontSize) state.biSize = changes.bilingualFontSize.newValue ?? null;
       if (changes.language || changes.bilingualMods || changes.siteZh) {
         if (changes.language) state.language = changes.language.newValue ?? 'zh_tw';
         if (changes.bilingualMods) state.bilingualMods = changes.bilingualMods.newValue === true;

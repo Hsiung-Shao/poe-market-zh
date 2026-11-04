@@ -643,6 +643,10 @@ img.pmz-price-icon { width: 26px; height: 26px; object-fit: contain; flex-shrink
 /* ⓘ 是 span,會吃到上面「> span { flex: 1 }」被拉成長條:固定大小、緊貼標籤,由它把右側控制項推到最右 */
 .pmz-setting-row > .pmz-info { flex: 0 0 18px; margin-right: auto; }
 .pmz-setting-row > span:has(+ .pmz-info) { flex: 0 1 auto; }
+/* 雙語小字字級滑桿與顏色(值的 span 不吃上面的 flex:1) */
+.pmz-range { width: 110px; accent-color: #c9a66b; cursor: pointer; }
+.pmz-setting-row > .pmz-range-val { flex: 0 0 36px; text-align: right; font-size: 12px; color: #cfc3a8; }
+.pmz-color { width: 36px; height: 24px; padding: 0; border: 1px solid #4a3f2f; border-radius: 4px; background: none; cursor: pointer; }
 .pmz-granted { font-size: 12px; color: #8fae7a; }
 .pmz-trans-card { margin: 8px 0; padding: 8px 10px; background: #1a1612; border: 1px solid #33291d; border-radius: 4px; font-size: 12px; line-height: 1.7; color: #a99a7c; white-space: pre-wrap; }
 .pmz-trans-ok { color: #8fae7a; }

@@ -447,7 +447,7 @@
         const line = span.parentElement ?? span;
         const orig = document.createElement('div');
         orig.className = 'ptm-orig';
-        orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;';
+        orig.style.cssText = 'font-size:var(--pmz-orig-size,11px);color:#7a6f5a;line-height:1.3;';
         orig.textContent = text;
         line.appendChild(orig);
       } else {
@@ -503,7 +503,7 @@
         // 雙語模式:中文下方常駐英文原文小字(lite 版不掛 css,樣式 inline)
         const orig = document.createElement('div');
         orig.className = 'ptm-orig';
-        orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;';
+        orig.style.cssText = 'font-size:var(--pmz-orig-size,11px);color:#7a6f5a;line-height:1.3;';
         orig.textContent = text;
         el.appendChild(orig);
       } else {
@@ -605,7 +605,7 @@
     if (state.bilingualMods) {
       const orig = document.createElement('div');
       orig.className = 'ptm-orig';
-      orig.style.cssText = 'font-size:11px;color:#7a6f5a;line-height:1.3;white-space:pre-line;';
+      orig.style.cssText = 'font-size:var(--pmz-orig-size,11px);color:#7a6f5a;line-height:1.3;white-space:pre-line;';
       orig.textContent = original;
       div.appendChild(orig);
     } else {
@@ -875,15 +875,27 @@
       K.uniqueMap,
       K.updated, // 只用來判斷「這一款到底建置過沒有」
       'bilingualMods',
+      'bilingualFontSize',
     ]);
     state.itemMap = got[K.itemMap] ?? null; // 內建字典即可提供
     state.uniqueMap = got[K.uniqueMap] ?? null;
     state.bilingualMods = got.bilingualMods === true;
+    applyOrigSize(got.bilingualFontSize);
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.bilingualFontSize) applyOrigSize(changes.bilingualFontSize.newValue);
+    });
     // 無資料就不掛 observer(建置過就會有 updated,詞綴表稍後才載得進來)
     if (!got[K.updated] && !state.itemMap) return;
     dbg(`[PTM/${TAG}] 結果列:物品表 ${Object.keys(state.itemMap ?? {}).length} 條、` +
       `傳奇名表 ${Object.keys(state.uniqueMap ?? {}).length} 條、` +
       `雙語顯示 ${state.bilingualMods ? '開' : '關'};詞綴表待閒置時載入`);
+    // 雙語英文小字的字級(使用者設定,與網站中文化共用;shared/bi-style.js):
+    // 各列 inline 寫 var(--pmz-orig-size),變數設在 <html> 上 → 改設定時已顯示的列即時跟著變
+    // ⚠ 共用檔沒載到時退回預設 11px,不能讓這裡丟例外把整支結果列翻譯拖垮
+    function applyOrigSize(v) {
+      const px = globalThis.PMZ_BISTYLE?.normSize(v) ?? 11;
+      document.documentElement.style.setProperty('--pmz-orig-size', `${px}px`);
+    }
     // 手動診斷:在 console 打 __ptmResults() 看目前這批結果的命中狀況
     // 打包版 dbg 為 no-op,但在 console 直接呼叫仍看得到回傳值
     window.__ptmResults = () => { dbg('[PTM] 結果列診斷', stat); return stat; };

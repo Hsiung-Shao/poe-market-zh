@@ -810,18 +810,30 @@
   // ── 雙語顯示(2026-10-08):遊戲內容在中文下方附一行英文原文,樣式與交易站結果列的詞綴雙語相同 ──
   // ⚠ 不新增節點(ninja 是 React、pobb.in 是 SolidJS,塞進去的節點會被框架重繪打掉或打亂):
   //   英文寫在該行元素的 data-pmz-orig,由注入 <head> 的一段樣式以 ::after 顯示。
-  //   字級照 content/results.js 的 ptm-orig(11px、line-height 1.3);顏色見 ORIG_COLOR。
+  //   字級與顏色是使用者設定(2026-11-04,shared/bi-style.js):字級與交易市集的 ptm-orig 共用,
+  //   顏色只管 pobb.in / poe.ninja(預設亮綠:兩站底色深,交易站的灰褐色太暗;10-08 決策)。
   const ORIG_STYLE_ID = 'pmz-site-zh-style';
-  // 顏色:pobb.in 底色較深,交易站的灰褐色太暗 → 用亮綠(使用者 2026-10-08;交易市集維持灰褐)
-  const ORIG_COLOR = '#6ee7a8';
-  const ORIG_CSS = '[data-pmz-orig]::after{content:attr(data-pmz-orig);display:block;font-size:11px;'
-    + `color:${ORIG_COLOR};line-height:1.3;white-space:pre-line;font-weight:normal;font-style:normal;text-transform:none;letter-spacing:normal}`;
+  // ⚠ 舊版留下的動態註冊可能還沒帶 shared/bi-style.js(bg/sites.js 下次對齊才更新清單):沒有就用預設值
+  const BI = globalThis.PMZ_BISTYLE ?? { normColor: () => '#6ee7a8', normSize: () => 11 };
+  let origColor = BI.normColor();
+  let origSize = BI.normSize();
+  const origCss = (color, size) => `[data-pmz-orig]::after{content:attr(data-pmz-orig);display:block;font-size:${size}px;`
+    + `color:${color};line-height:1.3;white-space:pre-line;font-weight:normal;font-style:normal;text-transform:none;letter-spacing:normal}`;
   function ensureOrigStyle() {
-    if (document.getElementById(ORIG_STYLE_ID)) return;
-    const st = document.createElement('style');
-    st.id = ORIG_STYLE_ID;
-    st.textContent = ORIG_CSS;
-    (document.head ?? document.documentElement).appendChild(st);
+    let st = document.getElementById(ORIG_STYLE_ID);
+    if (!st) {
+      st = document.createElement('style');
+      st.id = ORIG_STYLE_ID;
+      (document.head ?? document.documentElement).appendChild(st);
+    }
+    const css = origCss(origColor, origSize);
+    if (st.textContent !== css) st.textContent = css;
+  }
+  // 設定變了:只改已注入的樣式(還沒注入就等第一次附字時再注入),不必重翻頁面
+  function setOrigStyle(color, size) {
+    origColor = BI.normColor(color);
+    origSize = BI.normSize(size);
+    if (document.getElementById(ORIG_STYLE_ID)) ensureOrigStyle();
   }
   // ::after 掛在 flex / grid 容器上會變成並排的一格:往下找唯一的子元素,找不到就不掛(退回 title)
   function origHost(el) {
@@ -1294,7 +1306,9 @@
     return on && ui === 'zh' && (language ?? 'zh_tw') === 'zh_tw';
   }
   const readBilingual = async () => {
-    bilingual = (await chrome.storage.local.get('bilingualMods')).bilingualMods === true;
+    const got = await chrome.storage.local.get(['bilingualMods', 'bilingualColor', 'bilingualFontSize']);
+    bilingual = got.bilingualMods === true;
+    setOrigStyle(got.bilingualColor, got.bilingualFontSize);
   };
   const apply = () => readBilingual().then(shouldRun).then((on) => (on ? start() : stop()))
     .catch((err) => console.warn('[PMZ] 網站中文化初始化失敗:', err));
@@ -1302,6 +1316,10 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.siteZh || changes.language || changes.uiLang) { apply(); return; }
+    if (changes.bilingualColor || changes.bilingualFontSize) {
+      setOrigStyle(changes.bilingualColor ? changes.bilingualColor.newValue : origColor,
+        changes.bilingualFontSize ? changes.bilingualFontSize.newValue : origSize);
+    }
     // 雙語顯示切換(popup / 交易站側邊欄):不重載字典,整頁還原後重翻一次 —— 不必重新整理
     if (changes.bilingualMods) {
       bilingual = changes.bilingualMods.newValue === true;

@@ -15,6 +15,7 @@ let granted = new Set();
 let registered = new Map();
 let unregisterCalls = [];
 let registerCalls = [];
+let updateCalls = [];
 
 function reset({ storage: s = {}, granted: g = [], registered: r = [] } = {}) {
   storage = { ...s };
@@ -22,6 +23,7 @@ function reset({ storage: s = {}, granted: g = [], registered: r = [] } = {}) {
   registered = new Map(r.map((id) => [id, { id, matches: [], js: ['content/site-zh.js'] }]));
   unregisterCalls = [];
   registerCalls = [];
+  updateCalls = [];
 }
 
 const noopEvent = { addListener() {}, removeListener() {}, hasListener: () => false };
@@ -59,6 +61,10 @@ function installChromeMock() {
       async registerContentScripts(scripts) {
         registerCalls.push(scripts.map((s) => ({ ...s })));
         for (const s of scripts) registered.set(s.id, s);
+      },
+      async updateContentScripts(scripts) {
+        updateCalls.push(scripts.map((s) => ({ ...s })));
+        for (const s of scripts) if (registered.has(s.id)) registered.set(s.id, { ...registered.get(s.id), ...s });
       },
     },
     runtime: {
@@ -113,7 +119,7 @@ test('T2 首次只註冊 pobb.in,不註冊 ninja', async () => {
   assert.deepEqual([...registered.keys()], [POBB_ID]);
   const s = registered.get(POBB_ID);
   assert.deepEqual(s.matches, [POBB_ORIGIN]);
-  assert.deepEqual(s.js, ['content/site-zh.js']);
+  assert.deepEqual(s.js, ['shared/bi-style.js', 'content/site-zh.js']); // 2026-11-04 起先載雙語外觀共用檔
   assert.deepEqual(res.active, ['pobbin']);
 });
 
@@ -160,7 +166,7 @@ test('S1 雙語開且有 ninja 權限才註冊 ninja,不連帶註冊 pobb.in', a
   const s = registered.get(NINJA_ID);
   assert.ok(s);
   assert.deepEqual(s.matches, [NINJA_ORIGIN]);
-  assert.deepEqual(s.js, ['content/site-zh.js']);
+  assert.deepEqual(s.js, ['shared/bi-style.js', 'content/site-zh.js']); // 2026-11-04 起先載雙語外觀共用檔
   // siteZh 沒開卻註冊 pobb.in,代表兩站條件綁在一起
   assert.ok(!registered.has(POBB_ID));
 });
@@ -209,4 +215,39 @@ test('S6 兩個開關都開且都有權限時兩個腳本都註冊', async () =>
   await syncSiteScripts();
   // 後註冊的覆蓋或漏掉任一個,都會讓一個站台沒有功能
   assert.deepEqual([...registered.keys()].sort(), [NINJA_ID, POBB_ID].sort());
+});
+
+const NEW_JS = ['shared/bi-style.js', 'content/site-zh.js'];
+const updateArgs = () => updateCalls.flat();
+
+test('S7 舊版註冊的 js 清單會被更新', async () => {
+  reset({ storage: { siteZh: true, ...ZH_LANG }, granted: [POBB_ORIGIN], registered: [POBB_ID] });
+  await syncSiteScripts();
+  // 沒呼叫 update(或呼叫多次),舊版使用者升級後拿不到共用樣式檔
+  assert.equal(updateCalls.length, 1);
+  const args = updateArgs();
+  assert.equal(args.length, 1);
+  // 更新到錯的 id 會改到別站的腳本
+  assert.equal(args[0].id, POBB_ID);
+  // 清單內容或順序不對(共用檔必須在前)會讓 site-zh.js 找不到 PMZ_BISTYLE
+  assert.deepEqual(args[0].js, NEW_JS);
+  // 用 unregister 重註冊代替 update,會讓腳本短暫消失且多餘動作
+  assert.ok(!unregisteredIds().includes(POBB_ID));
+});
+
+test('S7b 清單相同不更新', async () => {
+  reset({ storage: { siteZh: true, ...ZH_LANG }, granted: [POBB_ORIGIN], registered: [POBB_ID] });
+  registered.get(POBB_ID).js = [...NEW_JS];
+  await syncSiteScripts();
+  // 清單已相同仍呼叫 update,代表每次對齊都做多餘的 API 呼叫(非冪等)
+  assert.deepEqual(updateCalls, []);
+});
+
+test('S7c 新註冊帶新清單', async () => {
+  reset({ storage: { siteZh: true, ...ZH_LANG }, granted: [POBB_ORIGIN], registered: [] });
+  await syncSiteScripts();
+  // 新註冊仍只帶舊清單,新裝使用者會缺共用樣式檔
+  const reg = registerCalls.flat().find((x) => x.id === POBB_ID);
+  assert.ok(reg);
+  assert.deepEqual(reg.js, NEW_JS);
 });
