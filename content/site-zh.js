@@ -759,7 +759,16 @@
     return { other: out.join(sep), game: true };
   }
 
-  globalThis.__pmzSiteZhCore = { detectGame, ninjaLang, buildSiteDict, translateText, translateDetail, buildReverseDict, reverseDetail, otherLangOf, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
+  // 元素底下的文字,<br> 當換行(textContent 會把 <br> 分開的兩行黏在一起,otherLangOf 就拆不了)
+  function textWithBreaks(node) {
+    if (node.nodeType === 3) return node.data;
+    if (node.nodeName === 'BR') return '\n';
+    let out = '';
+    for (const c of node.childNodes ?? []) out += textWithBreaks(c);
+    return out;
+  }
+
+  globalThis.__pmzSiteZhCore = { detectGame, ninjaLang, buildSiteDict, translateText, translateDetail, buildReverseDict, reverseDetail, otherLangOf, textWithBreaks, isEquipName, renderStat, stripBilingual, SITE_UI, SITE_UI_MANUAL };
   // 離線測試載入時沒有 chrome / document:只匯出純函式
   if (typeof chrome === 'undefined' || !chrome.storage || !SITE || typeof document === 'undefined') return;
 
@@ -1120,7 +1129,7 @@
       const el = lineOf(n) ?? n.parentElement;
       if (!el || seen.has(el)) continue;
       seen.add(el);
-      const { other, game } = otherLangOf(el.textContent ?? '', lang, dict, R);
+      const { other, game } = otherLangOf(textWithBreaks(el), lang, dict, R);
       if (other && game) { attachOther(el, other); stat.lines++; continue; }
       // 框架換了這一行的內容、新內容查不到:舊的對照拿掉
       const host = origHost(el);
