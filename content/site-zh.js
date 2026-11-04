@@ -671,6 +671,13 @@
     }
     // ② 交易站 statMap(只有 #、照順序):只收 0~1 個數值的(兩個以上不知道對應順序,同正查 renderSingle)
     const fromTpl = new Set(stats.map.keys());
+    // 交易站的偽屬性(搜尋用的加總:`+# total maximum Life`、`+#% total to Cold Resistance`)與真詞綴
+    // (`+# to maximum Life`)中文相同,物品上只會有真詞綴 —— 同一中文裡有對應的真詞綴時,偽屬性不參與撞名,
+    // 否則最大生命 / 能量護盾 / 抗性這些常見詞綴整條附不上(2026-11-04 使用者回報)。
+    // 對應 = 拿掉 ` total` 與 ` to` 後相同;其他「一個中文兩個英文」照舊不附。
+    const canon = (en) => en.replace(/ total\b/i, '').replace(/ to\b/i, '');
+    const realCanon = new Map(); // 中文鍵 → 該中文底下不含 total 的英文(canon 後)
+    const entries = [];
     for (const [en0, zh0] of Object.entries(D.statMap ?? {})) {
       if (typeof zh0 !== 'string' || !CJK_RE.test(zh0)) continue;
       const zh = stripLocalZh(zh0);
@@ -678,7 +685,13 @@
       const en = en0.replace(/ \(Local\)$/, '');
       if (n > 1 || n !== hashCount(en)) continue;
       const key = normZh(zh);
-      if (!fromTpl.has(key)) stats.add(key, { en, order: n ? [0] : [] }, sameStat);
+      entries.push({ key, en, n });
+      if (!/\btotal\b/i.test(en)) (realCanon.get(key) ?? realCanon.set(key, new Set()).get(key)).add(canon(en));
+    }
+    for (const { key, en, n } of entries) {
+      if (fromTpl.has(key)) continue;
+      if (/\btotal\b/i.test(en) && realCanon.get(key)?.has(canon(en))) continue;
+      stats.add(key, { en, order: n ? [0] : [] }, sameStat);
     }
     return { D, uiZh, names: names.map, classes: classes.map, stats: stats.map };
   }
