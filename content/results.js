@@ -855,10 +855,14 @@
   }
   const run = (n) => { processContainer(n).catch((err) => console.warn('[PTM] 結果列處理失敗:', err)); };
 
-  // 官網在**已翻元素**的文字層改了字(沿用節點重繪)→ 回傳那個已翻元素;我們自己寫的字不算
+  // 官網在**已翻元素**的文字層改了字或換了子元素(沿用節點重繪)→ 回傳那個已翻元素。
+  // 我們自己寫的字、自己加的元素(雙語小字 / pmz- 尾巴)不算。
   const DONE_SEL = '[data-ptm-done], [data-ptm-passive]';
+  const OUR_EL = '.ptm-orig, [class*="pmz-"]';
   function redrawnHost(node) {
-    if (node.nodeType !== Node.TEXT_NODE || mine.get(node)?.wrote === node.data) return null;
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (mine.get(node)?.wrote === node.data) return null;
+    } else if (!(node instanceof HTMLElement) || node.matches(OUR_EL)) return null;
     const host = node.parentElement?.closest(DONE_SEL);
     if (!host) return null;
     return (host.matches(SELECTORS.mod) ? modTextEl(host) : host).contains(node) ? host : null;
@@ -896,7 +900,7 @@
       for (const m of mutations) {
         const nodes = m.type === 'characterData' ? [m.target] : m.addedNodes;
         for (const node of nodes) {
-          if (node instanceof HTMLElement) { schedule(node); continue; }
+          if (node instanceof HTMLElement) schedule(node);
           const host = redrawnHost(node);
           if (host) hosts.add(host);
         }

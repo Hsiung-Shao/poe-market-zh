@@ -492,3 +492,17 @@ for (const bilingual of [false, true]) {
     if (bilingual) for (const i of [0, 1]) assert.equal(ctx.mods[i].mod.querySelectorAll('.ptm-orig').length, 1);
   });
 }
+
+// 審查補充:官網換掉的是「元素」而不是文字節點(紀錄裡只有元素)時也要重翻
+test('T10 已翻詞綴的內層元素整個被換掉時也重翻', async () => {
+  const ctx = await setup();
+  const { lc, spans } = ctx.mods[0];
+  const old = spans[0];
+  const fresh = old.ownerDocument?.createElement?.('span') ?? new old.constructor('span');
+  fresh.textContent = '+44 to Intelligence';
+  lc.insertBefore(fresh, old);
+  lc.removeChild(old);
+  await ctx.feed([{ type: 'childList', target: lc, addedNodes: [fresh], removedNodes: [old] }]);
+  assert.equal(modText(ctx, 0), '+44 智慧');
+  assert.deepEqual([...new Set(titlesOf(ctx.mods[0].mod))], ['+44 to Intelligence']);
+});
