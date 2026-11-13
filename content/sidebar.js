@@ -94,6 +94,7 @@
     league: '', // PoE1 聯盟:物價與書籤共用;空字串 = 自動(poe.ninja 最新 / 目前頁面)
     league2: '', // PoE2 聯盟
     sidebarSide: 'right',
+    sidebarWidth: 420, // 面板寬度(px,拖內側邊緣調整;顯示時一律過 M.sidebarWidth)
     sidebarTop: 45, // 開關鈕垂直位置(vh 百分比,可拖曳調整)
     keepPanelOpen: true, // 常駐維持展開:換頁後照上次的開/關與分頁還原(狀態本身存在 sidebarUi)
     dragHintDismissed: false, // 書籤分頁頂部「怎麼拖曳」提示條按過「知道了」
@@ -438,21 +439,55 @@
     const left = state.settings.sidebarSide === 'left';
     rail.classList.toggle('pmz-left', left);
     panel.classList.toggle('pmz-left', left);
+    applyWidth();
+  }
+
+  // 面板寬度可拖曳調整(settings.sidebarWidth)。視窗窄時只縮顯示寬度,不改存的值。
+  const shownWidth = () => M.sidebarWidth(state.settings.sidebarWidth, window.innerWidth);
+  function applyWidth() {
+    panel.style.setProperty('--pmz-panel-w', `${shownWidth()}px`);
     applyPageSqueeze();
+  }
+
+  // 拖面板內側邊緣改寬度,雙擊還原。lostpointercapture 也算結束(被系統或別的視窗搶走時不會卡在拖曳中)。
+  function enableResize(handle) {
+    let drag = null;
+    const end = () => {
+      if (drag && state.settings.sidebarWidth !== drag.saved) persistSettings();
+      drag = null;
+    };
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); // 拖曳時不選到官網的字
+      drag = { startX: e.clientX, startW: shownWidth(), saved: state.settings.sidebarWidth };
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { /* 合成事件沒有可 capture 的 pointer:照樣能拖 */ }
+    });
+    handle.addEventListener('pointermove', (e) => {
+      const dx = drag ? e.clientX - drag.startX : 0;
+      if (!dx) return; // 沒移動不改存的值(視窗窄時存的值可能比顯示的寬)
+      state.settings.sidebarWidth = M.sidebarWidth(drag.startW + (state.settings.sidebarSide === 'left' ? dx : -dx), window.innerWidth);
+      applyWidth(); // 瀏覽器已把 pointermove 併成一幀一次,不必再節流
+    });
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(type, end);
+    handle.addEventListener('dblclick', () => {
+      state.settings.sidebarWidth = M.SIDEBAR_WIDTH.DEFAULT;
+      applyWidth();
+      persistSettings();
+    });
+    window.addEventListener('resize', applyWidth);
   }
 
   // 面板開啟時把官網內容縮窄讓開,而不是蓋在頁面上(PoE Trade Extension 的做法:
   // 對 `.container-fluid .content` 設 float + width,收合時把兩個 inline 屬性拿掉)。
   // 面板本身仍是 position:fixed,這裡只動官網那一格。
-  // ⚠ 464 = 面板 420 + 全高 rail 44,與 sidebar.css 的 .pmz-panel width / .pmz-open 偏移同步。
+  // ⚠ 讓開的寬度 = 面板顯示寬度 + 全高 rail 44(M.SIDEBAR_WIDTH.RAIL,與 sidebar.css 的 .pmz-open 偏移同步)。
   // 找不到 .content(官網改版或還沒渲染)就靜靜略過,不可拋 —— 側邊欄其他功能不該因此掛掉。
-  const PAGE_SQUEEZE_PX = 464;
   function applyPageSqueeze() {
     const content = document.querySelector('.container-fluid .content');
     if (!content) return;
     if (state.open) {
       content.style.float = state.settings.sidebarSide === 'left' ? 'right' : 'left';
-      content.style.width = `calc(100% - ${PAGE_SQUEEZE_PX}px)`;
+      content.style.width = `calc(100% - ${shownWidth() + M.SIDEBAR_WIDTH.RAIL}px)`;
     } else {
       content.style.removeProperty('float');
       content.style.removeProperty('width');
@@ -694,6 +729,10 @@
     }
     panel.appendChild(tabs);
     panel.appendChild(el('div', 'pmz-body'));
+    const resizer = el('div', 'pmz-resize');
+    resizer.dataset.pmzTitle = 'sb.resize.hint';
+    panel.appendChild(resizer);
+    enableResize(resizer);
     document.body.append(rail, panel);
     applySide();
     applyTop();
