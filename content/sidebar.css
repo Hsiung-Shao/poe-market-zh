@@ -72,11 +72,11 @@
 /* 面板:全高固定 */
 .pmz-panel {
   position: fixed;
-  right: -440px;
+  right: calc(-20px - var(--pmz-panel-w, 420px));
   top: 0;
   bottom: 0;
   z-index: 9998;
-  width: 420px;
+  width: var(--pmz-panel-w, 420px); /* sidebar.js applyWidth 寫入;可拖 .pmz-resize 調整 */
   display: flex;
   flex-direction: column;
   background: #14100c;
@@ -98,13 +98,17 @@
 }
 .pmz-panel.pmz-left {
   right: auto;
-  left: -440px;
+  left: calc(-20px - var(--pmz-panel-w, 420px));
   border-left: none;
   border-right: 1px solid #4a3f2f;
   transition: left 0.2s ease;
   box-shadow: 6px 0 24px rgba(0, 0, 0, 0.6);
 }
 .pmz-panel.pmz-left.pmz-open { left: 44px; right: auto; }
+/* 寬度把手:跨在面板內側邊框上的細條,大半在面板外(左側模式的內側就是捲軸,不能蓋住) */
+.pmz-resize { position: absolute; top: 0; bottom: 0; left: -4px; width: 6px; cursor: ew-resize; touch-action: none; }
+.pmz-panel.pmz-left .pmz-resize { left: auto; right: -4px; }
+.pmz-resize:hover, .pmz-resize:active { background: rgba(201, 166, 107, 0.6); }
 /* 換頁後還原「開啟」時不播滑入動畫(sidebar.js init);要排在兩條 transition 規則之後 */
 .pmz-panel.pmz-no-anim { transition: none; }
 
@@ -324,7 +328,7 @@
 .pmz-tip .pmz-act { flex: none; align-self: center; }
 
 /* 通用列 */
-/* 書籤列:兩行(上=名稱、下=操作鈕)。側邊欄只有 420px,名稱不該和按鈕搶寬度 */
+/* 書籤列:兩行(上=名稱、下=操作鈕)。側邊欄預設 420px,名稱不該和按鈕搶寬度 */
 .pmz-item {
   display: flex;
   flex-direction: column;

@@ -486,6 +486,14 @@
     return out;
   }
 
+  // 側邊欄面板寬度(px):存的值 → 實際顯示寬度。視窗窄時只縮顯示(官網至少留 SITE_MIN),不改存的值。
+  const SIDEBAR_WIDTH = { DEFAULT: 420, MIN: 360, MAX: 900, RAIL: 44, SITE_MIN: 480 };
+  function sidebarWidth(value, viewportW) {
+    const { DEFAULT, MIN, MAX, RAIL, SITE_MIN } = SIDEBAR_WIDTH;
+    const w = Number.isFinite(value) ? Math.round(value) : DEFAULT;
+    return Math.min(Math.max(w, MIN), Math.max(MIN, Math.min(MAX, viewportW - RAIL - SITE_MIN)));
+  }
+
   function sanitizeHistory(list, max) {
     const seen = new Set();
     const out = [];
@@ -988,6 +996,8 @@
     makeBackup,
     makeBookmarkExport,
     pickKnown,
+    SIDEBAR_WIDTH,
+    sidebarWidth,
     sanitizeHistory,
     buildIconIndex,
     mapExtensionIcon,
