@@ -356,11 +356,44 @@
 
   // 多行詞綴(如征服者壁壘)在字典中是以 \n 分隔的合併模板;
   // textContent 會把 <br> 兩側直接黏在一起,故依行重建
-  function modText(el) {
-    return textLines(el)
-      .map((nodes) => nodes.map((n) => n.textContent).join('').trim())
-      .join('\n')
-      .trim();
+  const linesText = (lines) =>
+    lines.map((nodes) => nodes.map((n) => n.textContent).join('').trim()).join('\n').trim();
+  const modText = (el) => linesText(textLines(el));
+
+  // ── 官網沿用節點重繪(2026-11-12 使用者回報:History 面板換選物品後「舊中文+新英文」黏成一行)──
+  // HistoryPanel 的物品卡沒有 key,換選物品時 Vue **沿用同一批節點**只改內容(官網實測 + 原始碼):
+  //   詞綴 → 對內層 <span> 重設 innerHTML(換掉文字節點);物品名 → 重設 textContent。
+  // 我們的譯文寫在 Vue fragment 的錨點(空文字節點)上,Vue 永遠不碰它 → 舊中文留著、新英文
+  // 接在後面,而 data-ptm-done 還在所以不會重翻。
+  // 作法:記下每個寫過的文字節點;已翻元素裡出現「不是我們寫的字」= 官網重繪過 → 撤回重翻。
+  const mine = new WeakMap(); // 文字節點 → { orig: 官網原文, wrote: 我們寫入的值 }
+  function writeText(node, value) {
+    mine.set(node, { orig: node.data, wrote: value });
+    if (node.data !== value) node.data = value;
+  }
+  // 元素底下官網的文字節點(雙語英文小字 .ptm-orig 是我們自己的,不算)
+  function hostTexts(el) {
+    const out = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n.parentNode.className !== 'ptm-orig') out.push(n);
+    }
+    return out;
+  }
+  // 把現有文字記成「看過了」(查無翻譯而保留英文的也要記,否則每次都被當成重繪)
+  const seal = (nodes) => nodes.forEach((n) => mine.has(n) || mine.set(n, { orig: n.data, wrote: n.data }));
+  const redrawn = (el) => hostTexts(el).some((n) => {
+    const rec = mine.get(n);
+    return rec ? n.data !== rec.wrote : n.data.trim() !== '';
+  });
+  // 撤回我們寫過的字:官網沒動到的節點還原成原文(它眼中那一行沒變),動過的已是新原文
+  function unwrite(el) {
+    el.querySelectorAll('.ptm-orig').forEach((n) => n.remove());
+    for (const n of hostTexts(el)) {
+      const rec = mine.get(n);
+      if (rec && n.data === rec.wrote) n.data = rec.orig;
+      mine.delete(n);
+    }
   }
 
   // 翻譯結果寫回:**非破壞性**逐行替換 —— 結果列由官網 Vue 渲染,
@@ -368,13 +401,13 @@
   // diff 中斷,整個結果區卡死(卡 Searching)。只改既有文字節點的內容、
   // 保留 <br> 與節點結構:每行第一個文字節點寫入整行譯文,同行其餘
   // 文字節點清空(節點保留)。
-  function setModText(el, zh) {
+  function setModText(el, zh, lines = textLines(el)) {
     const zhLines = zh.split('\n');
-    textLines(el).forEach((nodes, i) => {
+    lines.forEach((nodes, i) => {
       if (!nodes.length) return;
-      nodes[0].textContent = zhLines[i] ?? '';
+      writeText(nodes[0], zhLines[i] ?? '');
       // 同行其餘節點清空(節點保留,不增刪)—— 未清乾淨就會殘留英文接在譯文後面
-      for (let k = 1; k < nodes.length; k++) nodes[k].textContent = '';
+      for (let k = 1; k < nodes.length; k++) writeText(nodes[k], '');
     });
   }
 
@@ -456,18 +489,32 @@
     });
   }
 
+  // 已翻的 .item-mod 裡我們實際寫字的那一層(傭兵區塊是整塊)
+  const modTextEl = (mod) =>
+    (mod.matches?.(SELECTORS.mercenaryBlock) ? mod : mod.querySelector(SELECTORS.modText) ?? mod);
+
   function translateModElement(mod) {
-    if (mod.dataset.ptmDone) return;
+    const merc = mod.matches?.(SELECTORS.mercenaryBlock);
+    const el = modTextEl(mod);
+    if (mod.dataset.ptmDone) {
+      if (!redrawn(el)) return;
+      // 官網沿用這個節點換了內容:撤掉上一件物品的譯文與 hover 原文再重翻
+      unwrite(mod);
+      (merc ? mod.querySelectorAll('span[title]') : [el]).forEach((t) => t.removeAttribute('title'));
+      delete mod.dataset.ptmDone;
+    }
     // 傭兵區塊要在既有邏輯之前攔下:它同樣是 .item-mod,但整塊沒有 <br>,
     // 走既有路徑只會把整塊黏成一串然後算成「查無」
-    if (mod.matches?.(SELECTORS.mercenaryBlock)) {
+    if (merc) {
       translateMercenary(mod);
+      seal(hostTexts(mod));
       mod.dataset.ptmDone = '1';
       return;
     }
-    const el = mod.querySelector(SELECTORS.modText) ?? mod;
-    const text = modText(el);
+    const lines = textLines(el);
+    const text = linesText(lines);
     if (!text) return;
+    seal(lines.flat());
     stat.seen++;
     // 主要路徑:官方 stat id;失敗才退回英文全句比對
     let zh = lookupById(mod, text);
@@ -484,7 +531,7 @@
       if (stat.missSamples.length < 5) stat.missSamples.push(text.slice(0, 70));
     }
     if (zh) {
-      setModText(el, zh);
+      setModText(el, zh, lines);
       // 譯文寫回後若元素裡還殘留英文原文,代表官網把文字拆進了我們沒清到的
       // 結構(中英會黏成一行)。這是使用者回報過的症狀,留樣本供比對。
       // ⚠ 這個檢查會**再走一次 TreeWalker**,等於每條詞綴多付 1/3 的走訪成本。
@@ -581,11 +628,17 @@
   }
 
   function translatePassiveBlock(div) {
-    if (div.dataset.ptmPassive) return;
+    if (div.dataset.ptmPassive) {
+      if (!redrawn(div)) return;
+      unwrite(div); // 官網沿用節點換了內容(同 translateModElement)
+      div.removeAttribute('title');
+      delete div.dataset.ptmPassive;
+    }
     const nameEn = passiveBlockName(div);
     if (!nameEn) return;
     div.dataset.ptmPassive = '1';
     const lineNodes = textLines(div); // 第 0 行 = 天賦名(span 裡),其後每個 <br> 一行
+    seal(lineNodes.flat());
     const texts = lineNodes.map((nodes) => nodes.map((n) => n.textContent).join('').trim());
     const plan = planPassiveBlock(nameEn, texts.slice(1));
     if (!plan) return;
@@ -593,8 +646,8 @@
     // 與 setModText 同一原則:只改既有文字節點,不增刪(Vue 管的節點)
     const write = (nodes, zh) => {
       if (!nodes.length || zh == null) return;
-      nodes[0].textContent = zh;
-      for (let k = 1; k < nodes.length; k++) nodes[k].textContent = '';
+      writeText(nodes[0], zh);
+      for (let k = 1; k < nodes.length; k++) writeText(nodes[k], '');
     };
     write(lineNodes[0], plan.name);
     plan.lines.forEach((zh, i) => {
@@ -622,7 +675,10 @@
   }
 
   function translateNameElement(el) {
-    if (el.dataset.ptmDone) return;
+    if (el.dataset.ptmDone) {
+      if (!redrawn(el)) return;
+      el.removeAttribute('title'); // 官網換了字(History 面板換選物品):舊的 hover 原文作廢
+    }
     const text = el.textContent.trim();
     // 傳奇名優先查 uniqueMap;其餘(含傳奇卡第二行的基底名)走 itemMap
     const zh = (isUniqueNameLine(el) ? state.uniqueMap[text] : null) ?? state.itemMap[text];
@@ -633,6 +689,7 @@
       el.textContent = zh.endsWith(suffix) ? zh.slice(0, -suffix.length) : zh;
       el.title = text;
     }
+    seal(hostTexts(el));
     el.dataset.ptmDone = '1';
   }
 
@@ -735,19 +792,21 @@
       globalThis.__pmzResultLinks?.(root); // 結果列 poedb / wiki 快捷鈕(content/result-links.js)同理
       return;
     }
+    // root 自己也算:官網單獨補一條 .item-mod、或重繪後重翻某個已翻元素時,root 就是目標本身
+    const within = (sel) => [...(root.matches?.(sel) ? [root] : []), ...root.querySelectorAll(sel)];
     // 詞綴需要 statIdMap 或 statMap(皆為官方 API 產物,任一有就能翻);
     // 物品名/天賦卡只需內建字典,各自獨立降級
-    const mods = root.querySelectorAll(SELECTORS.mod);
+    const mods = within(SELECTORS.mod);
     if (mods.length) {
       await ensureStatTables();
       if (state.statIdMap || state.statMap) mods.forEach(translateModElement);
     }
     if (state.itemMap) {
-      root.querySelectorAll(SELECTORS.itemName).forEach(translateNameElement);
+      within(SELECTORS.itemName).forEach(translateNameElement);
     }
     // PoE2 天賦說明區:候選 div 很常見(沒有 class 的 div),先看有沒有 span+br 開頭的再載字典
     if (SELECTORS.passiveBlock) {
-      const blocks = [...root.querySelectorAll(SELECTORS.passiveBlock)]
+      const blocks = within(SELECTORS.passiveBlock)
         .filter((d) => d.firstElementChild?.tagName === 'SPAN' && d.firstElementChild.nextElementSibling?.tagName === 'BR');
       if (blocks.length) {
         await Promise.all([ensureStatTables(), loadTable('passiveMap', K.passiveMap, (v) => { state.passiveMap = v; })]);
@@ -791,8 +850,22 @@
         return true;
       });
       pending.clear();
-      roots.forEach((n) => { processContainer(n).catch((err) => console.warn('[PTM] 結果列處理失敗:', err)); });
+      roots.forEach(run);
     }, DEBOUNCE_MS);
+  }
+  const run = (n) => { processContainer(n).catch((err) => console.warn('[PTM] 結果列處理失敗:', err)); };
+
+  // 官網在**已翻元素**的文字層改了字或換了子元素(沿用節點重繪)→ 回傳那個已翻元素。
+  // 我們自己寫的字、自己加的元素(雙語小字 / pmz- 尾巴)不算。
+  const DONE_SEL = '[data-ptm-done], [data-ptm-passive]';
+  const OUR_EL = '.ptm-orig, [class*="pmz-"]';
+  function redrawnHost(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (mine.get(node)?.wrote === node.data) return null;
+    } else if (!(node instanceof HTMLElement) || node.matches(OUR_EL)) return null;
+    const host = node.parentElement?.closest(DONE_SEL);
+    if (!host) return null;
+    return (host.matches(SELECTORS.mod) ? modTextEl(host) : host).contains(node) ? host : null;
   }
 
   // 官網是 SPA,切到 History 分頁(/trade/history)會把整個搜尋畫面連同
@@ -823,14 +896,19 @@
     if (containerObserver) containerObserver.disconnect();
     container = el;
     containerObserver = new MutationObserver((mutations) => {
+      const hosts = new Set(); // 被官網重繪的已翻元素:不等 debounce,繪製前就重翻(否則會閃一下舊中文+新英文)
       for (const m of mutations) {
-        for (const node of m.addedNodes) {
+        const nodes = m.type === 'characterData' ? [m.target] : m.addedNodes;
+        for (const node of nodes) {
           if (node instanceof HTMLElement) schedule(node);
+          const host = redrawnHost(node);
+          if (host) hosts.add(host);
         }
       }
+      hosts.forEach(run);
     });
-    containerObserver.observe(el, { childList: true, subtree: true });
-    processContainer(el).catch((err) => console.warn('[PTM] 結果列處理失敗:', err));
+    containerObserver.observe(el, { childList: true, subtree: true, characterData: true });
+    run(el);
   }
 
   function waitForResults() {
