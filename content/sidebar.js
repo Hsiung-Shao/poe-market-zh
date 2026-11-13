@@ -463,8 +463,11 @@
       try { handle.setPointerCapture(e.pointerId); } catch (_) { /* 合成事件沒有可 capture 的 pointer:照樣能拖 */ }
     });
     handle.addEventListener('pointermove', (e) => {
-      const dx = drag ? e.clientX - drag.startX : 0;
-      if (!dx) return; // 沒移動不改存的值(視窗窄時存的值可能比顯示的寬)
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      // 沒真的拖(手抖 < 3px)不改存的值(視窗窄時存的值可能比顯示的寬);拖過之後拖回原點也要照算
+      if (!drag.moved && Math.abs(dx) < 3) return;
+      drag.moved = true;
       state.settings.sidebarWidth = M.sidebarWidth(drag.startW + (state.settings.sidebarSide === 'left' ? dx : -dx), window.innerWidth);
       applyWidth(); // 瀏覽器已把 pointermove 併成一幀一次,不必再節流
     });
