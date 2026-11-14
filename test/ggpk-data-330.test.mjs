@@ -89,3 +89,24 @@ test('G9 加了標記的常用詞綴仍查得到', () => {
     assert.ok(v.includes('致盲'), `${k} 值:${v}`);
   }
 });
+
+test('G10 回報的變異寶石有中文名', () => {
+  assert.strictEqual(D.items['Fireball of Radiation'], '火球．輻射');
+});
+
+test('G11 每條詞綴模板英中的 # 數相同', () => {
+  const count = (s) => (s.match(/#/g) || []).length;
+  const bad = Object.entries(D.statMap).filter(([k, v]) => count(k) !== count(v)).map(([k]) => k);
+  assert.strictEqual(bad.length, 0, `不一致 ${bad.length} 筆,第一筆鍵:${bad[0]}`);
+});
+
+test('G12 觸發類詞綴的鍵與數字位置正確', () => {
+  checkAll(D.statMap, {
+    '#% chance to Trigger Level # Blood Rage when you Kill an Enemy': '當你擊殺敵人時，有 #% 機率觸發等級 # 的鮮血狂怒',
+    'Trigger Level # Lightning Bolt on Melee Hit with this Weapon, with a # second cooldown':
+      '當以此武器近戰擊中時，觸發等級#的雷彈，有 # 秒冷卻時間',
+    'Trigger Level # Summon Phantasm Skill when you Consume a corpse': '當你消耗 1 個屍體時觸發等級 # 的召喚幻影技能',
+    'Consumes a Void Charge to Trigger Level # Void Shot when you fire Arrows with a Non-Triggered Skill':
+      '當你發射非觸發型技能的箭矢，消耗 1 顆虛空能量球，觸發等級 # 的虛無疾射',
+  });
+});
