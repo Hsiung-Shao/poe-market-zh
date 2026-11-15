@@ -73,7 +73,7 @@ test('T3 同編號兩種寫法、遊戲檔都沒有、台服兩條都符合佔�
   assert.equal(texts(out)[1], 'Your Maps are inhabited by an additional Invasion Boss');
 });
 
-test('T4 同編號兩種寫法、遊戲檔都沒有、台服只有一條佔位符數相符:用相符的那一條', () => {
+test('T4 同編號兩種寫法、遊戲檔都沒有、台服兩條各自只對得上一種英文:各用各的', () => {
   const us = mk([
     ['explicit.stat_1', 'Area contains Foo'],
     ['explicit.stat_1', 'Your Maps have +#% chance to contain Foo'],
@@ -128,4 +128,29 @@ test('T8 選項型條目:文字與各選項依編號翻譯', () => {
   assert.equal(e.text, '附加的小天賦給予:# (Added Small Passive Skills grant: #)');
   assert.equal(e.option.options[0].text, '+5 力量 (+5 to Strength)');
   assert.equal(e.option.options[1].text, '+5 敏捷 (+5 to Dexterity)');
+});
+
+test('T9 同編號兩種寫法、遊戲檔都沒有、台服唯一相符的那條對兩種英文都相符:兩條都維持英文', () => {
+  const us = mk([
+    ['explicit.stat_9', 'Area is inhabited by an additional Invasion Boss'],
+    ['explicit.stat_9', 'Your Maps are inhabited by an additional Invasion Boss'],
+  ]);
+  const tw = mk([
+    ['explicit.stat_9', '地圖中含有 # 隻額外侵略聯盟的頭目'],
+    ['explicit.stat_9', '你的地圖含有額外 1 位侵略頭目'],
+  ]);
+  const out = _test.translateStats(us, tw, {});
+  assert.equal(texts(out)[0], 'Area is inhabited by an additional Invasion Boss');
+  assert.equal(texts(out)[1], 'Your Maps are inhabited by an additional Invasion Boss');
+});
+
+test('T10 同編號兩種英文、台服只有一條且兩種英文都相符:兩條都維持英文', () => {
+  const us = mk([
+    ['explicit.stat_10', '#% increased Gold found in this Area (Gold Piles)'],
+    ['explicit.stat_10', '#% increased Gold found in Map (Gold Piles)'],
+  ]);
+  const tw = mk([['explicit.stat_10', '增加#%地圖內所獲取的金幣數量（金幣堆）']]);
+  const out = _test.translateStats(us, tw, {});
+  assert.equal(texts(out)[0], '#% increased Gold found in this Area (Gold Piles)');
+  assert.equal(texts(out)[1], '#% increased Gold found in Map (Gold Piles)');
 });

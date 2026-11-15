@@ -201,13 +201,17 @@ function translateStats(usStats, twStats, statFallback = {}) {
       const zhForms = [...(twForms.get(entry.id) ?? [])];
       const ambiguous = (usForms.get(entry.id)?.size ?? 1) > 1 || zhForms.length > 1;
       // 單一寫法:台服優先,但佔位符對不上的不採用(與 buildStatIdMap 同一道守門)。
-      // 多寫法:遊戲檔依英文全文定錨;遊戲檔沒有時,台服恰有一條過守門才用,否則留英文。
+      // 多寫法:遊戲檔依英文全文定錨;遊戲檔沒有時,台服要「雙向唯一」才用 —— 這條英文只有一條台服
+      // 過守門,而且那條台服過不了同編號其他英文寫法的守門。只看單向會把另一種寫法的中文配過來
+      // (Area … Invasion Boss:台服對應的那條帶 #、被擋掉,剩下的是 Your Maps 那條)。否則留英文。
       let zh = tw && !ambiguous && !gateTwStat(en, tw.text, false) ? tw.text : null;
       if (!zh) {
         zh = fromGameFile(en);
         if (!zh) {
-          const ok = zhForms.filter((text) => !gateTwStat(en, text, false));
-          if (ok.length === 1) zh = ok[0];
+          const fits = (enText, zhText) => !gateTwStat(enText, zhText, false);
+          const ok = zhForms.filter((text) => fits(en, text));
+          const others = [...(usForms.get(entry.id) ?? [])].filter((other) => other !== en);
+          if (ok.length === 1 && !others.some((other) => fits(other, ok[0]))) zh = ok[0];
         }
       }
       if (zh) entry.text = bilingual(zh, en);
