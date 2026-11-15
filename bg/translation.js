@@ -165,28 +165,53 @@ function translateStats(usStats, twStats, statFallback = {}) {
   const twGroupLabel = new Map(
     (twStats?.result ?? []).map((g) => [g.id, g.label])
   );
+  // 同一個編號的所有寫法。國際服或台服任一邊有兩種以上(多為「Area …」/「Your Maps …」),
+  // 就不能只憑編號決定哪條中文配哪條英文 —— 以前一律拿台服最後一條,第一種寫法會配到第二種的中文。
+  const formsById = (stats) => {
+    const map = new Map();
+    for (const group of stats?.result ?? []) {
+      for (const entry of group.entries ?? []) {
+        if (!entry.id || !entry.text) continue;
+        if (!map.has(entry.id)) map.set(entry.id, new Set());
+        map.get(entry.id).add(entry.text);
+      }
+    }
+    return map;
+  };
+  const usForms = formsById(usStats);
+  const twForms = formsById(twStats);
+  const fromGameFile = (en) => {
+    const zh = statFallback[en] ?? statFallback[`${en} (Local)`];
+    if (zh) return zh;
+    // 帶實數的變體條目(如 You have Igniting Conflux for 3 seconds…):
+    // 數值正規化成 # 查模板,命中後把原數值依序回填中文模板
+    const key = en.replace(NUM_RE, '#');
+    const tpl = statFallback[key] ?? statFallback[`${key} (Local)`];
+    if (!tpl) return null;
+    const nums = en.match(NUM_RE) ?? [];
+    let i = 0;
+    return tpl.replace(/#/g, () => nums[i++] ?? '#');
+  };
   for (const group of out.result ?? []) {
     const zhLabel = twGroupLabel.get(group.id);
     if (zhLabel) group.label = zhLabel;
     for (const entry of group.entries ?? []) {
+      const en = entry.text;
       const tw = twIndex.get(entry.id);
-      if (!tw) {
-        let zh = statFallback[entry.text] ?? statFallback[`${entry.text} (Local)`];
+      const zhForms = [...(twForms.get(entry.id) ?? [])];
+      const ambiguous = (usForms.get(entry.id)?.size ?? 1) > 1 || zhForms.length > 1;
+      // 單一寫法:台服優先,但佔位符對不上的不採用(與 buildStatIdMap 同一道守門)。
+      // 多寫法:遊戲檔依英文全文定錨;遊戲檔沒有時,台服恰有一條過守門才用,否則留英文。
+      let zh = tw && !ambiguous && !gateTwStat(en, tw.text, false) ? tw.text : null;
+      if (!zh) {
+        zh = fromGameFile(en);
         if (!zh) {
-          // 帶實數的變體條目(如 You have Igniting Conflux for 3 seconds…):
-          // 數值正規化成 # 查模板,命中後把原數值依序回填中文模板
-          const key = entry.text.replace(NUM_RE, '#');
-          const tpl = statFallback[key] ?? statFallback[`${key} (Local)`];
-          if (tpl) {
-            const nums = entry.text.match(NUM_RE) ?? [];
-            let i = 0;
-            zh = tpl.replace(/#/g, () => nums[i++] ?? '#');
-          }
+          const ok = zhForms.filter((text) => !gateTwStat(en, text, false));
+          if (ok.length === 1) zh = ok[0];
         }
-        if (zh) entry.text = bilingual(zh, entry.text);
-        continue;
       }
-      entry.text = bilingual(tw.text, entry.text);
+      if (zh) entry.text = bilingual(zh, en);
+      if (!tw) continue;
       if (entry.option?.options && tw.option?.options) {
         const twOpts = new Map(tw.option.options.map((o) => [o.id, o.text]));
         for (const opt of entry.option.options) {
