@@ -159,6 +159,29 @@ function looksEnglish(data, sample = 400, threshold = 0.2) {
 // 英文模板,與 stats API 的 text 同格式)補上 —— 台服 API 落後或缺席的
 // 詞綴(如 Map is occupied by The Purifier)結果列翻得出來,下拉也應一致;
 // 字典也查無才保留英文。
+// 每個編號的所有寫法(文字去重)。translateStats 與 buildStatMap 共用。
+function statFormsById(stats) {
+  const map = new Map();
+  for (const group of stats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      if (!entry.id || !entry.text) continue;
+      if (!map.has(entry.id)) map.set(entry.id, new Set());
+      map.get(entry.id).add(entry.text);
+    }
+  }
+  return map;
+}
+
+// 同編號多寫法時挑台服中文:要「雙向唯一」—— 這條英文只有一條台服過守門,而且那條台服
+// 過不了同編號其他英文寫法的守門。挑不出來回 null(呼叫端留英文或交給遊戲檔)。
+function uniqueTwForm(en, id, usForms, twForms) {
+  const fits = (enText, zhText) => !gateTwStat(enText, zhText, false);
+  const ok = [...(twForms.get(id) ?? [])].filter((text) => fits(en, text));
+  if (ok.length !== 1) return null;
+  for (const other of usForms.get(id) ?? []) if (other !== en && fits(other, ok[0])) return null;
+  return ok[0];
+}
+
 function translateStats(usStats, twStats, statFallback = {}) {
   const out = structuredClone(usStats);
   const twIndex = indexStatEntries(twStats);
@@ -167,19 +190,8 @@ function translateStats(usStats, twStats, statFallback = {}) {
   );
   // 同一個編號的所有寫法。國際服或台服任一邊有兩種以上(多為「Area …」/「Your Maps …」),
   // 就不能只憑編號決定哪條中文配哪條英文 —— 以前一律拿台服最後一條,第一種寫法會配到第二種的中文。
-  const formsById = (stats) => {
-    const map = new Map();
-    for (const group of stats?.result ?? []) {
-      for (const entry of group.entries ?? []) {
-        if (!entry.id || !entry.text) continue;
-        if (!map.has(entry.id)) map.set(entry.id, new Set());
-        map.get(entry.id).add(entry.text);
-      }
-    }
-    return map;
-  };
-  const usForms = formsById(usStats);
-  const twForms = formsById(twStats);
+  const usForms = statFormsById(usStats);
+  const twForms = statFormsById(twStats);
   const fromGameFile = (en) => {
     const zh = statFallback[en] ?? statFallback[`${en} (Local)`];
     if (zh) return zh;
@@ -207,12 +219,7 @@ function translateStats(usStats, twStats, statFallback = {}) {
       let zh = tw && !ambiguous && !gateTwStat(en, tw.text, false) ? tw.text : null;
       if (!zh) {
         zh = fromGameFile(en);
-        if (!zh) {
-          const fits = (enText, zhText) => !gateTwStat(enText, zhText, false);
-          const ok = zhForms.filter((text) => fits(en, text));
-          const others = [...(usForms.get(entry.id) ?? [])].filter((other) => other !== en);
-          if (ok.length === 1 && !others.some((other) => fits(other, ok[0]))) zh = ok[0];
-        }
+        if (!zh) zh = uniqueTwForm(en, entry.id, usForms, twForms);
       }
       if (zh) entry.text = bilingual(zh, en);
       if (!tw) continue;
@@ -643,6 +650,8 @@ function buildPassiveMap(usStats, twStats, ggpkPassives = {}) {
 function buildStatMap(usStats, twStats) {
   const map = {};
   const twIndex = indexStatEntries(twStats);
+  const usForms = statFormsById(usStats);
+  const twForms = statFormsById(twStats);
   const countHash = (s) => (s.match(/#/g) ?? []).length;
   const addPair = (en, zh) => {
     if (!en || !zh || en === zh) return;
@@ -662,6 +671,10 @@ function buildStatMap(usStats, twStats) {
           if (!zhOpt) continue;
           addPair(entry.text.replace('#', opt.text), tw.text.replace('#', zhOpt));
         }
+      } else if ((usForms.get(entry.id)?.size ?? 1) > 1 || (twForms.get(entry.id)?.size ?? 1) > 1) {
+        // 同編號多寫法:tw 是台服「最後一條」,直接配會把第一種寫法配到第二種的中文,
+        // 還會蓋掉遊戲檔種子裡正確的值。台服雙向唯一才配,否則不寫入(留給遊戲檔)。
+        addPair(entry.text, uniqueTwForm(entry.text, entry.id, usForms, twForms));
       } else {
         addPair(entry.text, tw.text);
       }
