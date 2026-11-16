@@ -3158,7 +3158,10 @@
   // 請求中又收到狀態變動:回來後再抓一次,不讓舊回應蓋掉新狀態
   let transLoading = false;
   let transStale = false;
+  let transFails = 0; // 連續失敗次數;成功或放棄後歸零
+  let transRetryTimer = 0;
   async function loadTransStatus() {
+    if (transRetryTimer) return; // 等重試中:畫面重畫不搶先重送,免得一口氣把重試次數用完
     if (transLoading) {
       transStale = true;
       return;
@@ -3166,8 +3169,21 @@
     transLoading = true;
     try {
       state.transStatus = await chrome.runtime.sendMessage({ t: 'translation:status' }) ?? {};
+      transFails = 0;
     } catch (err) {
-      state.transStatus = { error: String(err?.message ?? err) };
+      // 連不到背景程式(剛被叫醒、更新中):console 留線索、隔一下自動重試,試完才顯示錯誤
+      const wait = M.transRetryDelay(++transFails);
+      console.warn(`[PTM] 無法取得翻譯資料狀態(第 ${transFails} 次,${wait ? `${wait / 1000} 秒後重試` : '不再重試'}):`, err);
+      if (wait) {
+        state.transStatus = null;
+        transRetryTimer = setTimeout(() => {
+          transRetryTimer = 0;
+          loadTransStatus();
+        }, wait);
+      } else {
+        state.transStatus = { error: String(err?.message ?? err) };
+        transFails = 0;
+      }
     }
     transLoading = false;
     if (transStale) {
