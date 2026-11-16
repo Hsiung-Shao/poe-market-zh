@@ -159,34 +159,70 @@ function looksEnglish(data, sample = 400, threshold = 0.2) {
 // 英文模板,與 stats API 的 text 同格式)補上 —— 台服 API 落後或缺席的
 // 詞綴(如 Map is occupied by The Purifier)結果列翻得出來,下拉也應一致;
 // 字典也查無才保留英文。
+// 每個編號的所有寫法(文字去重)。translateStats 與 buildStatMap 共用。
+function statFormsById(stats) {
+  const map = new Map();
+  for (const group of stats?.result ?? []) {
+    for (const entry of group.entries ?? []) {
+      if (!entry.id || !entry.text) continue;
+      if (!map.has(entry.id)) map.set(entry.id, new Set());
+      map.get(entry.id).add(entry.text);
+    }
+  }
+  return map;
+}
+
+// 同編號多寫法時挑台服中文:要「雙向唯一」—— 這條英文只有一條台服過守門,而且那條台服
+// 過不了同編號其他英文寫法的守門。挑不出來回 null(呼叫端留英文或交給遊戲檔)。
+function uniqueTwForm(en, id, usForms, twForms) {
+  const fits = (enText, zhText) => !gateTwStat(enText, zhText, false);
+  const ok = [...(twForms.get(id) ?? [])].filter((text) => fits(en, text));
+  if (ok.length !== 1) return null;
+  for (const other of usForms.get(id) ?? []) if (other !== en && fits(other, ok[0])) return null;
+  return ok[0];
+}
+
 function translateStats(usStats, twStats, statFallback = {}) {
   const out = structuredClone(usStats);
   const twIndex = indexStatEntries(twStats);
   const twGroupLabel = new Map(
     (twStats?.result ?? []).map((g) => [g.id, g.label])
   );
+  // 同一個編號的所有寫法。國際服或台服任一邊有兩種以上(多為「Area …」/「Your Maps …」),
+  // 就不能只憑編號決定哪條中文配哪條英文 —— 以前一律拿台服最後一條,第一種寫法會配到第二種的中文。
+  const usForms = statFormsById(usStats);
+  const twForms = statFormsById(twStats);
+  const fromGameFile = (en) => {
+    const zh = statFallback[en] ?? statFallback[`${en} (Local)`];
+    if (zh) return zh;
+    // 帶實數的變體條目(如 You have Igniting Conflux for 3 seconds…):
+    // 數值正規化成 # 查模板,命中後把原數值依序回填中文模板
+    const key = en.replace(NUM_RE, '#');
+    const tpl = statFallback[key] ?? statFallback[`${key} (Local)`];
+    if (!tpl) return null;
+    const nums = en.match(NUM_RE) ?? [];
+    let i = 0;
+    return tpl.replace(/#/g, () => nums[i++] ?? '#');
+  };
   for (const group of out.result ?? []) {
     const zhLabel = twGroupLabel.get(group.id);
     if (zhLabel) group.label = zhLabel;
     for (const entry of group.entries ?? []) {
+      const en = entry.text;
       const tw = twIndex.get(entry.id);
-      if (!tw) {
-        let zh = statFallback[entry.text] ?? statFallback[`${entry.text} (Local)`];
-        if (!zh) {
-          // 帶實數的變體條目(如 You have Igniting Conflux for 3 seconds…):
-          // 數值正規化成 # 查模板,命中後把原數值依序回填中文模板
-          const key = entry.text.replace(NUM_RE, '#');
-          const tpl = statFallback[key] ?? statFallback[`${key} (Local)`];
-          if (tpl) {
-            const nums = entry.text.match(NUM_RE) ?? [];
-            let i = 0;
-            zh = tpl.replace(/#/g, () => nums[i++] ?? '#');
-          }
-        }
-        if (zh) entry.text = bilingual(zh, entry.text);
-        continue;
+      const zhForms = [...(twForms.get(entry.id) ?? [])];
+      const ambiguous = (usForms.get(entry.id)?.size ?? 1) > 1 || zhForms.length > 1;
+      // 單一寫法:台服優先,但佔位符對不上的不採用(與 buildStatIdMap 同一道守門)。
+      // 多寫法:遊戲檔依英文全文定錨;遊戲檔沒有時,台服要「雙向唯一」才用 —— 這條英文只有一條台服
+      // 過守門,而且那條台服過不了同編號其他英文寫法的守門。只看單向會把另一種寫法的中文配過來
+      // (Area … Invasion Boss:台服對應的那條帶 #、被擋掉,剩下的是 Your Maps 那條)。否則留英文。
+      let zh = tw && !ambiguous && !gateTwStat(en, tw.text, false) ? tw.text : null;
+      if (!zh) {
+        zh = fromGameFile(en);
+        if (!zh) zh = uniqueTwForm(en, entry.id, usForms, twForms);
       }
-      entry.text = bilingual(tw.text, entry.text);
+      if (zh) entry.text = bilingual(zh, en);
+      if (!tw) continue;
       if (entry.option?.options && tw.option?.options) {
         const twOpts = new Map(tw.option.options.map((o) => [o.id, o.text]));
         for (const opt of entry.option.options) {
@@ -614,6 +650,8 @@ function buildPassiveMap(usStats, twStats, ggpkPassives = {}) {
 function buildStatMap(usStats, twStats) {
   const map = {};
   const twIndex = indexStatEntries(twStats);
+  const usForms = statFormsById(usStats);
+  const twForms = statFormsById(twStats);
   const countHash = (s) => (s.match(/#/g) ?? []).length;
   const addPair = (en, zh) => {
     if (!en || !zh || en === zh) return;
@@ -633,6 +671,10 @@ function buildStatMap(usStats, twStats) {
           if (!zhOpt) continue;
           addPair(entry.text.replace('#', opt.text), tw.text.replace('#', zhOpt));
         }
+      } else if ((usForms.get(entry.id)?.size ?? 1) > 1 || (twForms.get(entry.id)?.size ?? 1) > 1) {
+        // 同編號多寫法:tw 是台服「最後一條」,直接配會把第一種寫法配到第二種的中文,
+        // 還會蓋掉遊戲檔種子裡正確的值。台服雙向唯一才配,否則不寫入(留給遊戲檔)。
+        addPair(entry.text, uniqueTwForm(entry.text, entry.id, usForms, twForms));
       } else {
         addPair(entry.text, tw.text);
       }
