@@ -494,6 +494,10 @@
     return Math.min(Math.max(w, MIN), Math.max(MIN, Math.min(MAX, viewportW - RAIL - SITE_MIN)));
   }
 
+  // 側邊欄查「翻譯資料狀態」連續失敗 fails 次後,隔多久重試(ms);null = 不再重試,改顯示錯誤。
+  const TRANS_RETRY_MS = [1000, 3000, 8000];
+  const transRetryDelay = (fails) => (Number.isInteger(fails) && fails >= 1 ? TRANS_RETRY_MS[fails - 1] ?? null : null);
+
   function sanitizeHistory(list, max) {
     const seen = new Set();
     const out = [];
@@ -998,6 +1002,7 @@
     pickKnown,
     SIDEBAR_WIDTH,
     sidebarWidth,
+    transRetryDelay,
     sanitizeHistory,
     buildIconIndex,
     mapExtensionIcon,
