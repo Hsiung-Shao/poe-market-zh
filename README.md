@@ -56,6 +56,10 @@ Chrome 在點擊當下直接跳對話框,Firefox 退回開授權頁),收回權�
 Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.json`(完整版
 196 個)產生,指定的圖示找不到就直接失敗,不會靜靜少一個。
 
+PoE1 另有 **武器與裝備 28 個**(單手 / 雙手武器、防具、飾品、珠寶、星團珠寶、永恆珠寶、
+三種藥劑),圖取自官方 CDN(`web.poecdn.com`),由 `node tools/gen-gear-icons.mjs` 寫入(要在
+`gen-icons-subset.mjs` 之後跑)。「符號」列只留 📁;舊書籤已存的其他符號照常顯示。
+
 ### 從 Better PathOfExile Trading 匯入書籤
 
 設定分頁「選擇備份 / 書籤檔…」直接選它的「匯出備份」文字檔(.txt)即可,會先攤開內容再選要加入哪一款;把單一資料夾的匯出碼貼進 PoE Trade Extension 那個框也會自動辨認。它的書籤沒有聯盟,開啟時用當前聯盟;封存段的資料夾會加「(封存)」並收合;圖示:PoE2 的 35 張(通貨與昇華職業)原樣對上,PoE1 只對得到通貨,其餘用預設。
