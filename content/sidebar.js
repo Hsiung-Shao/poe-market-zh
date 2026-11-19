@@ -33,7 +33,8 @@
     return;
   }
 
-  const FOLDER_ICONS = ['📁', '⚔️', '🛡️', '💍', '💎', '🧪', '📜', '🗺️', '🔥', '❄️', '⚡', '💰'];
+  // 符號只留資料夾(使用者 2026-11-19 裁定);其餘改用 data/icons.json 的「裝備」圖像。舊書籤存的 emoji 照樣顯示。
+  const FOLDER_ICONS = ['📁'];
   // 側邊 rail 上的兩個外部連結(贊助 / Discord)。以前住在設定分頁底部,2026-09-08 搬上 rail。
   const RAIL_LINKS = {
     coffee: 'https://buymeacoffee.com/hsiung',
