@@ -59,7 +59,8 @@ Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.jso
 PoE1 另有 **武器與裝備 28 個**(單手 / 雙手武器、防具、飾品、珠寶、星團珠寶、永恆珠寶、
 三種藥劑),是自繪的 SVG 剪影(`icons/gear/*.svg`,隨擴充出貨),由 `node tools/gen-gear-svg.mjs .`
 產生並寫入 icons.json(要在 `gen-icons-subset.mjs` 之後跑)。「符號」列只留 📁;舊書籤已存的其他符號
-與先前的官方物品圖網址照常顯示。
+與先前的官方物品圖網址照常顯示。另有 **防具(依屬性)30 個**:頭盔、胸甲、手套、鞋子、盾牌各出力量、敏捷、智慧、力敏、力智、敏智六種,
+用官方 CDN 物品原圖,由同一支腳本寫入。資料夾標題的圖示 32px、選擇器按鈕 48px。
 
 ### 從 Better PathOfExile Trading 匯入書籤
 

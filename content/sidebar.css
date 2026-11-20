@@ -457,8 +457,8 @@
   display: inline-flex;
   align-items: center;
 }
-img.pmz-folder-icon { width: 26px; height: 26px; object-fit: contain; }
-span.pmz-folder-icon { font-size: 18px; }
+img.pmz-folder-icon { width: 32px; height: 32px; object-fit: contain; }
+span.pmz-folder-icon { font-size: 22px; }
 
 /* 表單 */
 .pmz-form {
@@ -486,7 +486,7 @@ span.pmz-folder-icon { font-size: 18px; }
 .pmz-form-btns .pmz-primary { margin-bottom: 0; }
 
 /* 圖示選擇器 */
-.pmz-icon-pop { max-height: 320px; overflow-y: auto; }
+.pmz-icon-pop { max-height: 380px; overflow-y: auto; }
 .pmz-icon-title { font-size: 14px; color: #c9a66b; margin-bottom: 6px; font-variant: small-caps; }
 .pmz-icon-section {
   font-size: 12px;
@@ -499,8 +499,8 @@ span.pmz-folder-icon { font-size: 18px; }
 }
 .pmz-icon-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
 .pmz-icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -513,8 +513,8 @@ span.pmz-folder-icon { font-size: 18px; }
 }
 .pmz-icon-btn:hover { border-color: #c9a66b; }
 .pmz-icon-active { border-color: #c9a66b; background: #33291d; }
-img.pmz-icon-glyph { width: 34px; height: 34px; object-fit: contain; }
-span.pmz-icon-glyph { font-size: 19px; }
+img.pmz-icon-glyph { width: 42px; height: 42px; object-fit: contain; }
+span.pmz-icon-glyph { font-size: 23px; }
 
 .pmz-inline-input {
   flex: 1;
