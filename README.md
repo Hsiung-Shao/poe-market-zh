@@ -56,9 +56,11 @@ Chrome 在點擊當下直接跳對話框,Firefox 退回開授權頁),收回權�
 Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.json`(完整版
 196 個)產生,指定的圖示找不到就直接失敗,不會靜靜少一個。
 
-PoE1 另有 **武器與裝備 28 個**(單手 / 雙手武器、防具、飾品、珠寶、星團珠寶、永恆珠寶、
-三種藥劑),圖取自官方 CDN(`web.poecdn.com`),由 `node tools/gen-gear-icons.mjs` 寫入(要在
-`gen-icons-subset.mjs` 之後跑)。「符號」列只留 📁;舊書籤已存的其他符號照常顯示。
+PoE1 另有 **武器與裝備 23 個**(單手 / 雙手武器、箭袋、飾品、珠寶、星團珠寶、永恆珠寶、三種藥劑)與
+**防具(依屬性)30 個**(頭盔、胸甲、手套、鞋子、盾牌各出力量、敏捷、智慧、力敏、力智、敏智六種),
+全部是官方 CDN(`web.poecdn.com`)物品圖,由 `node tools/gen-gear-icons.mjs .` 寫入 icons.json(要在
+`gen-icons-subset.mjs` 之後跑)。資料夾標題的圖示 32px、選擇器按鈕 48px。「符號」列只留 📁;
+舊書籤已存的其他符號照常顯示。
 
 ### 從 Better PathOfExile Trading 匯入書籤
 
