@@ -560,6 +560,20 @@
   // ── 圖示 ──
   // data/icons.json 的名稱有兩種寫法:「中文 (English)」(職業)與純英文(通貨等)。
   // 一律以英文為鍵(語言無關的對接鍵),不用位置對位。
+  // 圖示選擇器搜尋:空白分隔的每個關鍵字都要出現在名稱裡(中英文皆可,英文不分大小寫)
+  function iconMatchesQuery(name, query) {
+    const terms = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return true;
+    if (typeof name !== 'string') return false;
+    const n = name.toLowerCase();
+    return terms.every((t) => n.includes(t));
+  }
+
+  // 藥劑原圖是三格橫拼,產生器在網址尾端加 #f3,顯示時只取第一格
+  function iconFrames(url) {
+    return typeof url === 'string' && url.endsWith('#f3') ? 3 : 1;
+  }
+
   function buildIconIndex(iconList) {
     const index = new Map();
     for (const section of Array.isArray(iconList) ? iconList : []) {
@@ -1005,6 +1019,8 @@
     transRetryDelay,
     sanitizeHistory,
     buildIconIndex,
+    iconMatchesQuery,
+    iconFrames,
     mapExtensionIcon,
     leagueFromHref,
     parseSearchUrl,
