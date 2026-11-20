@@ -57,8 +57,9 @@ Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.jso
 196 個)產生,指定的圖示找不到就直接失敗,不會靜靜少一個。
 
 PoE1 另有 **武器與裝備 28 個**(單手 / 雙手武器、防具、飾品、珠寶、星團珠寶、永恆珠寶、
-三種藥劑),圖取自官方 CDN(`web.poecdn.com`),由 `node tools/gen-gear-icons.mjs` 寫入(要在
-`gen-icons-subset.mjs` 之後跑)。「符號」列只留 📁;舊書籤已存的其他符號照常顯示。
+三種藥劑),是自繪的 SVG 剪影(`icons/gear/*.svg`,隨擴充出貨),由 `node tools/gen-gear-svg.mjs .`
+產生並寫入 icons.json(要在 `gen-icons-subset.mjs` 之後跑)。「符號」列只留 📁;舊書籤已存的其他符號
+與先前的官方物品圖網址照常顯示。
 
 ### 從 Better PathOfExile Trading 匯入書籤
 

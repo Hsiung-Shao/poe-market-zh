@@ -35,7 +35,8 @@
     {
       "resources": [
         "data/icons.json",
-        "icons/folder/*.png"
+        "icons/folder/*.png",
+        "icons/gear/*.svg"
       ],
       "matches": [
         "https://www.pathofexile.com/*",
