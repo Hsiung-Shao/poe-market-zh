@@ -95,6 +95,8 @@
     // PoE1 改版後同樣有這個修飾字;PoE1 沒有獨立的傳奇名表(uniqueMap 是空的),
     // 查不到會退回 itemMap,行為與改版前相同。
     uniqueCard: '.item-popup--unique',
+    // 阿茲瓦特史記的房間行(見 translateRoomLine);其他物品的附加屬性行也會命中,查不到就不動
+    roomLine: IS_POE2 ? null : '.item-popup__property--additional > .lc',
   };
 
   // 與 bg/translation.js 的正規化規則一致(不含正負號)
@@ -489,6 +491,77 @@
     });
   }
 
+  // ── 阿茲瓦特史記的房間清單(2026-11-18 使用者回報:卡片上整串房間都是英文)──
+  // 實機結構(2026-11-18 活站):每行一個 .item-popup__property--additional,沒有 data-field:
+  //   <div class="item-property item-popup__property item-popup__property--additional">
+  //     <span class="lc" type="49"><span>Doryani's Institute (Tier 3)</span></span></div>
+  //   段落標題(Open Rooms: / Obstructed Rooms:)同形,只是 .lc 沒有 type。
+  // 房間名取自遊戲檔 incursionrooms.Name(GGPK 3.30.0,85 個);標題是 clientstrings 的
+  //   ItemDescriptionIncursionAccessibleRooms / ItemDescriptionIncursionInaccessibleRooms。
+  // ⚠ 不用交易站詞綴「有房間:X」那 86 條:兩服的清單都還停在 3.29,缺 3.30 的新房間
+  //   (Cradle of Creation、Royal Forge…)。兩邊都有的 80 個房間裡 78 個譯名相同,
+  //   Vault(台服「寶藏庫」)與 Strongbox Chamber(台服「寶箱之殿」)不同,這裡用遊戲內的。
+  // shortcut: 房間名寫死在這裡,改版新增的房間會維持英文;房間再變動時改由 data/ggpk.json 出貨。
+  const ROOM_HEADERS = { 'Open Rooms:': '開啟房間：', 'Obstructed Rooms:': '受阻的房間：' };
+  const ROOMS = {
+    'Anomaly Research Lab': '異常研究所', Antechamber: '神殿前院', 'Apex of Ascension': '祭祀之巔', 'Apex of Atzoatl': '阿茲瓦特之巔',
+    'Arena of Valour': '傳說對決', "Armourer's Workshop": '裝甲磨坊', Armoury: '軍械庫', 'Atlas of Worlds': '異界輿圖',
+    'Automaton Lab': '自運研究所', 'Banquet Hall': '神殿宴會場', Barracks: '軍隊憩所', 'Breach Containment Chamber': '裂痕異域室',
+    'Catalyst of Corruption': '腐敗孳生室', Cellar: '神殿地窖', 'Chamber of Iron': '鋼鍛之室', Chasm: '神殿裂口', Cloister: '神殿廟',
+    'Conduit of Lightning': '雷霆導管', 'Corruption Chamber': '腐敗之室', 'Court of Sealed Death': '封亡院庭',
+    'Cradle of Creation': '創造之搖籃', 'Crucible of Flame': '烈焰熔爐', 'Cultivar Chamber': '培育秘室',
+    'Defense Research Lab': '禦防研究所', 'Demolition Lab': '拆除庫', 'Department of Thaumaturgy': '魔法部',
+    "Doryani's Institute": '多里亞尼之院', 'Engineering Department': '工程部', Entrance: '入室', 'Explosives Room': '彈藥庫',
+    Factory: '瓦爾工廠', 'Flame Workshop': '獄炎磨坊', "Gemcutter's Workshop": '刻石磨坊', 'Glittering Halls': '閃耀聖殿',
+    'Grand Reactor': '宏偉反應爐', Guardhouse: '衛兵房', 'Hall of Champions': '冠軍聖殿', 'Hall of Heroes': '英雄之殿',
+    'Hall of Legends': '神話之殿', 'Hall of Locks': '千鎖殿堂', 'Hall of Mettle': '勇氣之殿', 'Hall of Offerings': '獻祭殿堂',
+    'Hall of War': '戰爭聖殿', Halls: '神殿殿堂', Hatchery: '孵化室', 'House of the Others': '異者居所',
+    'Hurricane Engine': '颶風引擎室', 'Hybridisation Chamber': '異種之域', "Jeweller's Workshop": '寶匠磨坊',
+    'Jewellery Forge': '珠寶冶煉室', 'Lightning Workshop': '風雷磨坊', 'Locus of Corruption': '腐敗之地',
+    'Museum of Artefacts': '文物展館', 'Office of Cartography': '製圖研製室', Passageways: '神殿通道', Pits: '神殿舊窖',
+    'Poison Garden': '監獄花園', 'Pools of Restoration': '治癒之泉', 'Royal Forge': '皇家熔爐', 'Sacrificial Chamber': '獻祭之室',
+    "Sadist's Den": '虐狂之巢', 'Sanctum of Immortality': '不朽聖殿', 'Sanctum of Unity': '統領聖殿',
+    'Sanctum of Vitality': '活力聖殿', 'Shrine of Empowerment': '恩賜神殿', 'Shrine of Unmaking': '毀滅神殿',
+    'Sparring Room': '格鬥場', 'Storage Room': '儲物室', 'Storm of Corruption': '腐敗風暴', 'Strongbox Chamber': '保險箱之殿',
+    "Surveyor's Study": '研究書房', 'Tempest Generator': '暴雷發電室', 'Temple Defense Workshop': '神殿禦防室',
+    'Temple Nexus': '死神靈殿', Tombs: '神殿陵寢', 'Torment Cells': '磨難牢房', 'Torture Cages': '拷刑大牢', 'Toxic Grove': '劇毒果園',
+    'Trap Workshop': '陷阱磨坊', Treasury: '祕寶庫', Tunnels: '神殿地道', Vault: '藏寶庫', Warehouses: '倉庫間',
+    'Wealth of the Vaal': '瓦爾聚寶庫', Workshop: '工作坊',
+  };
+  const ROOM_RE = /^(.+?)(?:\s*\(Tier\s*(\d+)\))?$/;
+  // 純函式,離線可測(test/incursion-rooms.test.mjs):不是房間行回 null
+  function roomText(text) {
+    const t = String(text ?? '').trim();
+    if (Object.hasOwn(ROOM_HEADERS, t)) return ROOM_HEADERS[t];
+    const m = ROOM_RE.exec(t);
+    if (!m || !Object.hasOwn(ROOMS, m[1])) return null;
+    return m[2] ? `${ROOMS[m[1]]} (階級 ${m[2]})` : ROOMS[m[1]];
+  }
+
+  function translateRoomLine(el) {
+    if (el.dataset.ptmDone) {
+      if (!redrawn(el)) return;
+      unwrite(el); // 官網沿用節點換了內容(同 translateModElement)
+      el.removeAttribute('title');
+    }
+    const lines = textLines(el);
+    const text = linesText(lines);
+    seal(lines.flat());
+    el.dataset.ptmDone = '1';
+    const zh = roomText(text);
+    if (!zh) return;
+    setModText(el, zh, lines);
+    if (state.bilingualMods) {
+      const orig = document.createElement('div');
+      orig.className = 'ptm-orig';
+      orig.style.cssText = 'font-size:var(--pmz-orig-size,11px);color:#7a6f5a;line-height:1.3;';
+      orig.textContent = text;
+      el.appendChild(orig);
+    } else {
+      el.title = text; // 英文原文 hover 可查
+    }
+  }
+
   // 已翻的 .item-mod 裡我們實際寫字的那一層(傭兵區塊是整塊)
   const modTextEl = (mod) =>
     (mod.matches?.(SELECTORS.mercenaryBlock) ? mod : mod.querySelector(SELECTORS.modText) ?? mod);
@@ -804,6 +877,8 @@
     if (state.itemMap) {
       within(SELECTORS.itemName).forEach(translateNameElement);
     }
+    // 史記房間清單:名稱表寫在程式裡,不依賴任何字典;PoE2 沒有這種卡
+    if (SELECTORS.roomLine) within(SELECTORS.roomLine).forEach(translateRoomLine);
     // PoE2 天賦說明區:候選 div 很常見(沒有 class 的 div),先看有沒有 span+br 開頭的再載字典
     if (SELECTORS.passiveBlock) {
       const blocks = within(SELECTORS.passiveBlock)
@@ -985,6 +1060,7 @@
       newContainerIn,
       buildMercenaryNames,
       tierText,
+      roomText,
       planPassiveBlock,
       loadTable,
     };
