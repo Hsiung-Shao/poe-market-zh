@@ -515,6 +515,12 @@ span.pmz-folder-icon { font-size: 22px; }
 .pmz-icon-active { border-color: #c9a66b; background: #33291d; }
 img.pmz-icon-glyph { width: 42px; height: 42px; object-fit: contain; }
 span.pmz-icon-glyph { font-size: 23px; }
+.pmz-icon-search { margin-bottom: 6px; }
+.pmz-icon-picker [hidden] { display: none; }
+/* 三格橫拼的藥劑圖:每格 1×2,背景放大三倍只露第一格 */
+.pmz-sprite3 { display: inline-block; background: no-repeat 0 0 / 300% 100%; }
+span.pmz-icon-glyph.pmz-sprite3 { width: 21px; height: 42px; }
+span.pmz-folder-icon.pmz-sprite3 { width: 16px; height: 32px; }
 
 .pmz-inline-input {
   flex: 1;

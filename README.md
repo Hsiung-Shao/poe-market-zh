@@ -56,11 +56,13 @@ Chrome 在點擊當下直接跳對話框,Firefox 退回開授權頁),收回權�
 Map (Tier 16))。由 `node tools/gen-icons-subset.mjs` 從 `tools/icons-full.json`(完整版
 196 個)產生,指定的圖示找不到就直接失敗,不會靜靜少一個。
 
-PoE1 另有 **武器與裝備 23 個**(單手 / 雙手武器、箭袋、飾品、珠寶、星團珠寶、永恆珠寶、三種藥劑)與
-**防具(依屬性)30 個**(頭盔、胸甲、手套、鞋子、盾牌各出力量、敏捷、智慧、力敏、力智、敏智六種),
-全部是官方 CDN(`web.poecdn.com`)物品圖,由 `node tools/gen-gear-icons.mjs .` 寫入 icons.json(要在
-`gen-icons-subset.mjs` 之後跑)。資料夾標題的圖示 32px、選擇器按鈕 48px。「符號」列只留 📁;
-舊書籤已存的其他符號照常顯示。
+PoE1 另收 **全部裝備基底 500 張圖**,分 11 區:單手武器、雙手武器、箭袋、盾牌、頭盔、胸甲、手套、
+鞋子、飾品、珠寶、藥劑(含萃取物)。基底清單與圖檔路徑從本機 GGPK 的 BaseItemTypes /
+ItemVisualIdentity 讀出(繁中名稱取 GGPK 繁中語系),同一張圖只收一次;圖片是官方 CDN
+(`web.poecdn.com/image/Art/2DItems/...`)。由 `python -I tools/gen-gear-icons.py .` 寫入 icons.json
+(要在 `gen-icons-subset.mjs` 之後跑;每個網址實際下載驗證)。藥劑原圖是三格橫拼,網址尾端加 `#f3`,
+側邊欄只顯示第一格。選擇器頂端有搜尋框(中英文、分區名都能搜,空白分隔多個關鍵字)。
+資料夾標題的圖示 32px、選擇器按鈕 48px。「符號」列只留 📁;舊書籤已存的其他符號與圖照常顯示。
 
 ### 從 Better PathOfExile Trading 匯入書籤
 

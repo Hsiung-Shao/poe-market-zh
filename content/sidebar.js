@@ -908,8 +908,15 @@
     return icon;
   }
   function renderIcon(icon, className) {
+    if (isImageIcon(icon) && M.iconFrames(icon) === 3) {
+      // 三格橫拼的藥劑圖:用背景只露出第一格
+      const s = el('span', `${className} pmz-sprite3`);
+      s.style.backgroundImage = `url("${iconSrc(icon)}")`;
+      return s;
+    }
     if (isImageIcon(icon)) {
       const img = el('img', className);
+      img.loading = 'lazy'; // 選擇器有上百張圖,捲到才載
       img.src = iconSrc(icon);
       img.alt = '';
       return img;
@@ -925,15 +932,42 @@
 
   // 圖示選擇器:遊戲圖像分區(通貨/碎片/精髓…)+ emoji 備援列
   function iconPicker(selected, onPick) {
+    const box = el('div', 'pmz-icon-picker');
+    const search = el('input', 'pmz-input pmz-icon-search');
+    search.type = 'search';
+    search.placeholder = tr('sb.icon.search');
+    search.addEventListener('click', (e) => e.stopPropagation());
+    search.addEventListener('keydown', (e) => e.stopPropagation()); // 別讓官網或側邊欄快捷鍵吃掉輸入
+    box.appendChild(search);
     const wrap = el('div', 'pmz-icon-pop');
+    box.appendChild(wrap);
+    const noMatch = el('div', 'pmz-empty', tr('sb.icon.noMatch'));
+    noMatch.hidden = true;
+    box.appendChild(noMatch);
+    const groups = []; // [標題, 列]
+    search.addEventListener('input', () => {
+      const q = search.value;
+      let any = false;
+      for (const [head, row] of groups) {
+        let n = 0;
+        for (const b of row.children) {
+          b.hidden = !M.iconMatchesQuery(b.dataset.q, q);
+          if (!b.hidden) n++;
+        }
+        head.hidden = row.hidden = n === 0;
+        any ||= n > 0;
+      }
+      noMatch.hidden = any;
+    });
     const markActive = (btn) => {
       wrap.querySelectorAll('.pmz-icon-btn').forEach((b) => b.classList.remove('pmz-icon-active'));
       btn.classList.add('pmz-icon-active');
     };
-    const addBtn = (row, icon, title) => {
+    const addBtn = (row, icon, title, query) => {
       const btn = el('button', 'pmz-icon-btn');
       btn.type = 'button';
       btn.title = title ?? '';
+      btn.dataset.q = query ?? '';
       // 改名中按圖示不能讓輸入框失焦(失焦=結束改名,選擇器就跟著消失)
       btn.addEventListener('mousedown', (e) => e.preventDefault());
       btn.appendChild(renderIcon(icon, 'pmz-icon-glyph'));
@@ -945,17 +979,23 @@
       });
       row.appendChild(btn);
     };
-    for (const section of iconSectionsForGame()) {
-      wrap.appendChild(el('div', 'pmz-icon-section', trOr(`sb.iconSec.${section.id}`, section.label)));
+    const addGroup = (label) => {
+      const head = el('div', 'pmz-icon-section', label);
       const row = el('div', 'pmz-icon-row');
-      for (const { name, url } of section.icons) addBtn(row, url, iconTitle(name));
+      wrap.appendChild(head);
       wrap.appendChild(row);
+      groups.push([head, row]);
+      return row;
+    };
+    for (const section of iconSectionsForGame()) {
+      const label = trOr(`sb.iconSec.${section.id}`, section.label);
+      const row = addGroup(label);
+      // 分區名也能搜(打「頭盔」列出整區)
+      for (const { name, url } of section.icons) addBtn(row, url, iconTitle(name), `${name} ${label} ${section.id}`);
     }
-    wrap.appendChild(el('div', 'pmz-icon-section', tr('sb.icon.symbols')));
-    const emojiRow = el('div', 'pmz-icon-row');
-    for (const icon of FOLDER_ICONS) addBtn(emojiRow, icon, icon);
-    wrap.appendChild(emojiRow);
-    return wrap;
+    const emojiRow = addGroup(tr('sb.icon.symbols'));
+    for (const icon of FOLDER_ICONS) addBtn(emojiRow, icon, icon, tr('sb.icon.symbols'));
+    return box;
   }
 
   // 內聯改名:把標題文字就地換成輸入框,Enter/失焦儲存、Esc 取消
@@ -1719,9 +1759,12 @@
     head.appendChild(iconWrap);
     const editing = state.editingFolderId === folder.id;
     const fname = el('span', 'pmz-folder-name', folder.name);
+    let finishEdit = null;
+    let nameInput = null;
     if (editing) {
       // 改名中:名稱換成輸入框,同一時間下方會出現圖示選擇器
       const input = el('input', 'pmz-inline-input');
+      nameInput = input;
       input.value = folder.name;
       let finished = false;
       const done = (save) => {
@@ -1741,7 +1784,11 @@
         if (e.key === 'Enter') done(true);
         if (e.key === 'Escape') done(false);
       });
-      input.addEventListener('blur', () => done(true));
+      // 焦點移到下方選擇器的搜尋框不算結束改名;離開搜尋框到別處才算(見下方 pop 的 focusout)
+      input.addEventListener('blur', (e) => {
+        if (!e.relatedTarget?.closest?.('.pmz-icon-picker')) done(true);
+      });
+      finishEdit = done;
       head.appendChild(input);
       setTimeout(() => {
         input.focus();
@@ -1778,6 +1825,9 @@
         iconWrap.textContent = '';
         iconWrap.appendChild(fresh);
       }));
+      pop.addEventListener('focusout', (e) => {
+        if (e.relatedTarget !== nameInput && !pop.contains(e.relatedTarget)) finishEdit?.(true);
+      });
       wrap.appendChild(pop);
     }
 
