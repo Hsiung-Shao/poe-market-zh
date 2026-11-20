@@ -1786,7 +1786,8 @@
       });
       // 焦點移到下方選擇器的搜尋框不算結束改名;離開搜尋框到別處才算(見下方 pop 的 focusout)
       input.addEventListener('blur', (e) => {
-        if (!e.relatedTarget?.closest?.('.pmz-icon-picker')) done(true);
+        // 只認這個資料夾自己的選擇器(上方加入書籤表單也有一個)
+        if (!(wrap.contains(e.relatedTarget) && e.relatedTarget.closest('.pmz-icon-picker'))) done(true);
       });
       finishEdit = done;
       head.appendChild(input);
