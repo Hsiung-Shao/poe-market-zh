@@ -29,6 +29,7 @@
 - `pathofexile.com` / `pathofexile.tw`:Grinding Gear Games 官方公開 trade data API(取得英文與繁體中文的介面資料、Path of Building 匯入用的詞綴代碼)。介面選 English 時不連線台服 API。
 - `raw.githubusercontent.com`:本擴充線上更新的翻譯資料與官方資料的公開快照(本專案自己的 dict 分支)
 - `poe.ninja`:**選用功能**。僅在使用者明確授權後,為「物價查詢」讀取其公開的通貨價格資料,以及在「poe.ninja 雙語」開啟時讀取其公開的聯盟清單(讓聯盟名維持英文);未授權時完全不會對其發出任何請求。價格資料來源於畫面上另有標示。
+- `web.poecdn.com`(Grinding Gear Games 官方圖片 CDN)與 `www.poewiki.net`:僅在顯示書籤資料夾圖示或開啟圖示選擇器時,載入公開的遊戲物品圖與職業圖。
 
 上述請求不附帶任何使用者識別資訊,亦不使用 Cookie。
 
@@ -76,6 +77,7 @@ The Extension makes network requests solely to **fetch publicly available data**
 - `pathofexile.com` / `pathofexile.tw` — official public trade data APIs by Grinding Gear Games (interface data in English and Traditional Chinese, and stat IDs for Path of Building import). The Taiwan API is not contacted when the interface is set to English.
 - `raw.githubusercontent.com` — the Extension's own online translation updates and public snapshots of the official data (this project's dict branch)
 - `poe.ninja` — **optional**. Only after the user explicitly grants permission: public currency prices for the sidebar's price lookup, and the public league list while the poe.ninja bilingual display is on (so league names stay in English); with no permission granted, no request is ever made to it. The price data source is also credited in the UI.
+- `web.poecdn.com` (Grinding Gear Games' official image CDN) and `www.poewiki.net` — only to load public game item and class images when bookmark folder icons are shown or the icon picker is open.
 
 These requests carry no user-identifying information and use no cookies.
 
