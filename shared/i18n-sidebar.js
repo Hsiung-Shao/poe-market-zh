@@ -28,6 +28,7 @@
       // 圖示分區標題:鍵是 data/icons.json 的分區 id(資料裡的 label 是中文)
       'sb.iconSec.職業(昇華)': '職業(昇華)',
       'sb.iconSec.常用': '常用',
+      'sb.iconSec.裝備': '武器與裝備',
       'sb.iconSec.PoE2': 'PoE2(通貨與昇華)',
 
       // ── 資料夾拖曳的讓位預覽 ──
@@ -414,6 +415,7 @@
       'sb.icon.symbols': 'Symbols',
       'sb.iconSec.職業(昇華)': 'Classes (Ascendancy)',
       'sb.iconSec.常用': 'Common',
+      'sb.iconSec.裝備': 'Weapons & Gear',
       'sb.iconSec.PoE2': 'PoE2 (Currency & Ascendancy)',
 
       // ── folder drag preview ──
